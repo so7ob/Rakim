@@ -1,0 +1,29 @@
+{
+  "name": "yemen-legislation-platform",
+  "version": "0.1.0",
+  "private": true,
+  "description": "منصة تشريعات يمنية محلية تحفظ النصوص والنسخ الزمنية ومصادرها",
+  "workspaces": ["apps/*", "packages/*"],
+  "engines": { "node": ">=20.19.0", "npm": ">=10" },
+  "scripts": {
+    "dev": "concurrently -n api,web,worker -c blue,magenta,yellow \"npm run dev -w @ylp/api\" \"npm run dev -w @ylp/web\" \"npm run dev -w @ylp/worker\"",
+    "build": "npm run build -w @ylp/api && npm run build -w @ylp/worker && npm run build -w @ylp/web",
+    "start": "npm run start -w @ylp/api",
+    "start:worker": "npm run start -w @ylp/worker",
+    "lint": "npm run typecheck -ws --if-present",
+    "test": "npm run test -ws --if-present",
+    "test:unit": "npm run test:unit -w @ylp/api && npm run test:unit -w @ylp/web",
+    "test:e2e": "playwright test",
+    "db:migrate": "npm run db:migrate -w @ylp/api",
+    "db:revert": "npm run db:revert -w @ylp/api",
+    "seed": "npm run seed -w @ylp/api",
+    "reindex": "npm run reindex -w @ylp/api",
+    "backup": "bash scripts/backup/backup.sh",
+    "restore:check": "bash scripts/restore/restore-check.sh"
+  },
+  "devDependencies": {
+    "@axe-core/playwright": "4.13.0",
+    "@playwright/test": "1.62.1",
+    "concurrently": "9.2.1"
+  }
+}

@@ -1,0 +1,24 @@
+[Unit]
+Description=Yemen Legislation Platform Background Worker
+After=network.target mariadb.service yemen-legislation-api.service
+Requires=mariadb.service
+
+[Service]
+Type=simple
+User=yemen-legislation
+Group=yemen-legislation
+WorkingDirectory=/opt/yemen-legislation/current
+EnvironmentFile=/etc/yemen-legislation/platform.env
+ExecStart=/usr/bin/node apps/worker/dist/main.js
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/yemen-legislation
+UMask=0027
+
+[Install]
+WantedBy=multi-user.target
+
