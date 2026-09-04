@@ -16,7 +16,7 @@ export function LegislationsPage() {
     const next = new URLSearchParams(params);
     if (value) next.set(key, value);
     else next.delete(key);
-    next.delete("page");
+    if (key !== "page") next.delete("page");
     setParams(next);
   };
   const submit = (event: FormEvent<HTMLFormElement>) => {
@@ -175,6 +175,7 @@ export function LegislationsPage() {
           </div>
           <nav className="pagination" aria-label="صفحات النتائج">
             <button
+              type="button"
               disabled={page <= 1}
               onClick={() => update("page", String(page - 1))}
             >
@@ -184,6 +185,7 @@ export function LegislationsPage() {
               صفحة {page} من {data.meta.pageCount}
             </span>
             <button
+              type="button"
               disabled={page >= data.meta.pageCount}
               onClick={() => update("page", String(page + 1))}
             >

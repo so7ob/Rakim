@@ -7,6 +7,7 @@ import { useApi } from "../../hooks/use-api";
 
 interface Amendment {
   id: string;
+  operationId: string;
   titleAr: string;
   status: string;
   issueDate: string | null;
@@ -176,7 +177,10 @@ export function AdminAmendmentsPage() {
       ) : (
         <div className="admin-list">
           {data.data?.map((item) => (
-            <article className="admin-card amendment-workflow" key={item.id}>
+            <article
+              className="admin-card amendment-workflow"
+              key={item.operationId}
+            >
               <header>
                 <div>
                   <StatusBadge status={item.status} />

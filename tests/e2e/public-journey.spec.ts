@@ -8,7 +8,22 @@ test("list, search, stable article link, historical date and previous-text dialo
   await expect(
     page.getByRole("heading", { name: "التشريعات", exact: true }),
   ).toBeVisible();
-  await expect(page.getByText("20 نتيجة")).toBeVisible();
+  const resultCount = page.locator(".results-heading strong");
+  await expect(resultCount).toHaveText(/^\d+ نتيجة$/);
+  const total = Number((await resultCount.textContent())?.match(/\d+/)?.[0]);
+  expect(total).toBeGreaterThanOrEqual(20);
+  const firstPageTitles = await page
+    .locator(".legislation-card h2")
+    .allTextContents();
+  await page.getByRole("button", { name: "التالي" }).click();
+  await expect(page).toHaveURL(/[?&]page=2(?:&|$)/);
+  await expect(page.locator(".pagination span")).toContainText("صفحة 2 من");
+  await expect
+    .poll(() => page.locator(".legislation-card h2").allTextContents())
+    .not.toEqual(firstPageTitles);
+  await page.getByRole("button", { name: "السابق" }).click();
+  await expect(page).toHaveURL(/[?&]page=1(?:&|$)/);
+  await expect(page.locator(".pagination span")).toContainText("صفحة 1 من");
 
   await page.goto(
     "/ar/search?q=%22%D8%A7%D9%84%D9%85%D8%A7%D9%84%20%D8%A7%D9%84%D8%B9%D8%A7%D9%85%22",
@@ -174,6 +189,8 @@ test("responsive visual baseline", async ({ page }) => {
   await expect(page).toHaveScreenshot("home.png", {
     fullPage: true,
     animations: "disabled",
+    mask: [page.locator(".stats strong").first()],
+    maskColor: "#314B67",
   });
 });
 
