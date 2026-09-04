@@ -22,7 +22,6 @@ mariadb-dump --host="${DATABASE_HOST:-127.0.0.1}" --port="${DATABASE_PORT:-3306}
 unset MYSQL_PWD
 
 if [[ -d "$DATA_ROOT/sources" ]]; then tar -C "$DATA_ROOT" -czf "$TARGET/sources.tar.gz" sources; fi
-sha256sum "$TARGET"/* > "$TARGET/SHA256SUMS"
 printf '{"createdAt":"%s","database":"%s","formatVersion":1}\n' "$STAMP" "$DATABASE_NAME" > "$TARGET/manifest.json"
+sha256sum "$TARGET"/* > "$TARGET/SHA256SUMS"
 echo "اكتملت النسخة الاحتياطية: $TARGET"
-

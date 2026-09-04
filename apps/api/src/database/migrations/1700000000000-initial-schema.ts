@@ -1,7 +1,7 @@
-import type { MigrationInterface, QueryRunner } from 'typeorm';
+import type { MigrationInterface, QueryRunner } from "typeorm";
 
 export class InitialSchema1700000000000 implements MigrationInterface {
-  name = 'InitialSchema1700000000000';
+  name = "InitialSchema1700000000000";
 
   async up(q: QueryRunner): Promise<void> {
     const statements = [
@@ -266,18 +266,56 @@ export class InitialSchema1700000000000 implements MigrationInterface {
       `CREATE TRIGGER trg_audit_logs_immutable_update BEFORE UPDATE ON audit_logs FOR EACH ROW
        SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AUDIT_LOG_IMMUTABLE'`,
       `CREATE TRIGGER trg_audit_logs_immutable_delete BEFORE DELETE ON audit_logs FOR EACH ROW
-       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AUDIT_LOG_IMMUTABLE'`
+       SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'AUDIT_LOG_IMMUTABLE'`,
     ];
     for (const sql of statements) await q.query(sql);
   }
 
   async down(q: QueryRunner): Promise<void> {
-    await q.query('DROP TRIGGER IF EXISTS trg_audit_logs_immutable_delete');
-    await q.query('DROP TRIGGER IF EXISTS trg_audit_logs_immutable_update');
-    await q.query('DROP TRIGGER IF EXISTS trg_article_versions_no_overlap_update');
-    await q.query('DROP TRIGGER IF EXISTS trg_article_versions_no_overlap_insert');
-    const tables = ['search_documents','search_synonyms','search_synonym_sets','job_queue','audit_logs','reports','user_notes','saved_searches','favorites','user_roles','users','roles','verification_records','legal_relations','viewer_metadata','annex_files','annex_versions','annexes','previous_text_snapshots','article_modifications','amendment_operations','amendments','paragraphs','article_versions','articles','structure_nodes','legislation_versions','legislation_subjects','legislations','source_documents','gazette_issues','subjects','authorities','legislation_types'];
+    await q.query("DROP TRIGGER IF EXISTS trg_audit_logs_immutable_delete");
+    await q.query("DROP TRIGGER IF EXISTS trg_audit_logs_immutable_update");
+    await q.query(
+      "DROP TRIGGER IF EXISTS trg_article_versions_no_overlap_update",
+    );
+    await q.query(
+      "DROP TRIGGER IF EXISTS trg_article_versions_no_overlap_insert",
+    );
+    const tables = [
+      "search_documents",
+      "search_synonyms",
+      "search_synonym_sets",
+      "job_queue",
+      "audit_logs",
+      "reports",
+      "user_notes",
+      "saved_searches",
+      "favorites",
+      "user_roles",
+      "users",
+      "roles",
+      "verification_records",
+      "legal_relations",
+      "viewer_metadata",
+      "annex_files",
+      "annex_versions",
+      "annexes",
+      "previous_text_snapshots",
+      "article_modifications",
+      "amendment_operations",
+      "amendments",
+      "paragraphs",
+      "article_versions",
+      "articles",
+      "structure_nodes",
+      "legislation_versions",
+      "legislation_subjects",
+      "legislations",
+      "source_documents",
+      "gazette_issues",
+      "subjects",
+      "authorities",
+      "legislation_types",
+    ];
     for (const table of tables) await q.query(`DROP TABLE IF EXISTS ${table}`);
   }
 }
-

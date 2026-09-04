@@ -1,88 +1,115 @@
 # منصة التشريعات اليمنية
 
-تطبيق محلي عربي RTL لإدارة النص القانوني المنظم ونسخه الزمنية ومصادره. هذه النسخة تنجز أساس المرحلة 0 وشريحة عاملة من MariaDB إلى NestJS REST/OpenAPI ثم React: الرئيسية، القائمة والفلاتر، تفاصيل التشريع والهيكل والمواد، النص النافذ في تاريخ، نافذة النصوص السابقة، بحث عربي أولي، خط تعديلات، ملحق PDF، وعلاقات موجهة. بيانات البذر اصطناعية وغير رسمية.
+تطبيق ويب محلي عربي RTL لإدارة التشريعات ومصادرها ونسخ المواد الزمنية والتعديلات والملحقات والعلاقات القانونية. MariaDB هو مصدر الحقيقة، ويقدم NestJS واجهة REST/JSON موثقة، وتستهلكها واجهة React/Vite وعامل مهام Node مستقل. كل بيانات البذر اصطناعية وغير رسمية.
 
-## المتطلبات المسبقة على Debian 12
+## المتطلبات المسبقة — Debian 12
 
-- Node.js LTS 24 موصى به (`>=20.19` مدعوم للتطوير الحالي؛ بعض تبعيات Nest الحالية تعلن Node 22 فأعلى).
-- MariaDB 10.11 أو أحدث، Nginx، `mariadb-client`، وأدوات البناء الأساسية.
-- للاستخراج: `poppler-utils`. للـOCR عند تنفيذ مرحلته: `tesseract-ocr tesseract-ocr-ara`.
-- للاختبارات المرئية: متصفح Playwright عبر `npx playwright install chromium`.
+- Node.js LTS حديث يدعم `>=22.13` وnpm 10 أو أحدث؛ يوصى بـNode 24 LTS عند النشر.
+- MariaDB 10.11، و`mariadb-client`، وNginx، و`build-essential`.
+- للاستخراج وOCR: `poppler-utils tesseract-ocr tesseract-ocr-ara`.
+- لا يحتاج التشغيل إلى Docker أو Redis أو OpenSearch.
 
-## تشغيل التطوير المباشر
+```bash
+sudo apt update
+sudo apt install mariadb-server mariadb-client nginx build-essential poppler-utils tesseract-ocr tesseract-ocr-ara
+```
+
+## الإعداد والتشغيل في التطوير
 
 ```bash
 cp .env.example .env
-# عيّن كلمة مرور محلية قوية ثم أنشئ القاعدة (يشغّل الأمر كجذر MariaDB المحلي)
-bash scripts/dev/setup-database.sh
+# غيّر DATABASE_PASSWORD وDATA_ROOT بما يناسب الجهاز
+sudo bash scripts/dev/setup-database.sh
 npm install
 npm run db:migrate
 npm run seed
 npm run dev
 ```
 
-العناوين: الواجهة `http://localhost:5173/ar`، API عند `http://localhost:4000/api/v1`، فحص الصحة `/api/v1/health`، ووثائق OpenAPI عند `http://localhost:4000/api/docs`. الإيقاف في التطوير بـ`Ctrl+C`.
+العناوين الافتراضية:
 
-يولد البذر 20 تشريعًا و30 مادة للتشريع الطويل، أربع نسخ للمادة 20، ست عمليات تعديل، ثلاثة ملحقات، PDF اصطناعي، علاقات موجهة، ومصدر OCR غير مراجع مخفي. كلمة المرور التطويرية الظاهرة عند البذر للاختبار المحلي فقط؛ المصادقة الإنتاجية لم تنفذ بعد.
+- الواجهة: `http://localhost:5173/ar`
+- تسجيل الدخول: `http://localhost:5173/ar/login`
+- لوحة الإدارة: `http://localhost:5173/ar/admin`
+- API: `http://localhost:4000/api/v1`
+- OpenAPI/Swagger: `http://localhost:4000/api/docs`
+- الصحة: `http://localhost:4000/api/v1/health`
 
-## الأوامر
+أوقف خدمات التطوير بـ`Ctrl+C`. عند ظهور رسالة اتصال في أول تحميل، تأكد من أن API يعمل على المنفذ 4000؛ إلغاء طلب React أثناء StrictMode لا يعامل خطأً في التطبيق.
+
+### الحسابات التطويرية
+
+كلمة المرور المشتركة بعد `npm run seed` هي `DevOnly!ChangeMe2026`، وأسماء الدخول: `reader` و`data_entry` و`legal_reviewer` و`content_manager` و`system_admin`. هذه بيانات محلية معلنة للاختبار فقط؛ غيّرها أو احذفها قبل أي نشر شبكي.
+
+## الأوامر الموحدة
 
 ```bash
-npm run dev              # API + web + worker
-npm run build            # بناء التطبيقات الثلاثة
-npm run start            # API المبني (الواجهة يقدمها Nginx إنتاجيًا)
-npm run start:worker
-npm run lint             # TypeScript صارم
-npm test                 # وحدة + تكامل MariaDB
-npm run test:e2e         # رحلة المتصفح، axe، ولقطات 1440/1024/390
-npm run seed             # يعيد بيانات التطوير؛ لا تشغله على بيانات حقيقية
-npm run reindex          # يعيد فهرس MariaDB المشتق
+npm run dev                 # API + React + worker
+npm run build               # بناء التطبيقات الثلاثة
+npm run start               # تشغيل API المبني
+npm run start:worker        # تشغيل العامل المبني
+npm run lint                # فحص TypeScript الصارم
+npm test                    # اختبارات الوحدة والتكامل والاستخراج
+npm run test:e2e            # Playwright + axe + لقطات 1440/1024/390/320
+npm run test:performance    # p95 للبحث؛ يفترض أن API يعمل
+npm run test:infra          # تحقق صياغة Nginx ووحدات systemd
+npm run db:migrate
+npm run seed                # يعيد بيانات التطوير بالكامل
+npm run reindex             # يبني فهرس MariaDB المشتق من المصدر
 npm run backup
 npm run restore:check
 ```
 
-## تشغيل النظام على Debian 12
+## الاستيراد وOCR ودورة النشر
 
-1. أنشئ حساب الخدمة والمجلدات:
+من `/ar/admin/imports` يرفع مدخل البيانات TXT وMarkdown وDOCX وPDF والصور وCSV وXLSX. يتحقق API من النوع والحجم والبصمة SHA-256 والتكرار، ثم يخزن المصدر خارج الشفرة ويضع مهمة MariaDB. يستخرج العامل النص والجداول ومعلومات الصفحات، ويشغّل Tesseract العربي للصور وPDF الممسوح. لا يظهر OCR غير المراجع للعامة.
+
+الدورة هي `INBOX → DRAFT → IN_REVIEW → APPROVED_FOR_PUBLISHING → PUBLISHED → ARCHIVED`. مدخل البيانات لا يراجع أو ينشر، والمراجع القانوني لا ينشر، ومدير المحتوى لا يعتمد عملًا شارك في إدخاله أو مراجعته، ومدير النظام التقني لا يملك النشر تلقائيًا. راجع [دليل الاستيراد](docs/import-guide.md) و[دليل الإدارة](docs/admin-guide.md).
+
+## تشغيل الإنتاج المحلي عبر systemd وNginx
+
+1. أنشئ مستخدمًا ومجلدات محدودة الصلاحية:
 
    ```bash
    sudo useradd --system --home /var/lib/yemen-legislation --shell /usr/sbin/nologin yemen-legislation
    sudo install -d -o yemen-legislation -g yemen-legislation -m 0750 /var/lib/yemen-legislation/{sources,exports,backups} /opt/yemen-legislation/releases /etc/yemen-legislation
    ```
 
-2. ضع إصدار التطبيق في `/opt/yemen-legislation/releases/<version>` واجعل `/opt/yemen-legislation/current` رابطًا إليه، ثم شغّل `npm ci && npm run build && npm run db:migrate` بمتغيرات الإنتاج.
-3. انسخ `.env.example` إلى `/etc/yemen-legislation/platform.env` بصلاحية `0640` وملكية `root:yemen-legislation`. اجعل `DATA_ROOT=/var/lib/yemen-legislation`، واستخدم مستخدم MariaDB محدودًا وكلمة مرور مختلفة.
-4. انسخ وحدتي [systemd](infra/systemd/) إلى `/etc/systemd/system/` وإعداد [Nginx](infra/nginx/yemen-legislation.conf) إلى `/etc/nginx/sites-available/`، فعّل الموقع ثم:
+2. ضع الإصدار في `/opt/yemen-legislation/releases/<version>`، نفّذ `npm ci && npm run build && npm run db:migrate`، ثم اجعل `/opt/yemen-legislation/current` رابطًا رمزيًا إلى الإصدار.
+3. انسخ `.env.example` إلى `/etc/yemen-legislation/platform.env`، اضبط `NODE_ENV=production` و`DATA_ROOT=/var/lib/yemen-legislation` وبيانات MariaDB محدودة الصلاحية، ثم `chmod 0640` وملكية `root:yemen-legislation`.
+4. انسخ وحدتي [systemd](infra/systemd/) إلى `/etc/systemd/system/` وملف [Nginx](infra/nginx/yemen-legislation.conf) إلى `/etc/nginx/sites-available/yemen-legislation` وفعّل الرابط في `sites-enabled`.
 
-   ```bash
-   sudo nginx -t
-   sudo systemctl daemon-reload
-   sudo systemctl enable --now yemen-legislation-api yemen-legislation-worker nginx
-   systemctl status yemen-legislation-api yemen-legislation-worker
-   journalctl -u yemen-legislation-api -f
-   sudo systemctl restart yemen-legislation-api yemen-legislation-worker
-   sudo systemctl stop yemen-legislation-worker yemen-legislation-api
-   ```
+```bash
+sudo nginx -t
+sudo systemctl daemon-reload
+sudo systemctl enable --now mariadb nginx yemen-legislation-api yemen-legislation-worker
+systemctl status yemen-legislation-api yemen-legislation-worker
+journalctl -u yemen-legislation-api -f
+journalctl -u yemen-legislation-worker -f
+sudo systemctl restart yemen-legislation-api yemen-legislation-worker
+sudo systemctl stop yemen-legislation-worker yemen-legislation-api
+```
 
-استخدم HTTP على `localhost` فقط. عند فتح الخدمة للشبكة اضبط `server_name` وشهادة HTTPS، واقصر الجدار الناري على 80/443؛ لا تعرض 3306 أو 4000. التحديث القابل للتراجع: ابنِ إصدارًا جديدًا، خذ نسخة، طبق الترحيل، افحص `/health`، بدّل رابط `current` ذريًا ثم أعد الخدمات. عند فشل الصحة أعد الرابط إلى الإصدار السابق؛ ترحيلات قاعدة البيانات تحتاج خطة رجوع مدروسة ولا تعكس آليًا بعد كتابة بيانات جديدة.
+استخدم HTTP على `localhost` فقط. عند إتاحته على شبكة، فعّل HTTPS في Nginx، اسمح بـ80/443 فقط، ولا تعرض 3306 أو 4000. للنشر القابل للتراجع: خذ نسخة، ابنِ مجلد إصدار جديدًا، طبّق الترحيل، افحص الصحة، بدّل رابط `current` ذريًا، ثم أعد تشغيل الخدمتين. أعد الرابط السابق إذا فشل فحص الصحة؛ لا تعكس ترحيلًا كتب بيانات بلا خطة بيانات صريحة.
 
 ## النسخ والاستعادة
 
-`npm run backup` ينشئ مجلدًا مؤرخًا بصلاحيات مقيدة يحتوي dump متسقًا، المصادر، وSHA-256. انقل نسخة ثانية إلى وسيط مشفر منفصل. `npm run restore:check` يتحقق من البصمات ويستعيد في قاعدة مؤقتة منفصلة ثم يحذفها؛ يحتاج وصول root المحلي إلى MariaDB ولا يمس القاعدة الأصلية. البحث مشتق ويعاد بعد الاستعادة بـ`npm run reindex`.
+`npm run backup` ينشئ dump متسقًا مع المشغلات والروتينات، وأرشيف المصادر، وmanifest، وبصمات SHA-256 داخل `DATA_ROOT/backups`. احفظ نسخة ثانية على وسيط مشفر منفصل. `npm run restore:check` يتحقق من البصمات ويستعيد إلى قاعدة مؤقتة مستقلة ثم يحذفها، ولا يمس قاعدة العمل. بعد استعادة فعلية شغّل `npm run reindex` لأن فهرس البحث مشتق.
 
-## الاستيراد وOCR والإدارة
+## الأمن والمراقبة
 
-راجع [دليل الاستيراد](docs/import-guide.md) و[دليل الإدارة](docs/admin-guide.md). الواجهات الكاملة للاستيراد/OCR/النشر ليست ضمن بوابة هذه الشريحة ولم توسم مكتملة.
+- جلسة إدارية عشوائية في cookie من نوع HttpOnly وSameSite=Strict، وCSRF للطلبات المغيّرة، وCORS مقيّد بـ`WEB_ORIGIN`.
+- قفل مؤقت بعد محاولات دخول فاشلة، scrypt لكلمات المرور، وإبطال الجلسات عند تغيير الدور أو كلمة المرور أو تعطيل الحساب.
+- سجل تدقيق قبل/بعد مع السبب والفاعل والوقت، ولا توجد واجهة لتعديله.
+- `/health` يفحص MariaDB ونبض العامل والطابور ومساحة التخزين. السجلات منظمة ويمكن متابعتها بـ`journalctl`.
+- لا تودع `.env` أو `data/sources` أو النسخ الاحتياطية في Git.
 
 ## استكشاف المشكلات
 
-- `Access denied`: تحقق أن `.env` موجود في الجذر وشغّل `scripts/dev/setup-database.sh`.
-- فشل العارض: جرّب رابط التنزيل؛ تحقق من `DATA_ROOT` وملكية حساب الخدمة.
-- لا تظهر نتيجة جديدة: شغّل `npm run reindex`؛ لا تعدل `search_documents` يدويًا.
-- OCR العربي غير متاح: ثبت Tesseract وحزمة `ara`، ولا تغيّر المصدر إلى `REVIEWED` دون مراجعة بشرية.
-- راقب القرص لأن المصادر والنسخ الاحتياطية لا تدخل Git. الجهاز المرجعي 16GB RAM؛ MariaDB وAPI والواجهة لا تتطلب OpenSearch أو Redis.
+- `Access denied`: راجع `.env` ثم أعد تشغيل `scripts/dev/setup-database.sh` بصلاحية MariaDB المناسبة.
+- فشل ملف داخل العارض: استخدم زر التنزيل وتحقق من `DATA_ROOT` وملكية مستخدم الخدمة.
+- لا تظهر نتيجة جديدة: تأكد من نبض العامل ثم شغّل `npm run reindex`؛ لا تعدل `search_documents` يدويًا.
+- OCR العربي يفشل: تحقق بـ`tesseract --list-langs` من وجود `ara`، ومن توفر `pdftoppm` و`pdfinfo`.
+- امتلاء القرص: راقب `storage.freeBytes` في الصحة، وانقل النسخ القديمة وفق سياسة احتفاظ معتمدة.
 
-## حالة التنفيذ والقيود
-
-الحالة الدقيقة في [docs/progress.md](docs/progress.md) وسجل التطابق في [docs/reference-parity.md](docs/reference-parity.md). لم يكتمل بعد PDF.js بكامل أدواته، الاستيراد/OCR، المصادقة الإنتاجية ولوحة الإدارة والنشر، بحث القرب والتحليلات الكاملة، واختبارات الاستعادة على نسخة هذه الجلسة. لا تعتبر المراحل 2–4 مكتملة.
-
+التصميم والقيود المعروفة موثقة في [سجل التقدم](docs/progress.md)، و[سجل المطابقة](docs/reference-parity.md)، و[تقرير التحقق](docs/verification-report.md).

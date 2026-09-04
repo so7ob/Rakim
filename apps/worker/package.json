@@ -2,16 +2,19 @@
   "name": "@ylp/worker",
   "version": "0.1.0",
   "private": true,
+  "type": "module",
   "scripts": {
     "dev": "tsx watch src/main.ts",
     "build": "tsc -p tsconfig.json",
     "start": "node dist/main.js",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "vitest run --passWithNoTests"
+    "test": "vitest run src --passWithNoTests"
   },
   "dependencies": {
     "dotenv": "17.2.2",
+    "mammoth": "^1.12.2",
     "mysql2": "3.24.3",
+    "read-excel-file": "^9.3.10",
     "typeorm": "1.1.1"
   },
   "devDependencies": {
@@ -21,4 +24,3 @@
     "vitest": "4.1.11"
   }
 }
-

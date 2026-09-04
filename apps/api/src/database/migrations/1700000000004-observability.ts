@@ -1,0 +1,2 @@
+import type { MigrationInterface,QueryRunner } from 'typeorm';
+export class Observability1700000000004 implements MigrationInterface{name='Observability1700000000004';async up(q:QueryRunner){await q.query(`CREATE TABLE service_heartbeats (service_id VARCHAR(160) PRIMARY KEY,service_type ENUM('WORKER') NOT NULL,last_seen_at DATETIME(3) NOT NULL,metadata_json JSON NULL,KEY idx_heartbeat_type_time(service_type,last_seen_at)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci`);}async down(q:QueryRunner){await q.query('DROP TABLE IF EXISTS service_heartbeats');}}
