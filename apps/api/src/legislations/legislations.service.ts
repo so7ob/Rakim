@@ -18,8 +18,11 @@ export class LegislationsService {
       50,
       Math.max(1, Number(query.pageSize ?? 10) || 10),
     );
+    const archived = query.archived === "1" || query.archived === "true";
     const where = [
-      `l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
+      archived
+        ? `(l.status='ARCHIVED' OR l.legal_status IN ('REPEALED','PARTIALLY_REPEALED'))`
+        : `l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
     ];
     const values: QueryValue[] = [];
     if (query.q?.trim()) {
@@ -130,6 +133,23 @@ export class LegislationsService {
     FROM legislations l JOIN search_documents sd ON sd.legislation_id=l.id WHERE l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
     AND sd.text_normalized LIKE ? ORDER BY CASE WHEN sd.title_ar LIKE ? THEN 0 ELSE 1 END,l.year DESC LIMIT 8`,
       [`%${needle}%`, `%${q}%`],
+    );
+  }
+
+  async latestModifications(limitValue?: string) {
+    const limit = Math.min(50, Math.max(1, Number(limitValue ?? 20) || 20));
+    return this.db.query(
+      `SELECT am.id,am.title_ar titleAr,DATE_FORMAT(am.issue_date,'%Y-%m-%d') issueDate,
+      DATE_FORMAT(am.effective_from,'%Y-%m-%d') effectiveFrom,l.id legislationId,
+      l.title_ar legislationTitle,l.official_number legislationNumber,l.year legislationYear,
+      sd.original_name sourceName,COUNT(ao.id) operationCount
+      FROM amendments am JOIN legislations l ON l.id=am.amended_legislation_id
+      LEFT JOIN amendment_operations ao ON ao.amendment_id=am.id
+      LEFT JOIN source_documents sd ON sd.id=am.source_document_id
+      WHERE am.status='PUBLISHED' AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      GROUP BY am.id,am.title_ar,am.issue_date,am.effective_from,l.id,l.title_ar,l.official_number,l.year,sd.original_name
+      ORDER BY am.effective_from DESC,am.issue_date DESC LIMIT ?`,
+      [limit],
     );
   }
 

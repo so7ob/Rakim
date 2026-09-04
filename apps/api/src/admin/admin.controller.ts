@@ -16,6 +16,7 @@ import {
   ArrayUnique,
   IsArray,
   IsBoolean,
+  IsDateString,
   IsIn,
   IsInt,
   IsOptional,
@@ -51,6 +52,7 @@ class PublicationDto {
   @IsString() @Length(3, 1000) reason!: string;
 }
 class UpdateDraftDto {
+  @IsOptional() @IsString() displayCode?: string;
   @IsOptional() @IsString() titleAr?: string;
   @IsOptional() @IsString() summaryAr?: string;
   @IsOptional() @IsString() officialNumber?: string;
@@ -60,6 +62,27 @@ class UpdateDraftDto {
   @IsOptional() @IsString() issueDate?: string;
   @IsOptional() @IsString() publicationDate?: string;
   @IsOptional() @IsString() effectiveFrom?: string;
+  @IsOptional() @IsString() repealDate?: string;
+  @IsOptional()
+  @IsIn([
+    "IN_FORCE",
+    "AMENDED",
+    "PARTIALLY_REPEALED",
+    "REPEALED",
+    "SUSPENDED",
+    "UNKNOWN",
+  ])
+  legalStatus?: string;
+  @IsOptional() @IsIn(["A", "B", "C", "D"]) verificationLevel?: string;
+  @IsOptional() @IsString() gazetteIssueNumber?: string;
+  @IsOptional() @IsString() gazettePublicationDate?: string;
+  @IsOptional() @IsString() gazettePublisher?: string;
+  @IsOptional() @IsString() gazetteNotes?: string;
+  @IsOptional()
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  subjectIds?: string[];
   @IsOptional() @IsString() preambleText?: string;
   @IsString() @Length(3, 1000) reason!: string;
 }
@@ -125,6 +148,92 @@ class UpdateArticleDto {
   @IsString() @Length(1, 1000000) text!: string;
   @IsString() @Length(3, 1000) reason!: string;
 }
+class UpdateArticleMetadataDto {
+  @IsString() @Length(1, 120) currentLabel!: string;
+  @IsString() @Length(1, 120) publishedLabel!: string;
+  @IsString() @Length(1, 120) sortKey!: string;
+  @IsOptional() @IsString() structureNodeId?: string;
+  @IsDateString() validFrom!: string;
+  @IsString() @Length(1, 1000000) text!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class UpdateSourceDto {
+  @IsString() @Length(1, 255) obtainedFrom!: string;
+  @IsOptional() @IsInt() @Min(1) pageCount?: number;
+  @IsIn([
+    "PENDING",
+    "EXTRACTED",
+    "OCR_REQUIRED",
+    "OCR_UNREVIEWED",
+    "REVIEWED",
+    "FAILED",
+  ])
+  extractionStatus!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class UpdateStructureDto {
+  @IsIn([
+    "PREAMBLE",
+    "BOOK",
+    "PART",
+    "TITLE",
+    "CHAPTER",
+    "SECTION",
+    "SUBSECTION",
+  ])
+  nodeType!: string;
+  @IsOptional() @IsString() parentId?: string;
+  @IsOptional() @IsString() labelAr?: string;
+  @IsString() @Length(1, 500) titleAr!: string;
+  @IsString() @Length(1, 120) sortKey!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class UpdateAnnexDto {
+  @IsIn([
+    "EXECUTIVE_REGULATION",
+    "TABLE",
+    "FORM",
+    "ANNEX",
+    "MAP",
+    "TARIFF",
+    "LIST",
+    "CORRECTION",
+  ])
+  annexType!: string;
+  @IsString() @Length(1, 1000) titleAr!: string;
+  @IsIn(["DRAFT", "PUBLISHED", "REPLACED", "REPEALED"]) status!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class CreateAnnexDto extends UpdateAnnexDto {
+  @IsString() sourceDocumentId!: string;
+  @IsString() validFrom!: string;
+  @IsOptional() @IsString() structuredTableJson?: string;
+}
+class UpdateRelationDto {
+  @IsIn([
+    "AMENDS",
+    "REPEALS",
+    "IMPLEMENTS",
+    "BASED_ON",
+    "REFERS_TO",
+    "CORRECTS",
+    "TOPICALLY_RELATED",
+  ])
+  relationType!: string;
+  @IsString() targetLegislationId!: string;
+  @IsOptional() @IsString() scopeText?: string;
+  @IsOptional() @IsString() effectiveFrom?: string;
+  @IsOptional() @IsString() sourceDocumentId?: string;
+  @IsIn(["UNREVIEWED", "REVIEWED", "REJECTED"]) reviewStatus!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class ReferenceItemDto {
+  @IsString() @Length(2, 60) code!: string;
+  @IsString() @Length(1, 200) nameAr!: string;
+  @IsBoolean() isActive!: boolean;
+  @IsOptional() @IsString() parentId?: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
 
 @ApiTags("الإدارة")
 @Controller("admin")
@@ -143,6 +252,32 @@ export class AdminController {
   references() {
     return this.service.references();
   }
+  @Get("reference-data")
+  @Roles("CONTENT_MANAGER")
+  referenceData() {
+    return this.service.referenceData();
+  }
+  @Post("reference-data/:kind")
+  @Roles("CONTENT_MANAGER")
+  createReference(
+    @Param("kind") kind: string,
+    @Body() dto: ReferenceItemDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.createReference(kind, input, request.user!, reason);
+  }
+  @Patch("reference-data/:kind/:id")
+  @Roles("CONTENT_MANAGER")
+  updateReference(
+    @Param("kind") kind: string,
+    @Param("id") id: string,
+    @Body() dto: ReferenceItemDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateReference(kind, id, input, request.user!, reason);
+  }
   @Get("legislations")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER")
   legislations(
@@ -158,7 +293,7 @@ export class AdminController {
     return this.service.legislation(id);
   }
   @Patch("legislations/:id")
-  @Roles("DATA_ENTRY")
+  @Roles("DATA_ENTRY", "CONTENT_MANAGER")
   update(
     @Param("id") id: string,
     @Body() dto: UpdateDraftDto,
@@ -187,6 +322,85 @@ export class AdminController {
       request.user!,
       dto.reason,
     );
+  }
+  @Patch("articles/:id/metadata") @Roles("DATA_ENTRY") updateArticleMetadata(
+    @Param("id") id: string,
+    @Body() dto: UpdateArticleMetadataDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateDraftArticleMetadata(
+      id,
+      input,
+      request.user!,
+      reason,
+    );
+  }
+  @Patch("sources/:id") @Roles("DATA_ENTRY", "LEGAL_REVIEWER") updateSource(
+    @Param("id") id: string,
+    @Body() dto: UpdateSourceDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateSource(id, input, request.user!, reason);
+  }
+  @Patch("structure/:id")
+  @Roles("DATA_ENTRY", "CONTENT_MANAGER")
+  updateStructure(
+    @Param("id") id: string,
+    @Body() dto: UpdateStructureDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateStructure(id, input, request.user!, reason);
+  }
+  @Post("legislations/:id/structure")
+  @Roles("DATA_ENTRY", "CONTENT_MANAGER")
+  createStructure(
+    @Param("id") id: string,
+    @Body() dto: UpdateStructureDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.createStructure(id, input, request.user!, reason);
+  }
+  @Patch("annexes/:id") @Roles("DATA_ENTRY", "CONTENT_MANAGER") updateAnnex(
+    @Param("id") id: string,
+    @Body() dto: UpdateAnnexDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateAnnex(id, input, request.user!, reason);
+  }
+  @Post("legislations/:id/annexes")
+  @Roles("DATA_ENTRY", "CONTENT_MANAGER")
+  createAnnex(
+    @Param("id") id: string,
+    @Body() dto: CreateAnnexDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.createAnnex(id, input, request.user!, reason);
+  }
+  @Patch("relations/:id")
+  @Roles("LEGAL_REVIEWER", "CONTENT_MANAGER")
+  updateRelation(
+    @Param("id") id: string,
+    @Body() dto: UpdateRelationDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateRelation(id, input, request.user!, reason);
+  }
+  @Post("legislations/:id/relations")
+  @Roles("LEGAL_REVIEWER", "CONTENT_MANAGER")
+  createRelation(
+    @Param("id") id: string,
+    @Body() dto: UpdateRelationDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.createRelation(id, input, request.user!, reason);
   }
   @Get("audit") @Roles("CONTENT_MANAGER", "SYSTEM_ADMIN") audit(
     @Query("page") page?: string,

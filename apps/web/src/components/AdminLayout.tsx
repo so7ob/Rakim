@@ -53,6 +53,16 @@ export function AdminLayout() {
       roles: ["CONTENT_MANAGER"],
     },
     { to: "/ar/admin/users", label: "المستخدمون", roles: ["SYSTEM_ADMIN"] },
+    {
+      to: "/ar/admin/settings",
+      label: "إعدادات المنصة",
+      roles: ["SYSTEM_ADMIN", "CONTENT_MANAGER"],
+    },
+    {
+      to: "/ar/admin/reference-data",
+      label: "القوائم المرجعية",
+      roles: ["CONTENT_MANAGER"],
+    },
   ];
   return (
     <div className="admin-shell container">

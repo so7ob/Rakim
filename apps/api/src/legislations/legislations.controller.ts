@@ -40,6 +40,12 @@ export class LegislationsController {
     return this.service.suggestions(q);
   }
 
+  @Get("latest-modifications")
+  @ApiOperation({ summary: "أحدث التعديلات المنشورة في جميع التشريعات" })
+  latestModifications(@Query("limit") limit?: string) {
+    return this.service.latestModifications(limit);
+  }
+
   @Get(":id/source")
   @ApiOperation({ summary: "تنزيل المصدر العام المدقق دون كشف مساره" })
   async source(

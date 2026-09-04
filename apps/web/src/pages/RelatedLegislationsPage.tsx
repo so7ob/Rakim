@@ -1,5 +1,6 @@
 import { Link, useParams } from "react-router-dom";
 import { EmptyPanel, ErrorPanel, LoadingCards } from "../components/StatePanel";
+import { LegislationSubpageHeader } from "../components/LegislationSubpageHeader";
 import { useApi } from "../hooks/use-api";
 interface Relation {
   id: string;
@@ -29,68 +30,76 @@ export function RelatedLegislationsPage() {
     id ? `/legislations/${id}/relations` : null,
   );
   return (
-    <div className="container page-shell">
-      <Link className="back-dark" to={`/ar/legislations/${id}`}>
-        ← العودة إلى التشريع
-      </Link>
-      <header className="page-title">
-        <span className="eyebrow dark">علاقات قانونية موجهة</span>
-        <h1>التشريعات ذات الصلة</h1>
-        <p>
-          الاتجاه والنطاق والمصدر يميزان العلاقة القانونية عن التشابه الموضوعي.
-        </p>
-      </header>
-      {loading ? (
-        <LoadingCards />
-      ) : error ? (
-        <ErrorPanel message={error.message} retry={retry} />
-      ) : !data?.length ? (
-        <EmptyPanel />
-      ) : (
-        <div className="relation-grid">
-          {data.map((relation) => (
-            <article
-              className={`card relation-card ${relation.relationType === "TOPICALLY_RELATED" ? "thematic" : ""}`}
-              key={relation.id}
-            >
-              <div className="relation-label">
-                <span>
-                  {relation.direction === "OUTGOING"
-                    ? (labels[relation.relationType] ?? relation.relationType)
-                    : `علاقة واردة: ${labels[relation.relationType] ?? relation.relationType}`}
-                </span>
-                <small>
-                  {relation.reviewStatus === "REVIEWED"
-                    ? "مراجعة مكتملة"
-                    : "غير مراجع"}
-                </small>
-              </div>
-              <h2>
-                <Link to={`/ar/legislations/${relation.relatedId}`}>
-                  {relation.relatedTitle}
-                </Link>
-              </h2>
-              <p>
-                رقم {relation.relatedNumber} لسنة {relation.relatedYear}
-              </p>
-              <dl className="inline-meta">
-                <div>
-                  <dt>النطاق</dt>
-                  <dd>{relation.scopeText}</dd>
-                </div>
-                <div>
-                  <dt>تاريخ الأثر</dt>
-                  <dd>{relation.effectiveFrom}</dd>
-                </div>
-                <div>
-                  <dt>دليل العلاقة</dt>
-                  <dd>{relation.evidenceSource}</dd>
-                </div>
-              </dl>
-            </article>
-          ))}
-        </div>
+    <>
+      {id && (
+        <LegislationSubpageHeader id={id} section="related-legislations" />
       )}
-    </div>
+      <div className="container subresource-shell">
+        <section className="subresource-panel">
+          <header className="subresource-title">
+            <div>
+              <span className="eyebrow dark">علاقات قانونية موجهة</span>
+              <h1>التشريعات ذات الصلة</h1>
+            </div>
+            <p>
+              الاتجاه والنطاق والمصدر يميزان العلاقة القانونية عن التشابه
+              الموضوعي.
+            </p>
+          </header>
+          {loading ? (
+            <LoadingCards />
+          ) : error ? (
+            <ErrorPanel message={error.message} retry={retry} />
+          ) : !data?.length ? (
+            <EmptyPanel />
+          ) : (
+            <div className="relation-grid reference-relations">
+              {data.map((relation) => (
+                <article
+                  className={`card relation-card ${relation.relationType === "TOPICALLY_RELATED" ? "thematic" : ""}`}
+                  key={relation.id}
+                >
+                  <div className="relation-label">
+                    <span>
+                      {relation.direction === "OUTGOING"
+                        ? (labels[relation.relationType] ??
+                          relation.relationType)
+                        : `علاقة واردة: ${labels[relation.relationType] ?? relation.relationType}`}
+                    </span>
+                    <small>
+                      {relation.reviewStatus === "REVIEWED"
+                        ? "مراجعة مكتملة"
+                        : "غير مراجع"}
+                    </small>
+                  </div>
+                  <h2>
+                    <Link to={`/ar/legislations/${relation.relatedId}`}>
+                      {relation.relatedTitle}
+                    </Link>
+                  </h2>
+                  <p>
+                    رقم {relation.relatedNumber} لسنة {relation.relatedYear}
+                  </p>
+                  <dl className="inline-meta">
+                    <div>
+                      <dt>النطاق</dt>
+                      <dd>{relation.scopeText}</dd>
+                    </div>
+                    <div>
+                      <dt>تاريخ الأثر</dt>
+                      <dd>{relation.effectiveFrom}</dd>
+                    </div>
+                    <div>
+                      <dt>دليل العلاقة</dt>
+                      <dd>{relation.evidenceSource}</dd>
+                    </div>
+                  </dl>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </>
   );
 }

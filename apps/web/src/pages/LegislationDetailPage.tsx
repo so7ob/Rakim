@@ -10,9 +10,12 @@ import type { ArticleList, LegislationDetail, StructureNode } from "../types";
 import { ErrorPanel, LoadingCards } from "../components/StatePanel";
 import { PreviousTextsDialog } from "../components/PreviousTextsDialog";
 import { LegislationActions } from "../components/LegislationActions";
+import { formatLegalDate, legalStatusLabels } from "../legal-format";
+import { useSiteConfig } from "../site/SiteConfigContext";
 
 export function LegislationDetailPage() {
   const { id } = useParams();
+  const { settings } = useSiteConfig();
   const [params, setParams] = useSearchParams();
   const at = params.get("at") ?? "";
   const routerLocation = useLocation();
@@ -61,63 +64,73 @@ export function LegislationDetailPage() {
   return (
     <>
       <section className="detail-hero">
-        <div className="container">
-          <Link className="back-link" to="/ar/legislations">
-            ← عودة إلى التشريعات
-          </Link>
-          <div className="hero-badges">
+        <div className="container detail-hero-inner">
+          <nav className="detail-breadcrumb" aria-label="مسار التنقل">
+            <Link to="/ar">الصفحة الرئيسية</Link>
+            <span aria-hidden="true">/</span>
+            <Link to="/ar/legislations">التشريعات</Link>
+            <span aria-hidden="true">/</span>
             <span>{law.typeName}</span>
-            <span>تحقق {law.verificationLevel}</span>
-            <span>{law.legalStatus}</span>
+          </nav>
+          <div className="hero-title-layout">
+            <div className="hero-title-copy">
+              <span className="legislation-type-label">{law.typeName}</span>
+              <h1>{law.titleAr}</h1>
+              <div className="hero-pills">
+                <span className="update-pill">
+                  التشريع وفقًا لآخر تحديث في{" "}
+                  {formatLegalDate(law.lastReviewedAt)}
+                </span>
+                <Link
+                  className="related-pill"
+                  to={`/ar/legislations/${id}/related-legislations`}
+                >
+                  التشريعات ذات الصلة <span aria-hidden="true">←</span>
+                </Link>
+              </div>
+            </div>
+            <LegislationActions id={law.id} embedded />
           </div>
-          <h1>{law.titleAr}</h1>
-          <p>
-            {law.authorityName} — آخر مراجعة في {law.lastReviewedAt}
-          </p>
           <div className="hero-meta">
             <div>
-              <span>تاريخ الإصدار</span>
-              <strong>{law.issueDate}</strong>
+              <span>تاريخ إصدار التشريع</span>
+              <strong>{formatLegalDate(law.issueDate)}</strong>
             </div>
             <div>
-              <span>تاريخ النشر</span>
-              <strong>{law.publicationDate}</strong>
+              <span>تاريخ نفاذ التشريع</span>
+              <strong>{formatLegalDate(law.effectiveFrom)}</strong>
             </div>
             <div>
-              <span>النفاذ</span>
-              <strong>{law.effectiveFrom}</strong>
+              <span>تاريخ الجريدة الرسمية</span>
+              <strong>{formatLegalDate(law.publicationDate)}</strong>
             </div>
             <div>
-              <span>الجريدة</span>
+              <span>عدد الجريدة الرسمية</span>
               <strong>{law.gazetteIssue ?? "غير محدد"}</strong>
             </div>
             <div>
-              <span>المواد</span>
-              <strong>{law.articleCount}</strong>
-            </div>
-            <div>
-              <span>التعديلات</span>
-              <strong>{law.amendmentCount}</strong>
-            </div>
-            <div>
-              <span>اللوائح والملاحق</span>
-              <strong>{law.annexCount}</strong>
+              <span>حالة التشريع</span>
+              <strong>
+                {legalStatusLabels[law.legalStatus] ?? law.legalStatus}
+              </strong>
             </div>
           </div>
         </div>
       </section>
-      <LegislationActions id={law.id} />
-      <div className="container detail-tools subpage-links">
+      <nav className="container legislation-tabs" aria-label="أقسام التشريع">
+        <span className="active" aria-current="page">
+          {String(settings["tabs.overview_label"])} ({law.articleCount})
+        </span>
         <Link to={`/ar/legislations/${id}/modifications`}>
-          التعديلات ({law.amendmentCount})
+          {String(settings["tabs.modifications_label"])} ({law.amendmentCount})
         </Link>
         <Link to={`/ar/legislations/${id}/regulations`}>
-          اللوائح والجداول ({law.annexCount})
+          {String(settings["tabs.regulations_label"])} ({law.annexCount})
         </Link>
         <Link to={`/ar/legislations/${id}/related-legislations`}>
-          ذات الصلة ({law.relationCount})
+          {String(settings["tabs.related_label"])} ({law.relationCount})
         </Link>
-      </div>
+      </nav>
       <div className="container date-selector">
         <label htmlFor="at-date">اعرض النص النافذ في تاريخ</label>
         <input

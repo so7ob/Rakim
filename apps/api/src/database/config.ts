@@ -8,6 +8,8 @@ import { AdminWorkflow1700000000002 } from "./migrations/1700000000002-admin-wor
 import { AmendmentWorkflow1700000000003 } from "./migrations/1700000000003-amendment-workflow.js";
 import { Observability1700000000004 } from "./migrations/1700000000004-observability.js";
 import { Preamble1700000000005 } from "./migrations/1700000000005-preamble.js";
+import { PlatformSettings1700000000006 } from "./migrations/1700000000006-platform-settings.js";
+import { VisualSettings1700000000007 } from "./migrations/1700000000007-visual-settings.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -36,6 +38,8 @@ export const createDataSource = () =>
       AmendmentWorkflow1700000000003,
       Observability1700000000004,
       Preamble1700000000005,
+      PlatformSettings1700000000006,
+      VisualSettings1700000000007,
     ],
     migrationsTableName: "schema_migrations",
   });

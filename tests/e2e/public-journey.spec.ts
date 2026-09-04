@@ -171,12 +171,53 @@ test("modifications, annex PDF and directed relations are served from API data",
   expect(pdfResponse.headers()["content-type"]).toContain("application/pdf");
 
   await page.getByRole("link", { name: /العودة إلى التشريع/ }).click();
-  await page.getByRole("link", { name: /ذات الصلة/ }).click();
+  await page.getByRole("link", { name: /^ذات الصلة \(\d+\)$/ }).click();
   await expect(
     page.getByRole("heading", { name: "التشريعات ذات الصلة" }),
   ).toBeVisible();
   await expect(page.getByText("يحيل إلى", { exact: true })).toBeVisible();
   await expect(page.getByText("مرتبط موضوعيًا", { exact: true })).toBeVisible();
+});
+
+test("clean public routes and cross-platform latest modifications resolve", async ({
+  page,
+  request,
+}) => {
+  const latest = await request.get("/api/v1/legislations/latest-modifications");
+  expect(latest.ok()).toBeTruthy();
+  expect((await latest.json()).length).toBeGreaterThan(0);
+
+  await page.goto("/ar/latest-modifications");
+  await expect(
+    page.getByRole("heading", { name: "آخر التعديلات التشريعية" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("قانون تعديل مستقبلي نموذجي لسنة 2027"),
+  ).toBeVisible();
+
+  await page.goto("/ar/archived-legislation");
+  await expect(
+    page.getByRole("heading", { name: "أرشيف التشريعات", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".legislation-card")).toHaveCount(1);
+
+  for (const path of [
+    "/ar/constitution",
+    "/ar/constitution/modifications",
+    "/ar/legislative-system",
+    "/ar/policy/list",
+    "/ar/policy/guide-books",
+    "/ar/news",
+    "/ar/about-us",
+    "/ar/contact-us",
+    "/ar/legal/terms-and-conditions",
+    "/ar/legal/privacy-policy",
+    "/ar/forgot-password",
+  ]) {
+    const response = await page.goto(path);
+    expect(response?.ok(), path).toBeTruthy();
+    await expect(page.locator("h1")).toBeVisible();
+  }
 });
 
 test("responsive visual baseline", async ({ page }) => {
@@ -192,6 +233,34 @@ test("responsive visual baseline", async ({ page }) => {
     mask: [page.locator(".stats strong").first()],
     maskColor: "#314B67",
   });
+});
+
+test("header tools reveal burgundy accessible labels", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  await page.goto("/ar/legislations");
+  const home = page.locator(
+    'a.header-icon-button[data-tooltip="الصفحة الرئيسية"]',
+  );
+  await home.hover();
+  await expect(home).toHaveCSS("color", "rgb(173, 64, 91)");
+  await expect
+    .poll(() =>
+      home.evaluate((element) =>
+        getComputedStyle(element, "::after").getPropertyValue("content"),
+      ),
+    )
+    .toContain("الصفحة الرئيسية");
+  await page.mouse.move(0, 400);
+  await home.focus();
+  await expect
+    .poll(() =>
+      home.evaluate((element) =>
+        getComputedStyle(element, "::after").getPropertyValue("opacity"),
+      ),
+    )
+    .toBe("1");
 });
 
 test("reflows at the 200% equivalent viewport", async ({ page }, testInfo) => {

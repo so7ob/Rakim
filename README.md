@@ -31,6 +31,11 @@ npm run dev
 - الواجهة: `http://localhost:5173/ar`
 - تسجيل الدخول: `http://localhost:5173/ar/login`
 - لوحة الإدارة: `http://localhost:5173/ar/admin`
+- إعدادات المنصة والصفحات: `http://localhost:5173/ar/admin/settings`
+- الأنواع والجهات والموضوعات: `http://localhost:5173/ar/admin/reference-data`
+- أرشيف التشريعات: `http://localhost:5173/ar/archived-legislation`
+- آخر التعديلات: `http://localhost:5173/ar/latest-modifications`
+- الدستور والمنظومة: `http://localhost:5173/ar/constitution` و`http://localhost:5173/ar/legislative-system`
 - API: `http://localhost:4000/api/v1`
 - OpenAPI/Swagger: `http://localhost:4000/api/docs`
 - الصحة: `http://localhost:4000/api/v1/health`
@@ -65,6 +70,8 @@ npm run restore:check
 من `/ar/admin/imports` يرفع مدخل البيانات TXT وMarkdown وDOCX وPDF والصور وCSV وXLSX. يتحقق API من النوع والحجم والبصمة SHA-256 والتكرار، ثم يخزن المصدر خارج الشفرة ويضع مهمة MariaDB. يستخرج العامل النص والجداول ومعلومات الصفحات، ويشغّل Tesseract العربي للصور وPDF الممسوح. لا يظهر OCR غير المراجع للعامة.
 
 الدورة هي `INBOX → DRAFT → IN_REVIEW → APPROVED_FOR_PUBLISHING → PUBLISHED → ARCHIVED`. مدخل البيانات لا يراجع أو ينشر، والمراجع القانوني لا ينشر، ومدير المحتوى لا يعتمد عملًا شارك في إدخاله أو مراجعته، ومدير النظام التقني لا يملك النشر تلقائيًا. راجع [دليل الاستيراد](docs/import-guide.md) و[دليل الإدارة](docs/admin-guide.md).
+
+من «المحتوى ودورة العمل» يمكن تحرير كل البيانات الوصفية ومعلومات الجريدة والموضوعات والسجلات التابعة. الأعداد الظاهرة تحسب من المواد والتعديلات والملحقات الفعلية. ومن «إعدادات المنصة» يدار الاسم والشعار والألوان والخلفيات والترويسة والتذييل وتبويبات التشريع والصفحات العامة من MariaDB مع سجل تدقيق.
 
 ## تشغيل الإنتاج المحلي عبر systemd وNginx
 
@@ -112,4 +119,4 @@ sudo systemctl stop yemen-legislation-worker yemen-legislation-api
 - OCR العربي يفشل: تحقق بـ`tesseract --list-langs` من وجود `ara`، ومن توفر `pdftoppm` و`pdfinfo`.
 - امتلاء القرص: راقب `storage.freeBytes` في الصحة، وانقل النسخ القديمة وفق سياسة احتفاظ معتمدة.
 
-التصميم والقيود المعروفة موثقة في [سجل التقدم](docs/progress.md)، و[سجل المطابقة](docs/reference-parity.md)، و[تقرير التحقق](docs/verification-report.md).
+التصميم والقيود المعروفة موثقة في [سجل التقدم](docs/progress.md)، و[سجل المطابقة](docs/reference-parity.md)، و[دليل اللقطات المرجعية](docs/reference-screenshots/README.md)، و[تقرير التحقق](docs/verification-report.md).

@@ -1,7 +1,7 @@
-export function LoadingCards() {
+export function LoadingCards({ count = 3 }: { count?: number }) {
   return (
     <div className="cards" aria-busy="true" aria-label="جار التحميل">
-      {[1, 2, 3].map((item) => (
+      {Array.from({ length: count }, (_, index) => index + 1).map((item) => (
         <div className="skeleton card" key={item}>
           <span />
           <span />

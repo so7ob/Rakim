@@ -7,13 +7,16 @@ import "@fontsource/cairo/700.css";
 import { App } from "./App";
 import "./styles.css";
 import { AuthProvider } from "./auth/AuthContext";
+import { SiteConfigProvider } from "./site/SiteConfigContext";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
-      <AuthProvider>
-        <App />
-      </AuthProvider>
+      <SiteConfigProvider>
+        <AuthProvider>
+          <App />
+        </AuthProvider>
+      </SiteConfigProvider>
     </BrowserRouter>
   </StrictMode>,
 );

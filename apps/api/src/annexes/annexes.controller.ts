@@ -47,6 +47,7 @@ export class AnnexesController {
   async file(
     @Param("id") id: string,
     @Query("version") version: string | undefined,
+    @Query("download") download: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ) {
     const rows = await this.db.query(
@@ -67,7 +68,7 @@ export class AnnexesController {
     response.setHeader("Content-Type", String(rows[0].mediaType));
     response.setHeader(
       "Content-Disposition",
-      `inline; filename*=UTF-8''${encodeURIComponent(String(rows[0].fileName))}`,
+      `${download === "1" ? "attachment" : "inline"}; filename*=UTF-8''${encodeURIComponent(String(rows[0].fileName))}`,
     );
     return new StreamableFile(createReadStream(target));
   }
