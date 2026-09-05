@@ -6,7 +6,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import type { DataSource } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
@@ -28,6 +28,12 @@ const formats: Record<string, string> = {
 };
 
 const structureNodeTypes = new Set(["TITLE", "CHAPTER", "SECTION"]);
+
+export function normalizeUploadedFilename(value: string) {
+  if (!/[ÃÂØÙ]/u.test(value)) return value;
+  const decoded = Buffer.from(value, "latin1").toString("utf8");
+  return decoded.includes("\uFFFD") ? value : decoded;
+}
 
 function parseExtractionJson(value: unknown): Record<string, unknown> {
   if (!value) return {};
@@ -140,11 +146,16 @@ export class ImportsService {
     file: Express.Multer.File | undefined,
     obtainedFrom: string,
     actor: AuthUser,
+    referencePdf?: Express.Multer.File,
   ) {
     if (!file) throw new BadRequestException("اختر ملفًا للاستيراد.");
     if (!obtainedFrom?.trim())
       throw new BadRequestException("جهة الحصول على المصدر إلزامية.");
-    const extension = extname(file.originalname).toLowerCase();
+    const originalName = normalizeUploadedFilename(file.originalname).slice(
+      0,
+      255,
+    );
+    const extension = extname(originalName).toLowerCase();
     const mediaType = formats[extension];
     if (!mediaType)
       throw new BadRequestException(
@@ -161,10 +172,32 @@ export class ImportsService {
       throw new BadRequestException(
         "محتوى الملف لا يطابق امتداده أو يحتوي بيانات غير صالحة.",
       );
+    const referenceName = referencePdf
+      ? normalizeUploadedFilename(referencePdf.originalname).slice(0, 255)
+      : null;
+    if (referencePdf && extname(referenceName!).toLowerCase() !== ".pdf")
+      throw new BadRequestException("ملف المقارنة يجب أن يكون بصيغة PDF.");
+    if (
+      referencePdf &&
+      (!referencePdf.size ||
+        referencePdf.size >
+          Number(process.env.MAX_IMPORT_BYTES ?? 30 * 1024 * 1024))
+    )
+      throw new BadRequestException(
+        "حجم ملف PDF غير مسموح. الحد الافتراضي 30 ميجابايت.",
+      );
+    if (referencePdf && !validSignature(".pdf", referencePdf.buffer))
+      throw new BadRequestException("محتوى ملف المقارنة لا يطابق صيغة PDF.");
     const sha256 = createHash("sha256").update(file.buffer).digest("hex");
+    const referenceSha256 = referencePdf
+      ? createHash("sha256").update(referencePdf.buffer).digest("hex")
+      : null;
+    if (referenceSha256 === sha256)
+      throw new BadRequestException("لا يمكن إرفاق الملف نفسه مرتين.");
     const duplicate = await this.db.query(
-      "SELECT id,original_name originalName FROM source_documents WHERE sha256=?",
-      [sha256],
+      `SELECT id,original_name originalName FROM source_documents
+       WHERE sha256 IN (${referenceSha256 ? "?,?" : "?"}) LIMIT 1`,
+      referenceSha256 ? [sha256, referenceSha256] : [sha256],
     );
     if (duplicate[0])
       throw new ConflictException({
@@ -172,6 +205,7 @@ export class ImportsService {
         duplicateSource: duplicate[0],
       });
     const sourceId = randomUUID();
+    const referenceSourceId = referencePdf ? randomUUID() : null;
     const importId = randomUUID();
     const jobId = randomUUID();
     const dataRoot = resolve(
@@ -180,63 +214,125 @@ export class ImportsService {
     const date = new Date().toISOString().slice(0, 10);
     const storageKey = `sources/inbox/${date}/${sourceId}${extension}`;
     const target = resolve(dataRoot, storageKey);
+    const referenceStorageKey = referenceSourceId
+      ? `sources/inbox/${date}/${referenceSourceId}.pdf`
+      : null;
+    const referenceTarget = referenceStorageKey
+      ? resolve(dataRoot, referenceStorageKey)
+      : null;
     if (!target.startsWith(`${dataRoot}${sep}`))
       throw new BadRequestException("تعذر إنشاء مسار تخزين آمن.");
+    if (referenceTarget && !referenceTarget.startsWith(`${dataRoot}${sep}`))
+      throw new BadRequestException("تعذر إنشاء مسار تخزين PDF آمن.");
     await mkdir(resolve(target, ".."), { recursive: true, mode: 0o750 });
-    await writeFile(target, file.buffer, { mode: 0o640, flag: "wx" });
-    await this.db.transaction(async (m) => {
-      await m.query(
-        `INSERT INTO source_documents
+    try {
+      await writeFile(target, file.buffer, { mode: 0o640, flag: "wx" });
+      if (referencePdf && referenceTarget)
+        await writeFile(referenceTarget, referencePdf.buffer, {
+          mode: 0o640,
+          flag: "wx",
+        });
+      await this.db.transaction(async (m) => {
+        await m.query(
+          `INSERT INTO source_documents
         (id,original_name,storage_key,media_type,byte_size,sha256,received_at,obtained_from,extraction_status,created_by)
         VALUES (?,?,?,?,?,?,NOW(3),?,'PENDING',?)`,
-        [
-          sourceId,
-          file.originalname.slice(0, 255),
-          storageKey,
-          mediaType,
-          file.size,
-          sha256,
-          obtainedFrom.trim(),
-          actor.id,
-        ],
-      );
-      await m.query(
-        `INSERT INTO source_imports (id,source_document_id,uploaded_by,status,detected_format) VALUES (?,?,?,'QUEUED',?)`,
-        [importId, sourceId, actor.id, extension.slice(1).toUpperCase()],
-      );
-      await m.query(
-        `INSERT INTO job_queue (id,job_type,payload_json,priority) VALUES (?,'IMPORT_SOURCE',?,10)`,
-        [
-          jobId,
-          JSON.stringify({
-            importId,
-            sourceDocumentId: sourceId,
+          [
+            sourceId,
+            originalName,
             storageKey,
             mediaType,
-          }),
-        ],
-      );
-      await m.query(
-        `INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,after_json,reason) VALUES (?,?,'IMPORT_SOURCE','SOURCE_IMPORT',?,?,'رفع مصدر وحساب بصمته وإرساله للاستخراج')`,
-        [
-          randomUUID(),
-          actor.id,
-          importId,
-          JSON.stringify({
-            originalName: file.originalname,
-            size: file.size,
+            file.size,
             sha256,
-            mediaType,
-          }),
-        ],
+            obtainedFrom.trim(),
+            actor.id,
+          ],
+        );
+        await m.query(
+          `INSERT INTO source_imports (id,source_document_id,uploaded_by,status,detected_format) VALUES (?,?,?,'QUEUED',?)`,
+          [importId, sourceId, actor.id, extension.slice(1).toUpperCase()],
+        );
+        if (
+          referencePdf &&
+          referenceSourceId &&
+          referenceStorageKey &&
+          referenceName &&
+          referenceSha256
+        ) {
+          await m.query(
+            `INSERT INTO source_documents
+             (id,original_name,storage_key,media_type,byte_size,sha256,received_at,
+              obtained_from,extraction_status,created_by)
+             VALUES (?,?,?,'application/pdf',?,?,NOW(3),?,'PENDING',?)`,
+            [
+              referenceSourceId,
+              referenceName,
+              referenceStorageKey,
+              referencePdf.size,
+              referenceSha256,
+              obtainedFrom.trim(),
+              actor.id,
+            ],
+          );
+          await m.query(
+            `INSERT INTO source_import_attachments
+             (source_import_id,source_document_id,attachment_role)
+             VALUES (?,?,'OFFICIAL_PDF')`,
+            [importId, referenceSourceId],
+          );
+        }
+        await m.query(
+          `INSERT INTO job_queue (id,job_type,payload_json,priority) VALUES (?,'IMPORT_SOURCE',?,10)`,
+          [
+            jobId,
+            JSON.stringify({
+              importId,
+              sourceDocumentId: sourceId,
+              storageKey,
+              mediaType,
+            }),
+          ],
+        );
+        await m.query(
+          `INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,after_json,reason) VALUES (?,?,'IMPORT_SOURCE','SOURCE_IMPORT',?,?,'رفع مصدر وحساب بصمته وإرساله للاستخراج')`,
+          [
+            randomUUID(),
+            actor.id,
+            importId,
+            JSON.stringify({
+              originalName,
+              size: file.size,
+              sha256,
+              mediaType,
+              referencePdf: referencePdf
+                ? {
+                    originalName: referenceName,
+                    size: referencePdf.size,
+                    sha256: referenceSha256,
+                    mediaType: "application/pdf",
+                  }
+                : null,
+            }),
+          ],
+        );
+      });
+    } catch (error) {
+      await Promise.allSettled(
+        [target, referenceTarget]
+          .filter((path): path is string => Boolean(path))
+          .map((path) => unlink(path)),
       );
-    });
+      throw error;
+    }
     return {
       id: importId,
       sourceDocumentId: sourceId,
       status: "QUEUED",
       sha256,
       jobId,
+      attachments: referenceSourceId
+        ? [{ sourceDocumentId: referenceSourceId, role: "OFFICIAL_PDF" }]
+        : [],
     };
   }
 
@@ -246,7 +342,12 @@ export class ImportsService {
       `SELECT si.id,si.status,si.detected_format detectedFormat,
     si.created_at createdAt,si.updated_at updatedAt,sd.id sourceDocumentId,sd.original_name originalName,sd.media_type mediaType,
     sd.byte_size byteSize,sd.sha256,sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,u.display_name uploadedBy,
-    l.id legislationId,l.title_ar legislationTitle FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
+    l.id legislationId,l.title_ar legislationTitle,
+    (SELECT COUNT(*) FROM source_import_attachments sia WHERE sia.source_import_id=si.id) attachmentCount,
+    (SELECT attached.original_name FROM source_import_attachments sia
+      JOIN source_documents attached ON attached.id=sia.source_document_id
+      WHERE sia.source_import_id=si.id AND sia.attachment_role='OFFICIAL_PDF' LIMIT 1) referencePdfName
+    FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
     JOIN users u ON u.id=si.uploaded_by LEFT JOIN legislations l ON l.id=si.legislation_id ${where} ORDER BY si.created_at DESC`,
       status ? [status] : [],
     );
@@ -265,8 +366,18 @@ export class ImportsService {
       string,
       unknown
     >;
+    const attachments = await this.db.query(
+      `SELECT sd.id sourceDocumentId,sd.original_name originalName,
+       sd.media_type mediaType,sd.byte_size byteSize,sd.sha256,
+       sd.extraction_status extractionStatus,sia.attachment_role role
+       FROM source_import_attachments sia
+       JOIN source_documents sd ON sd.id=sia.source_document_id
+       WHERE sia.source_import_id=? ORDER BY sia.created_at,sd.id`,
+      [id],
+    );
     return {
       ...item,
+      attachments,
       analysis: extractionJson
         ? analysisPreview(parseExtractionJson(extractionJson))
         : null,
@@ -279,6 +390,23 @@ export class ImportsService {
       [id],
     );
     if (!rows[0]) throw new NotFoundException("ملف المصدر غير موجود.");
+    return rows[0] as {
+      storageKey: string;
+      fileName: string;
+      mediaType: string;
+    };
+  }
+
+  async attachment(id: string, sourceDocumentId: string) {
+    const rows = await this.db.query(
+      `SELECT sd.storage_key storageKey,sd.original_name fileName,
+       sd.media_type mediaType
+       FROM source_import_attachments sia
+       JOIN source_documents sd ON sd.id=sia.source_document_id
+       WHERE sia.source_import_id=? AND sia.source_document_id=?`,
+      [id, sourceDocumentId],
+    );
+    if (!rows[0]) throw new NotFoundException("ملف المصدر المرفق غير موجود.");
     return rows[0] as {
       storageKey: string;
       fileName: string;
@@ -307,6 +435,13 @@ export class ImportsService {
       await m.query(
         "UPDATE source_documents SET extraction_status='REVIEWED',reviewed_at=NOW(3) WHERE id=?",
         [item.source_document_id],
+      );
+      await m.query(
+        `UPDATE source_documents sd
+         JOIN source_import_attachments sia ON sia.source_document_id=sd.id
+         SET sd.extraction_status='REVIEWED',sd.reviewed_at=NOW(3)
+         WHERE sia.source_import_id=?`,
+        [id],
       );
       await m.query("UPDATE source_imports SET status='REVIEWED' WHERE id=?", [
         id,
@@ -487,6 +622,19 @@ export class ImportsService {
         lawId,
         id,
       ]);
+      await m.query(
+        `INSERT INTO legislation_source_documents
+         (legislation_id,source_document_id,source_role)
+         VALUES (?,?,'EXTRACTION')`,
+        [lawId, item.source_document_id],
+      );
+      await m.query(
+        `INSERT INTO legislation_source_documents
+         (legislation_id,source_document_id,source_role)
+         SELECT ?,source_document_id,'OFFICIAL_PDF'
+         FROM source_import_attachments WHERE source_import_id=?`,
+        [lawId, id],
+      );
       await m.query(
         `INSERT INTO content_responsibilities (legislation_id,user_id,duty) VALUES (?,?,'IMPORT'),(?,?,'EDIT')`,
         [lawId, actor.id, lawId, actor.id],

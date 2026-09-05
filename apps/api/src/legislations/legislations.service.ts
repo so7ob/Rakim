@@ -164,8 +164,11 @@ export class LegislationsService {
     await this.detail(id);
     const rows = await this.db.query(
       `SELECT sd.storage_key storageKey,sd.original_name fileName,sd.media_type mediaType
-    FROM legislation_versions lv JOIN source_documents sd ON sd.id=lv.source_document_id WHERE lv.legislation_id=?
-    AND sd.extraction_status='REVIEWED' ORDER BY lv.version_no DESC LIMIT 1`,
+       FROM legislation_source_documents lsd
+       JOIN source_documents sd ON sd.id=lsd.source_document_id
+       WHERE lsd.legislation_id=? AND sd.extraction_status='REVIEWED'
+       ORDER BY FIELD(lsd.source_role,'OFFICIAL_PDF','EXTRACTION','SUPPORTING'),
+        lsd.created_at DESC LIMIT 1`,
       [id],
     );
     if (!rows[0])

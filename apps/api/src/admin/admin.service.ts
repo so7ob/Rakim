@@ -324,8 +324,12 @@ export class AdminService {
       this.db.query(
         `SELECT DISTINCT sd.id,sd.original_name originalName,sd.media_type mediaType,sd.sha256,sd.byte_size byteSize,
         sd.received_at receivedAt,sd.obtained_from obtainedFrom,sd.page_count pageCount,
-        sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,sd.reviewed_at reviewedAt
-        FROM source_documents sd JOIN legislation_versions lv ON lv.source_document_id=sd.id WHERE lv.legislation_id=?`,
+        sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,sd.reviewed_at reviewedAt,
+        lsd.source_role sourceRole
+        FROM legislation_source_documents lsd
+        JOIN source_documents sd ON sd.id=lsd.source_document_id
+        WHERE lsd.legislation_id=?
+        ORDER BY FIELD(lsd.source_role,'OFFICIAL_PDF','EXTRACTION','SUPPORTING'),sd.received_at DESC`,
         [id],
       ),
       this.db.query(
