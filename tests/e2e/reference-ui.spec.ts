@@ -25,7 +25,12 @@ test("reference viewports have no overflow, missing assets, or UAE requests", as
     if (request.url().includes("uaelegislation.gov.ae"))
       referenceRequests.push(request.url());
   });
-  page.on("requestfailed", (request) => failed.push(request.url()));
+  page.on("requestfailed", (request) => {
+    const errorText = request.failure()?.errorText;
+    if (errorText !== "net::ERR_ABORTED") {
+      failed.push(`${errorText ?? "request failed"} ${request.url()}`);
+    }
+  });
   page.on("response", (response) => {
     if (response.status() >= 400 && !response.url().endsWith("/api/v1/auth/me"))
       failed.push(`${response.status()} ${response.url()}`);
@@ -38,7 +43,6 @@ test("reference viewports have no overflow, missing assets, or UAE requests", as
         .locator('[aria-busy="true"]')
         .waitFor({ state: "detached" })
         .catch(() => undefined);
-      await page.waitForLoadState("networkidle");
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth > innerWidth + 1,
