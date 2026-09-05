@@ -3,15 +3,18 @@ import { Link } from "react-router-dom";
 import { apiRequest } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { useApi } from "../hooks/use-api";
+import { UiIcon } from "./UiIcon";
 interface Favorite {
   id: string;
 }
 export function LegislationActions({
   id,
   sourceAvailable = true,
+  embedded = false,
 }: {
   id: string;
   sourceAvailable?: boolean;
+  embedded?: boolean;
 }) {
   const auth = useAuth();
   const favorites = useApi<Favorite[]>(auth.user ? "/me/favorites" : null);
@@ -31,17 +34,36 @@ export function LegislationActions({
   };
   return (
     <>
-      <div className="container detail-tools" aria-label="أدوات التشريع">
+      <div
+        className={`${embedded ? "hero-action-tools" : "container detail-tools"}`}
+        aria-label="أدوات التشريع"
+      >
         <button
+          type="button"
+          className="action-icon"
+          aria-label="نسخ رابط التشريع"
+          title="نسخ الرابط"
           onClick={async () => {
             await navigator.clipboard?.writeText(location.href);
             setMsg("نُسخ الرابط.");
           }}
         >
-          نسخ الرابط
+          <UiIcon name="link" />
         </button>
-        <button onClick={() => window.print()}>طباعة</button>
         <button
+          type="button"
+          className="action-icon"
+          aria-label="طباعة التشريع"
+          title="طباعة"
+          onClick={() => window.print()}
+        >
+          <UiIcon name="print" />
+        </button>
+        <button
+          type="button"
+          className="action-icon"
+          aria-label="مشاركة التشريع"
+          title="مشاركة"
           onClick={async () => {
             if (navigator.share)
               await navigator.share({
@@ -51,37 +73,77 @@ export function LegislationActions({
             else await navigator.clipboard?.writeText(location.href);
           }}
         >
-          مشاركة
+          <UiIcon name="share" />
         </button>
         {sourceAvailable ? (
-          <a href={`/api/v1/legislations/${id}/source`} download>
-            تنزيل المصدر
+          <a
+            className="action-icon"
+            href={`/ar/legislations/${id}/download`}
+            aria-label="تنزيل مصدر التشريع"
+            title="تنزيل المصدر"
+          >
+            <UiIcon name="download" />
           </a>
         ) : (
-          <button disabled title="لا يوجد ملف مصدر عام">
-            تنزيل المصدر
+          <button
+            type="button"
+            className="action-icon"
+            disabled
+            aria-label="لا يوجد ملف مصدر عام"
+            title="لا يوجد ملف مصدر عام"
+          >
+            <UiIcon name="download" />
           </button>
         )}
         {auth.user ? (
           <>
-            <button aria-pressed={favorite} onClick={toggle}>
-              {favorite ? "★ في المفضلة" : "☆ إضافة للمفضلة"}
+            <button
+              type="button"
+              className="action-icon"
+              aria-label={favorite ? "إزالة من المفضلة" : "إضافة للمفضلة"}
+              title={favorite ? "إزالة من المفضلة" : "إضافة للمفضلة"}
+              aria-pressed={favorite}
+              onClick={toggle}
+            >
+              <UiIcon name="heart" fill={favorite ? "currentColor" : "none"} />
             </button>
             <details className="tool-popover">
-              <summary>ملاحظة خاصة</summary>
+              <summary
+                className="action-icon"
+                aria-label="إضافة ملاحظة خاصة"
+                title="ملاحظة خاصة"
+              >
+                <UiIcon name="note" />
+              </summary>
               <ToolForm id={id} kind="note" done={setMsg} />
             </details>
             <details className="tool-popover">
-              <summary>إبلاغ</summary>
+              <summary
+                className="action-icon"
+                aria-label="الإبلاغ عن مشكلة"
+                title="إبلاغ"
+              >
+                <span aria-hidden="true">!</span>
+              </summary>
               <ToolForm id={id} kind="report" done={setMsg} />
             </details>
           </>
         ) : (
-          <Link to="/ar/login">دخول للمفضلة والملاحظات</Link>
+          <Link
+            className="action-icon"
+            to="/ar/login"
+            aria-label="تسجيل الدخول لاستخدام المفضلة والملاحظات"
+            title="المفضلة والملاحظات"
+          >
+            <UiIcon name="heart" />
+          </Link>
         )}
       </div>
       {msg && (
-        <p className="container tool-message" role="status">
+        <p
+          className={`${embedded ? "tool-message hero-tool-message" : "container tool-message"}`}
+          role="status"
+        >
           {msg}
         </p>
       )}

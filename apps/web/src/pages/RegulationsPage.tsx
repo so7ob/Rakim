@@ -2,6 +2,8 @@ import { lazy, Suspense, useState } from "react";
 import { Link, useParams, useSearchParams } from "react-router-dom";
 import { EmptyPanel, ErrorPanel, LoadingCards } from "../components/StatePanel";
 import { useApi } from "../hooks/use-api";
+import { LegislationSubpageHeader } from "../components/LegislationSubpageHeader";
+import { UiIcon } from "../components/UiIcon";
 const PdfViewer = lazy(() =>
   import("../components/PdfViewer").then((module) => ({
     default: module.PdfViewer,
@@ -40,81 +42,103 @@ export function RegulationsPage() {
   );
   const [open, setOpen] = useState<string | null>(target);
   return (
-    <div className="container page-shell">
-      <Link className="back-dark" to={`/ar/legislations/${id}`}>
-        ← العودة إلى التشريع
-      </Link>
-      <header className="page-title">
-        <span className="eyebrow dark">إصدارات زمنية مستقلة</span>
-        <h1>اللوائح والجداول والملاحق</h1>
-        <p>
-          ملفات المصدر منفصلة عن البيانات المنظمة ولا تحذف النسخة المستبدلة.
-        </p>
-      </header>
-      {loading ? (
-        <LoadingCards />
-      ) : error ? (
-        <ErrorPanel message={error.message} retry={retry} />
-      ) : !data?.length ? (
-        <EmptyPanel />
-      ) : (
-        <div className="annex-list">
-          {data.map((annex) => (
-            <article
-              className="card annex-card"
-              id={`annex-${annex.id}`}
-              key={annex.versionId}
-            >
-              <header>
-                <div>
-                  <span className="tag">
-                    {labels[annex.annexType] ?? annex.annexType}
-                  </span>
-                  <h2>{annex.titleAr}</h2>
-                  <p>
-                    الإصدار {annex.versionNo} — نافذ من {annex.validFrom}
-                  </p>
-                </div>
-                <button
-                  className="button secondary"
-                  onClick={() =>
-                    setOpen(open === annex.versionId ? null : annex.versionId)
-                  }
-                  aria-expanded={open === annex.versionId}
+    <>
+      {id && <LegislationSubpageHeader id={id} section="regulations" />}
+      <div className="container subresource-shell">
+        <section className="subresource-panel">
+          <header className="subresource-title">
+            <h1 aria-label="اللوائح والجداول والملاحق">لوائح وجداول</h1>
+            {id && (
+              <Link
+                className="legislation-full-link"
+                to={`/ar/legislations/${id}`}
+              >
+                للاطلاع على كامل التشريع يرجى الضغط هنا
+              </Link>
+            )}
+          </header>
+          {loading ? (
+            <LoadingCards />
+          ) : error ? (
+            <ErrorPanel message={error.message} retry={retry} />
+          ) : !data?.length ? (
+            <EmptyPanel />
+          ) : (
+            <div className="annex-list reference-annexes">
+              {data.map((annex) => (
+                <article
+                  className="card annex-card"
+                  id={`annex-${annex.id}`}
+                  key={annex.versionId}
                 >
-                  {open === annex.versionId ? "إغلاق" : "فتح"}
-                </button>
-              </header>
-              {(open === annex.versionId ||
-                (open === annex.id && target === annex.id)) && (
-                <div className="annex-body">
-                  {annex.fileId ? (
-                    <Suspense fallback={<LoadingCards />}>
-                      <PdfViewer
-                        url={`/api/v1/annexes/${annex.id}/file?version=${encodeURIComponent(annex.versionId)}`}
-                        fileName={annex.fileName ?? "ملف ملحق.pdf"}
-                        reportedPages={annex.pageCount}
-                        initialPage={target === annex.id ? initialPage : 1}
-                      />
-                    </Suspense>
-                  ) : annex.structuredTable ? (
-                    <StructuredTable
-                      data={annex.structuredTable}
-                      title={annex.titleAr}
-                    />
-                  ) : (
-                    <EmptyPanel
-                      title="لا يوجد ملف لهذا الإصدار"
-                      body="بيانات الإصدار محفوظة، وسيضاف الملف بعد المراجعة."
-                    />
+                  <header>
+                    <time dateTime={annex.validFrom}>{annex.validFrom}</time>
+                    <div>
+                      <h2>{annex.titleAr}</h2>
+                      <p>
+                        {labels[annex.annexType] ?? annex.annexType} — الإصدار{" "}
+                        {annex.versionNo}
+                      </p>
+                    </div>
+                    <div className="annex-actions">
+                      {annex.fileId && (
+                        <a
+                          className="annex-download"
+                          href={`/ar/legislations/${id}/regulations/${annex.id}/download`}
+                        >
+                          تنزيل
+                        </a>
+                      )}
+                      <button
+                        className="button secondary"
+                        onClick={() =>
+                          setOpen(
+                            open === annex.versionId ? null : annex.versionId,
+                          )
+                        }
+                        aria-expanded={open === annex.versionId}
+                      >
+                        <UiIcon
+                          name={open === annex.versionId ? "minus" : "plus"}
+                        />
+                        <span className="sr-only">
+                          {open === annex.versionId ? "إغلاق" : "فتح"}
+                        </span>
+                      </button>
+                    </div>
+                  </header>
+                  {(open === annex.versionId ||
+                    (open === annex.id && target === annex.id)) && (
+                    <div className="annex-body">
+                      {annex.fileId ? (
+                        <Suspense fallback={<LoadingCards />}>
+                          <PdfViewer
+                            url={`/api/v1/annexes/${annex.id}/file?version=${encodeURIComponent(annex.versionId)}`}
+                            fileName={annex.fileName ?? "ملف ملحق.pdf"}
+                            reportedPages={annex.pageCount}
+                            initialPage={target === annex.id ? initialPage : 1}
+                          />
+                        </Suspense>
+                      ) : annex.structuredTable ? (
+                        <StructuredTable
+                          data={annex.structuredTable}
+                          title={annex.titleAr}
+                        />
+                      ) : (
+                        <EmptyPanel
+                          title="لا يوجد ملف لهذا الإصدار"
+                          body="بيانات الإصدار محفوظة، وسيضاف الملف بعد المراجعة."
+                        />
+                      )}
+                    </div>
                   )}
-                </div>
-              )}
-            </article>
-          ))}
-        </div>
-      )}
-    </div>
+                </article>
+              ))}
+            </div>
+          )}
+        </section>
+      </div>
+    </>
   );
 }
 function StructuredTable({ data, title }: { data: unknown; title: string }) {

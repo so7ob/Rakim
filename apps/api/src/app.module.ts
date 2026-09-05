@@ -10,6 +10,7 @@ import { AuthModule } from "./auth/auth.module.js";
 import { ImportsModule } from "./imports/imports.module.js";
 import { UserToolsModule } from "./users/user-tools.module.js";
 import { AmendmentsModule } from "./amendments/amendments.module.js";
+import { SiteModule } from "./site/site.module.js";
 
 @Module({
   imports: [
@@ -23,6 +24,7 @@ import { AmendmentsModule } from "./amendments/amendments.module.js";
     ImportsModule,
     UserToolsModule,
     AmendmentsModule,
+    SiteModule,
   ],
   controllers: [HealthController],
 })

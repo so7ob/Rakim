@@ -17,6 +17,21 @@ const digest = (value: string) =>
 export class AuthService {
   constructor(@Inject(DATABASE) private readonly db: DataSource) {}
 
+  async sessionFromToken(token: string | undefined): Promise<{
+    id: string;
+    userId: string;
+  } | null> {
+    if (!token) return null;
+    const rows = (await this.db.query(
+      `SELECT s.id,s.user_id userId
+      FROM user_sessions s JOIN users u ON u.id=s.user_id
+      WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>NOW(3)
+        AND u.is_active=1 LIMIT 1`,
+      [digest(token)],
+    )) as Array<{ id: string; userId: string }>;
+    return rows[0] ?? null;
+  }
+
   async login(
     usernameRaw: string,
     password: string,

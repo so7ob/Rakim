@@ -29,6 +29,15 @@ class ChangePasswordDto {
   newPassword!: string;
 }
 
+function sessionCookie(header: string | undefined): string | undefined {
+  const value = header
+    ?.split(";")
+    .map((part) => part.trim())
+    .find((part) => part.startsWith("ylp_session="))
+    ?.slice("ylp_session=".length);
+  return value ? decodeURIComponent(value) : undefined;
+}
+
 @ApiTags("المصادقة")
 @Controller("auth")
 export class AuthController {
@@ -63,6 +72,19 @@ export class AuthController {
     return {
       user: request.user,
       csrfToken: await this.auth.rotateCsrf(request.sessionId!),
+    };
+  }
+
+  @Get("status")
+  @ApiOperation({ summary: "حالة الجلسة الاختيارية للغلاف العام" })
+  async status(@Req() request: Request) {
+    const session = await this.auth.sessionFromToken(
+      sessionCookie(request.headers.cookie),
+    );
+    if (!session) return { user: null, csrfToken: "" };
+    return {
+      user: await this.auth.userById(session.userId),
+      csrfToken: await this.auth.rotateCsrf(session.id),
     };
   }
 

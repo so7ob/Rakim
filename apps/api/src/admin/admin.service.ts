@@ -95,6 +95,149 @@ export class AdminService {
     return { types, authorities, subjects };
   }
 
+  async referenceData() {
+    const [types, authorities, subjects] = await Promise.all([
+      this.db.query(
+        "SELECT id,code,name_ar nameAr,is_active isActive FROM legislation_types ORDER BY name_ar",
+      ),
+      this.db.query(
+        "SELECT id,code,name_ar nameAr,is_active isActive FROM authorities ORDER BY name_ar",
+      ),
+      this.db.query(
+        "SELECT id,parent_id parentId,code,name_ar nameAr,is_active isActive,version_no versionNo FROM subjects ORDER BY name_ar",
+      ),
+    ]);
+    return { types, authorities, subjects };
+  }
+
+  async createReference(
+    kind: string,
+    input: {
+      code: string;
+      nameAr: string;
+      isActive: boolean;
+      parentId?: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    const target = this.referenceTarget(kind);
+    const code = input.code.trim().toUpperCase();
+    if (!/^[A-Z0-9_]{2,60}$/.test(code))
+      throw new BadRequestException(
+        "الرمز يجب أن يتكون من أحرف لاتينية كبيرة وأرقام وشرطة سفلية.",
+      );
+    const id = randomUUID();
+    try {
+      await this.db.transaction(async (manager) => {
+        if (target.table === "subjects")
+          await manager.query(
+            "INSERT INTO subjects (id,parent_id,code,name_ar,is_active) VALUES (?,?,?,?,?)",
+            [
+              id,
+              input.parentId || null,
+              code,
+              input.nameAr.trim(),
+              input.isActive,
+            ],
+          );
+        else
+          await manager.query(
+            `INSERT INTO ${target.table} (id,code,name_ar,is_active) VALUES (?,?,?,?)`,
+            [id, code, input.nameAr.trim(), input.isActive],
+          );
+        await this.auditWith(
+          manager,
+          actor.id,
+          "CREATE_REFERENCE_DATA",
+          target.entity,
+          id,
+          null,
+          { ...input, code },
+          reason,
+        );
+      });
+    } catch (error) {
+      if (String(error).includes("Duplicate entry"))
+        throw new ConflictException("رمز القائمة مستخدم بالفعل.");
+      throw error;
+    }
+    return { id };
+  }
+
+  async updateReference(
+    kind: string,
+    id: string,
+    input: {
+      code: string;
+      nameAr: string;
+      isActive: boolean;
+      parentId?: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    const target = this.referenceTarget(kind);
+    const code = input.code.trim().toUpperCase();
+    if (!/^[A-Z0-9_]{2,60}$/.test(code))
+      throw new BadRequestException("الرمز غير صالح.");
+    if (input.parentId === id)
+      throw new BadRequestException("لا يمكن أن يكون الموضوع أبًا لنفسه.");
+    return this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        `SELECT * FROM ${target.table} WHERE id=? FOR UPDATE`,
+        [id],
+      );
+      if (!rows[0])
+        throw new NotFoundException("عنصر القائمة المرجعية غير موجود.");
+      if (target.table === "subjects")
+        await manager.query(
+          "UPDATE subjects SET parent_id=?,code=?,name_ar=?,is_active=?,version_no=version_no+1 WHERE id=?",
+          [
+            input.parentId || null,
+            code,
+            input.nameAr.trim(),
+            input.isActive,
+            id,
+          ],
+        );
+      else
+        await manager.query(
+          `UPDATE ${target.table} SET code=?,name_ar=?,is_active=? WHERE id=?`,
+          [code, input.nameAr.trim(), input.isActive, id],
+        );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_REFERENCE_DATA",
+        target.entity,
+        id,
+        rows[0],
+        { ...input, code },
+        reason,
+      );
+      return { id };
+    });
+  }
+
+  private referenceTarget(kind: string) {
+    const targets: Record<
+      string,
+      {
+        table: "legislation_types" | "authorities" | "subjects";
+        entity: string;
+      }
+    > = {
+      types: { table: "legislation_types", entity: "LEGISLATION_TYPE" },
+      authorities: { table: "authorities", entity: "AUTHORITY" },
+      subjects: { table: "subjects", entity: "SUBJECT" },
+    };
+    const target = targets[kind];
+    if (!target)
+      throw new BadRequestException("نوع القائمة المرجعية غير معروف.");
+    return target;
+  }
+
   async legislations(query: {
     status?: string;
     q?: string;
@@ -146,7 +289,14 @@ export class AdminService {
       responsibilities,
       types,
       authorities,
+      subjects,
+      selectedSubjects,
       articles,
+      gazette,
+      structures,
+      annexes,
+      relations,
+      legislationOptions,
     ] = await Promise.all([
       this.db.query(
         `SELECT lv.id,lv.version_no versionNo,lv.workflow_status workflowStatus,lv.content_kind contentKind,
@@ -161,7 +311,8 @@ export class AdminService {
         [id],
       ),
       this.db.query(
-        `SELECT DISTINCT sd.id,sd.original_name originalName,sd.media_type mediaType,sd.sha256,
+        `SELECT DISTINCT sd.id,sd.original_name originalName,sd.media_type mediaType,sd.sha256,sd.byte_size byteSize,
+        sd.received_at receivedAt,sd.obtained_from obtainedFrom,sd.page_count pageCount,
         sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,sd.reviewed_at reviewedAt
         FROM source_documents sd JOIN legislation_versions lv ON lv.source_document_id=sd.id WHERE lv.legislation_id=?`,
         [id],
@@ -178,7 +329,41 @@ export class AdminService {
         "SELECT id,code,name_ar name FROM authorities WHERE is_active=1 ORDER BY name_ar",
       ),
       this.db.query(
-        `SELECT a.id,a.current_label currentLabel,a.published_label publishedLabel,a.sort_key sortKey,av.id versionId,av.version_no versionNo,av.text_original textOriginal,av.status,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom FROM articles a JOIN article_versions av ON av.article_id=a.id WHERE a.legislation_id=? AND av.version_no=(SELECT MAX(v.version_no) FROM article_versions v WHERE v.article_id=a.id) ORDER BY a.sort_key`,
+        "SELECT id,code,name_ar name FROM subjects WHERE is_active=1 ORDER BY name_ar",
+      ),
+      this.db.query(
+        `SELECT s.id,s.code,s.name_ar name FROM legislation_subjects ls JOIN subjects s ON s.id=ls.subject_id WHERE ls.legislation_id=? ORDER BY s.name_ar`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT a.id,a.current_label currentLabel,a.published_label publishedLabel,a.sort_key sortKey,a.structure_node_id structureNodeId,
+        av.id versionId,av.version_no versionNo,av.text_original textOriginal,av.status,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,
+        DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,av.ending_reason endingReason,av.source_document_id sourceDocumentId
+        FROM articles a JOIN article_versions av ON av.article_id=a.id WHERE a.legislation_id=? AND av.version_no=(SELECT MAX(v.version_no) FROM article_versions v WHERE v.article_id=a.id) ORDER BY a.sort_key`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT gi.id,gi.issue_number issueNumber,DATE_FORMAT(gi.publication_date,'%Y-%m-%d') publicationDate,gi.publisher,gi.notes
+         FROM legislations l LEFT JOIN gazette_issues gi ON gi.id=l.gazette_issue_id WHERE l.id=?`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT id,parent_id parentId,node_type nodeType,label_ar labelAr,title_ar titleAr,sort_key sortKey FROM structure_nodes WHERE legislation_id=? ORDER BY sort_key`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT ax.id,ax.annex_type annexType,ax.title_ar titleAr,ax.status,COUNT(av.id) versionCount FROM annexes ax LEFT JOIN annex_versions av ON av.annex_id=ax.id WHERE ax.legislation_id=? GROUP BY ax.id ORDER BY ax.title_ar`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT lr.id,lr.relation_type relationType,lr.scope_text scopeText,DATE_FORMAT(lr.effective_from,'%Y-%m-%d') effectiveFrom,
+        lr.review_status reviewStatus,lr.source_document_id sourceDocumentId,
+        lr.target_legislation_id targetLegislationId,target.title_ar targetTitle
+        FROM legal_relations lr JOIN legislations target ON target.id=lr.target_legislation_id WHERE lr.source_legislation_id=? ORDER BY lr.effective_from DESC`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT id,title_ar name FROM legislations WHERE id<>? ORDER BY title_ar`,
         [id],
       ),
     ]);
@@ -189,7 +374,14 @@ export class AdminService {
       sources,
       responsibilities,
       articles,
-      references: { types, authorities },
+      gazette: gazette[0] ?? null,
+      structures,
+      annexes,
+      relations,
+      selectedSubjectIds: selectedSubjects.map(
+        (subject: { id: string }) => subject.id,
+      ),
+      references: { types, authorities, subjects, legislationOptions },
     };
   }
 
@@ -238,6 +430,496 @@ export class AdminService {
     });
   }
 
+  async updateDraftArticleMetadata(
+    id: string,
+    input: {
+      currentLabel: string;
+      publishedLabel: string;
+      sortKey: string;
+      structureNodeId?: string;
+      validFrom: string;
+      text: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (!input.text.trim()) throw new BadRequestException("نص المادة مطلوب.");
+    return this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        `SELECT a.*,l.status lawStatus,av.id versionId,av.status versionStatus,
+         av.valid_from validFrom,av.text_original oldText
+         FROM articles a JOIN legislations l ON l.id=a.legislation_id JOIN article_versions av ON av.article_id=a.id
+         WHERE a.id=? ORDER BY av.version_no DESC LIMIT 1 FOR UPDATE`,
+        [id],
+      );
+      const item = rows[0];
+      if (!item) throw new NotFoundException("المادة غير موجودة.");
+      if (
+        !["INBOX", "DRAFT", "IN_REVIEW"].includes(item.lawStatus) ||
+        item.versionStatus !== "DRAFT"
+      )
+        throw new ConflictException(
+          "بيانات نسخة مادة منشورة لا تعدل في مكانها.",
+        );
+      if (input.structureNodeId) {
+        const nodes = await manager.query(
+          "SELECT id FROM structure_nodes WHERE id=? AND legislation_id=?",
+          [input.structureNodeId, item.legislation_id],
+        );
+        if (!nodes.length)
+          throw new BadRequestException(
+            "العقدة البنيوية ليست تابعة لهذا التشريع.",
+          );
+      }
+      await manager.query(
+        `UPDATE articles SET current_label=?,published_label=?,sort_key=?,structure_node_id=? WHERE id=?`,
+        [
+          input.currentLabel.trim(),
+          input.publishedLabel.trim(),
+          input.sortKey.trim(),
+          input.structureNodeId || null,
+          id,
+        ],
+      );
+      await manager.query(
+        `UPDATE article_versions
+         SET valid_from=?,text_original=?,text_structured=?,text_normalized=?
+         WHERE id=?`,
+        [
+          input.validFrom,
+          input.text.trim(),
+          input.text.trim(),
+          normalizeArabic(input.text),
+          item.versionId,
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_DRAFT_ARTICLE_METADATA",
+        "ARTICLE",
+        id,
+        item,
+        input,
+        reason,
+      );
+      return { id, versionId: item.versionId };
+    });
+  }
+
+  async updateSource(
+    id: string,
+    input: {
+      obtainedFrom: string;
+      pageCount?: number;
+      extractionStatus: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (
+      input.extractionStatus === "REVIEWED" &&
+      !actor.roles.includes("LEGAL_REVIEWER")
+    )
+      throw new ForbiddenException(
+        "اعتماد المصدر المستخرج من صلاحية المراجع القانوني.",
+      );
+    return this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        "SELECT * FROM source_documents WHERE id=? FOR UPDATE",
+        [id],
+      );
+      if (!rows[0]) throw new NotFoundException("المصدر غير موجود.");
+      await manager.query(
+        `UPDATE source_documents SET obtained_from=?,page_count=?,extraction_status=?,reviewed_at=IF(?='REVIEWED',NOW(3),NULL) WHERE id=?`,
+        [
+          input.obtainedFrom.trim(),
+          input.pageCount ?? null,
+          input.extractionStatus,
+          input.extractionStatus,
+          id,
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_SOURCE_METADATA",
+        "SOURCE_DOCUMENT",
+        id,
+        rows[0],
+        input,
+        reason,
+      );
+      return { id };
+    });
+  }
+
+  async updateStructure(
+    id: string,
+    input: {
+      nodeType: string;
+      parentId?: string;
+      labelAr?: string;
+      titleAr: string;
+      sortKey: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    return this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        `SELECT sn.*,l.status lawStatus FROM structure_nodes sn JOIN legislations l ON l.id=sn.legislation_id WHERE sn.id=? FOR UPDATE`,
+        [id],
+      );
+      if (!rows[0]) throw new NotFoundException("عنصر الهيكل غير موجود.");
+      if (
+        !["INBOX", "DRAFT", "IN_REVIEW"].includes(rows[0].lawStatus) &&
+        !actor.roles.includes("CONTENT_MANAGER")
+      )
+        throw new ConflictException("يتطلب تصحيح هيكل منشور مدير محتوى.");
+      if (input.parentId === id)
+        throw new BadRequestException("لا يمكن أن يكون العنصر أبًا لنفسه.");
+      if (input.parentId) {
+        const parents = await manager.query(
+          "SELECT id FROM structure_nodes WHERE id=? AND legislation_id=?",
+          [input.parentId, rows[0].legislation_id],
+        );
+        if (!parents.length)
+          throw new BadRequestException("العنصر الأب ليس تابعًا لهذا التشريع.");
+      }
+      await manager.query(
+        `UPDATE structure_nodes SET node_type=?,parent_id=?,label_ar=?,title_ar=?,sort_key=? WHERE id=?`,
+        [
+          input.nodeType,
+          input.parentId || null,
+          input.labelAr?.trim() || null,
+          input.titleAr.trim(),
+          input.sortKey.trim(),
+          id,
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_STRUCTURE_NODE",
+        "STRUCTURE_NODE",
+        id,
+        rows[0],
+        input,
+        reason,
+      );
+      return { id };
+    });
+  }
+
+  async createStructure(
+    legislationId: string,
+    input: {
+      nodeType: string;
+      parentId?: string;
+      labelAr?: string;
+      titleAr: string;
+      sortKey: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    const id = randomUUID();
+    await this.db.transaction(async (manager) => {
+      const law = await manager.query(
+        "SELECT id,status FROM legislations WHERE id=? FOR UPDATE",
+        [legislationId],
+      );
+      if (!law[0]) throw new NotFoundException("التشريع غير موجود.");
+      if (
+        !["INBOX", "DRAFT", "IN_REVIEW"].includes(law[0].status) &&
+        !actor.roles.includes("CONTENT_MANAGER")
+      )
+        throw new ConflictException("يتطلب إضافة هيكل إلى منشور مدير محتوى.");
+      if (input.parentId) {
+        const parents = await manager.query(
+          "SELECT id FROM structure_nodes WHERE id=? AND legislation_id=?",
+          [input.parentId, legislationId],
+        );
+        if (!parents.length)
+          throw new BadRequestException("العنصر الأب ليس تابعًا لهذا التشريع.");
+      }
+      await manager.query(
+        `INSERT INTO structure_nodes (id,legislation_id,parent_id,node_type,label_ar,title_ar,sort_key) VALUES (?,?,?,?,?,?,?)`,
+        [
+          id,
+          legislationId,
+          input.parentId || null,
+          input.nodeType,
+          input.labelAr?.trim() || null,
+          input.titleAr.trim(),
+          input.sortKey.trim(),
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "CREATE_STRUCTURE_NODE",
+        "STRUCTURE_NODE",
+        id,
+        null,
+        input,
+        reason,
+      );
+    });
+    return { id };
+  }
+
+  async updateAnnex(
+    id: string,
+    input: { annexType: string; titleAr: string; status: string },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (input.status !== "DRAFT" && !actor.roles.includes("CONTENT_MANAGER"))
+      throw new ForbiddenException(
+        "نشر أو استبدال أو إلغاء الملحق من صلاحية مدير المحتوى.",
+      );
+    return this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        "SELECT * FROM annexes WHERE id=? FOR UPDATE",
+        [id],
+      );
+      if (!rows[0]) throw new NotFoundException("الملحق غير موجود.");
+      await manager.query(
+        "UPDATE annexes SET annex_type=?,title_ar=?,status=? WHERE id=?",
+        [input.annexType, input.titleAr.trim(), input.status, id],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_ANNEX",
+        "ANNEX",
+        id,
+        rows[0],
+        input,
+        reason,
+      );
+      return { id };
+    });
+  }
+
+  async createAnnex(
+    legislationId: string,
+    input: {
+      annexType: string;
+      titleAr: string;
+      status: string;
+      sourceDocumentId: string;
+      validFrom: string;
+      structuredTableJson?: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (input.status !== "DRAFT" && !actor.roles.includes("CONTENT_MANAGER"))
+      throw new ForbiddenException("نشر الملحق من صلاحية مدير المحتوى.");
+    let structured: unknown = null;
+    if (input.structuredTableJson?.trim()) {
+      try {
+        structured = JSON.parse(input.structuredTableJson);
+      } catch {
+        throw new BadRequestException("JSON الجدول المنظم غير صالح.");
+      }
+    }
+    const id = randomUUID();
+    const versionId = randomUUID();
+    await this.db.transaction(async (manager) => {
+      const source = await manager.query(
+        "SELECT id FROM source_documents WHERE id=?",
+        [input.sourceDocumentId],
+      );
+      if (!source[0]) throw new BadRequestException("المصدر المحدد غير موجود.");
+      await manager.query(
+        `INSERT INTO annexes (id,legislation_id,annex_type,title_ar,status) VALUES (?,?,?,?,?)`,
+        [
+          id,
+          legislationId,
+          input.annexType,
+          input.titleAr.trim(),
+          input.status,
+        ],
+      );
+      await manager.query(
+        `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,structured_table_json) VALUES (?,?,1,?,?,?)`,
+        [
+          versionId,
+          id,
+          input.validFrom,
+          input.sourceDocumentId,
+          structured == null ? null : JSON.stringify(structured),
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "CREATE_ANNEX",
+        "ANNEX",
+        id,
+        null,
+        input,
+        reason,
+      );
+    });
+    return { id, versionId };
+  }
+
+  async updateRelation(
+    id: string,
+    input: {
+      relationType: string;
+      targetLegislationId: string;
+      scopeText?: string;
+      effectiveFrom?: string;
+      sourceDocumentId?: string;
+      reviewStatus: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    return this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        "SELECT * FROM legal_relations WHERE id=? FOR UPDATE",
+        [id],
+      );
+      if (!rows[0])
+        throw new NotFoundException("العلاقة القانونية غير موجودة.");
+      if (rows[0].source_legislation_id === input.targetLegislationId)
+        throw new BadRequestException("لا يمكن ربط التشريع بنفسه.");
+      const targets = await manager.query(
+        "SELECT id FROM legislations WHERE id=?",
+        [input.targetLegislationId],
+      );
+      if (!targets.length)
+        throw new BadRequestException("التشريع المقابل غير موجود.");
+      if (input.sourceDocumentId) {
+        const sources = await manager.query(
+          "SELECT id FROM source_documents WHERE id=?",
+          [input.sourceDocumentId],
+        );
+        if (!sources.length)
+          throw new BadRequestException("مصدر الإثبات غير موجود.");
+      }
+      if (
+        input.reviewStatus === "REVIEWED" &&
+        rows[0].review_status !== "REVIEWED" &&
+        !actor.roles.includes("LEGAL_REVIEWER")
+      )
+        throw new ForbiddenException(
+          "اعتماد العلاقة القانونية من صلاحية المراجع القانوني.",
+        );
+      if (
+        input.reviewStatus === "REVIEWED" &&
+        input.relationType !== "TOPICALLY_RELATED" &&
+        !input.sourceDocumentId
+      )
+        throw new BadRequestException(
+          "العلاقة القانونية المراجعة تحتاج مصدر إثبات.",
+        );
+      await manager.query(
+        `UPDATE legal_relations SET relation_type=?,target_legislation_id=?,scope_text=?,effective_from=?,source_document_id=?,review_status=? WHERE id=?`,
+        [
+          input.relationType,
+          input.targetLegislationId,
+          input.scopeText?.trim() || null,
+          input.effectiveFrom || null,
+          input.sourceDocumentId || null,
+          input.reviewStatus,
+          id,
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_LEGAL_RELATION",
+        "LEGAL_RELATION",
+        id,
+        rows[0],
+        input,
+        reason,
+      );
+      return { id };
+    });
+  }
+
+  async createRelation(
+    legislationId: string,
+    input: {
+      relationType: string;
+      targetLegislationId: string;
+      scopeText?: string;
+      effectiveFrom?: string;
+      sourceDocumentId?: string;
+      reviewStatus: string;
+    },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (legislationId === input.targetLegislationId)
+      throw new BadRequestException("لا يمكن ربط التشريع بنفسه.");
+    if (
+      input.reviewStatus === "REVIEWED" &&
+      !actor.roles.includes("LEGAL_REVIEWER")
+    )
+      throw new ForbiddenException(
+        "اعتماد العلاقة القانونية من صلاحية المراجع القانوني.",
+      );
+    if (
+      input.reviewStatus === "REVIEWED" &&
+      input.relationType !== "TOPICALLY_RELATED" &&
+      !input.sourceDocumentId
+    )
+      throw new BadRequestException(
+        "العلاقة القانونية المراجعة تحتاج مصدر إثبات.",
+      );
+    const id = randomUUID();
+    await this.db.transaction(async (manager) => {
+      const targets = await manager.query(
+        "SELECT id FROM legislations WHERE id IN (?,?)",
+        [legislationId, input.targetLegislationId],
+      );
+      if (targets.length !== 2)
+        throw new BadRequestException("أحد التشريعين غير موجود.");
+      if (input.sourceDocumentId) {
+        const sources = await manager.query(
+          "SELECT id FROM source_documents WHERE id=?",
+          [input.sourceDocumentId],
+        );
+        if (!sources.length)
+          throw new BadRequestException("مصدر الإثبات غير موجود.");
+      }
+      await manager.query(
+        `INSERT INTO legal_relations (id,source_legislation_id,target_legislation_id,relation_type,scope_text,effective_from,source_document_id,review_status) VALUES (?,?,?,?,?,?,?,?)`,
+        [
+          id,
+          legislationId,
+          input.targetLegislationId,
+          input.relationType,
+          input.scopeText?.trim() || null,
+          input.effectiveFrom || null,
+          input.sourceDocumentId || null,
+          input.reviewStatus,
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "CREATE_LEGAL_RELATION",
+        "LEGAL_RELATION",
+        id,
+        null,
+        input,
+        reason,
+      );
+    });
+    return { id };
+  }
+
   async update(
     id: string,
     input: Record<string, unknown>,
@@ -245,11 +927,19 @@ export class AdminService {
     reason: string,
   ) {
     const before = await this.legislation(id);
-    if (!["INBOX", "DRAFT", "IN_REVIEW"].includes(String(before.status)))
+    const isDraft = ["INBOX", "DRAFT", "IN_REVIEW"].includes(
+      String(before.status),
+    );
+    if (!isDraft && !actor.roles.includes("CONTENT_MANAGER"))
       throw new ConflictException(
-        "لا يعدّل المحتوى المنشور في مكانه؛ أنشئ إصدارًا جديدًا.",
+        "لا يملك دورك صلاحية تصحيح بيانات وصفية منشورة.",
+      );
+    if (!isDraft && input.preambleText !== undefined)
+      throw new ConflictException(
+        "لا تعدّل ديباجة منشورة في مكانها؛ أنشئ إصدارًا تشريعيًا جديدًا.",
       );
     const fields: Record<string, string> = {
+      displayCode: "display_code",
       titleAr: "title_ar",
       summaryAr: "summary_ar",
       officialNumber: "official_number",
@@ -259,19 +949,87 @@ export class AdminService {
       issueDate: "issue_date",
       publicationDate: "publication_date",
       effectiveFrom: "effective_from",
+      repealDate: "repeal_date",
+      legalStatus: "legal_status",
+      verificationLevel: "verification_level",
     };
     const entries = Object.entries(fields).filter(
       ([key]) => input[key] !== undefined,
     );
     const updatesPreamble = input.preambleText !== undefined;
-    if (!entries.length && !updatesPreamble)
+    const updatesGazette = input.gazetteIssueNumber !== undefined;
+    const updatesSubjects = Array.isArray(input.subjectIds);
+    if (
+      !entries.length &&
+      !updatesPreamble &&
+      !updatesGazette &&
+      !updatesSubjects
+    )
       throw new BadRequestException("لم ترسل حقولًا قابلة للتحديث.");
     await this.db.transaction(async (manager) => {
+      let gazetteIssueId: string | null | undefined;
+      if (updatesGazette) {
+        const issueNumber = String(input.gazetteIssueNumber ?? "").trim();
+        if (issueNumber) {
+          const publicationDate =
+            String(input.gazettePublicationDate ?? "").trim() || null;
+          const existing = await manager.query(
+            `SELECT id FROM gazette_issues WHERE issue_number=? AND publication_date <=> ? LIMIT 1`,
+            [issueNumber, publicationDate],
+          );
+          gazetteIssueId = existing[0]?.id ?? randomUUID();
+          if (!existing[0])
+            await manager.query(
+              `INSERT INTO gazette_issues (id,issue_number,publication_date,publisher,notes) VALUES (?,?,?,?,?)`,
+              [
+                gazetteIssueId,
+                issueNumber,
+                publicationDate,
+                String(input.gazettePublisher ?? "").trim() || null,
+                String(input.gazetteNotes ?? "").trim() || null,
+              ],
+            );
+          else
+            await manager.query(
+              `UPDATE gazette_issues SET publisher=?,notes=? WHERE id=?`,
+              [
+                String(input.gazettePublisher ?? "").trim() || null,
+                String(input.gazetteNotes ?? "").trim() || null,
+                gazetteIssueId,
+              ],
+            );
+        } else gazetteIssueId = null;
+      }
       if (entries.length)
         await manager.query(
           `UPDATE legislations SET ${entries.map(([, column]) => `${column}=?`).join(",")} WHERE id=?`,
           [...entries.map(([key]) => input[key] || null), id],
         );
+      if (gazetteIssueId !== undefined)
+        await manager.query(
+          "UPDATE legislations SET gazette_issue_id=? WHERE id=?",
+          [gazetteIssueId, id],
+        );
+      if (updatesSubjects) {
+        const subjectIds = input.subjectIds as string[];
+        if (subjectIds.length) {
+          const valid = await manager.query(
+            `SELECT id FROM subjects WHERE is_active=1 AND id IN (${subjectIds.map(() => "?").join(",")})`,
+            subjectIds,
+          );
+          if (valid.length !== new Set(subjectIds).size)
+            throw new BadRequestException("يتضمن الطلب موضوعًا غير معروف.");
+        }
+        await manager.query(
+          "DELETE FROM legislation_subjects WHERE legislation_id=?",
+          [id],
+        );
+        for (const subjectId of subjectIds)
+          await manager.query(
+            "INSERT INTO legislation_subjects (legislation_id,subject_id) VALUES (?,?)",
+            [id, subjectId],
+          );
+      }
       if (updatesPreamble)
         await manager.query(
           "UPDATE legislation_versions SET preamble_text=? WHERE legislation_id=? ORDER BY version_no DESC LIMIT 1",
@@ -287,6 +1045,10 @@ export class AdminService {
         before,
         input,
         reason,
+      );
+      await manager.query(
+        `INSERT INTO job_queue (id,job_type,payload_json,priority) VALUES (?,'REINDEX_ENTITY',?,20)`,
+        [randomUUID(), JSON.stringify({ legislationId: id })],
       );
     });
     return this.legislation(id);

@@ -7,6 +7,9 @@ coverage/
 .dev-credentials
 playwright-report/
 test-results/
+/_reference/
+/artifacts/
+tmp/reference-render/
 data/sources/**
 data/exports/**
 data/backups/**
@@ -15,4 +18,5 @@ data/tmp/**
 *.log
 *.pid
 *.sql
+*.tsbuildinfo
 .DS_Store
