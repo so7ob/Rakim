@@ -58,7 +58,8 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
-      - run: npm run test:infra
+      - name: Validate Nginx and systemd configuration
+        run: sudo bash scripts/test/infra-config.sh
 
   e2e:
     name: MariaDB migrations, seed, and Playwright
