@@ -680,11 +680,19 @@ export function AdminContentDetailPage() {
           <h2>الإجراء التالي</h2>
           <WorkflowActions
             status={law.status}
+            draftArticleCount={
+              law.articles.filter((article) => article.status === "DRAFT")
+                .length
+            }
             permissions={auth.user?.permissions ?? []}
             id={law.id}
-            done={() => {
+            done={(result) => {
               item.retry();
-              setMsg("تم انتقال الحالة بنجاح.");
+              setMsg(
+                result.to === "PUBLISHED"
+                  ? `تم نشر التشريع و${result.publishedArticleCount} نسخة مادة معًا.`
+                  : "تم انتقال الحالة بنجاح.",
+              );
             }}
             setMessage={setMsg}
           />
@@ -1564,15 +1572,17 @@ function SourceEditor({
 
 function WorkflowActions({
   status,
+  draftArticleCount,
   permissions,
   id,
   done,
   setMessage,
 }: {
   status: string;
+  draftArticleCount: number;
   permissions: string[];
   id: string;
-  done: () => void;
+  done: (result: { to: string; publishedArticleCount: number }) => void;
   setMessage: (x: string) => void;
 }) {
   const actions = [] as Array<{ target: string; label: string }>;
@@ -1600,30 +1610,43 @@ function WorkflowActions({
   if (!actions.length)
     return <p>لا يوجد انتقال متاح لهذا الدور في الحالة الحالية.</p>;
   return (
-    <form
-      className="inline-form"
-      onSubmit={async (e) => {
-        e.preventDefault();
-        const f = new FormData(e.currentTarget);
-        try {
-          await apiRequest(`/admin/legislations/${id}/workflow`, {
-            body: { target: f.get("target"), reason: f.get("reason") },
-          });
-          done();
-        } catch (error) {
-          setMessage(error instanceof Error ? error.message : "تعذر الانتقال.");
-        }
-      }}
-    >
-      <select name="target">
-        {actions.map((a) => (
-          <option key={a.target} value={a.target}>
-            {a.label}
-          </option>
-        ))}
-      </select>
-      <input name="reason" required placeholder="سبب الإجراء" />
-      <button className="button">تنفيذ</button>
-    </form>
+    <>
+      {draftArticleCount > 0 && (
+        <p className="form-message" role="status">
+          يوجد {draftArticleCount} نسخة مادة مسودة. لا تحتاج إلى اعتماد المواد
+          منفردة؛ ستُنشر ذريًا مع التشريع عند تنفيذ خطوة «نشر».
+        </p>
+      )}
+      <form
+        className="inline-form"
+        onSubmit={async (e) => {
+          e.preventDefault();
+          const f = new FormData(e.currentTarget);
+          try {
+            const result = await apiRequest<{
+              to: string;
+              publishedArticleCount: number;
+            }>(`/admin/legislations/${id}/workflow`, {
+              body: { target: f.get("target"), reason: f.get("reason") },
+            });
+            done(result);
+          } catch (error) {
+            setMessage(
+              error instanceof Error ? error.message : "تعذر الانتقال.",
+            );
+          }
+        }}
+      >
+        <select name="target">
+          {actions.map((a) => (
+            <option key={a.target} value={a.target}>
+              {a.label}
+            </option>
+          ))}
+        </select>
+        <input name="reason" required placeholder="سبب الإجراء" />
+        <button className="button">تنفيذ</button>
+      </form>
+    </>
   );
 }
