@@ -13,6 +13,7 @@ import { VisualSettings1700000000007 } from "./migrations/1700000000007-visual-s
 import { WorkflowControls1700000000008 } from "./migrations/1700000000008-workflow-controls.js";
 import { WorkflowPolicyCatalog1700000000009 } from "./migrations/1700000000009-workflow-policy-catalog.js";
 import { GranularAccessControl1700000000010 } from "./migrations/1700000000010-granular-access-control.js";
+import { ReferenceThemeDefaults1700000000011 } from "./migrations/1700000000011-reference-theme-defaults.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -46,6 +47,7 @@ export const createDataSource = () =>
       WorkflowControls1700000000008,
       WorkflowPolicyCatalog1700000000009,
       GranularAccessControl1700000000010,
+      ReferenceThemeDefaults1700000000011,
     ],
     migrationsTableName: "schema_migrations",
   });
