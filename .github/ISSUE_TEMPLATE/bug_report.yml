@@ -1,0 +1,29 @@
+name: Bug report
+description: الإبلاغ عن سلوك حالي غير صحيح
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: textarea
+    id: description
+    attributes:
+      label: الوصف والوضع الحالي
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: الوضع المطلوب
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria والاختبارات
+    validations:
+      required: true
+  - type: dropdown
+    id: impact
+    attributes:
+      label: الأجزاء المتأثرة
+      multiple: true
+      options: [Frontend, Backend, Database, Security, DevOps]
