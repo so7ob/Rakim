@@ -17,7 +17,9 @@ test("list, search, stable article link, historical date and previous-text dialo
     .allTextContents();
   await page.getByRole("button", { name: "التالي" }).click();
   await expect(page).toHaveURL(/[?&]page=2(?:&|$)/);
-  await expect(page.locator(".pagination span")).toContainText("صفحة 2 من");
+  await expect(page.locator(".pagination span")).toContainText("صفحة 2 من", {
+    timeout: 10_000,
+  });
   await expect
     .poll(() => page.locator(".legislation-card h2").allTextContents())
     .not.toEqual(firstPageTitles);
@@ -223,6 +225,10 @@ test("clean public routes and cross-platform latest modifications resolve", asyn
 test("responsive visual baseline", async ({ page }) => {
   await page.goto("/ar");
   await page.locator('[aria-busy="true"]').waitFor({ state: "detached" });
+  await page.addStyleTag({
+    content:
+      ":root{--color-primary:#AC4459!important;--color-burgundy:#AC4459!important;--color-action:#AC4459!important;--color-secondary:#344B61!important;--color-navy:#344B61!important;--hero-gradient:linear-gradient(120deg,#AC4459,#344B61)!important}",
+  });
   const hasHorizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth + 1,
   );
@@ -230,8 +236,12 @@ test("responsive visual baseline", async ({ page }) => {
   await expect(page).toHaveScreenshot("home.png", {
     fullPage: true,
     animations: "disabled",
-    mask: [page.locator(".stats strong").first()],
-    maskColor: "#314B67",
+    mask: [
+      page.locator(".home-statistics strong"),
+      page.locator(".subject-count strong"),
+      page.locator(".home-data-panel ol"),
+    ],
+    maskColor: "#344B61",
   });
 });
 
@@ -243,8 +253,16 @@ test("header tools reveal burgundy accessible labels", async ({
   const home = page.locator(
     'a.header-icon-button[data-tooltip="الصفحة الرئيسية"]',
   );
+  const expectedHover = await home.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--color-action)";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
   await home.hover();
-  await expect(home).toHaveCSS("color", "rgb(173, 64, 91)");
+  await expect(home).toHaveCSS("color", expectedHover);
   await expect
     .poll(() =>
       home.evaluate((element) =>

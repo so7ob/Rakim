@@ -105,16 +105,23 @@ export class LegislationsService {
     );
     const [types, authorities, years, subjects] = await Promise.all([
       this.db.query(
-        "SELECT code, name_ar name FROM legislation_types WHERE is_active=1 ORDER BY name_ar",
+        `SELECT lt.code,lt.name_ar name,COUNT(l.id) count FROM legislation_types lt
+         LEFT JOIN legislations l ON l.type_id=lt.id AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+         WHERE lt.is_active=1 GROUP BY lt.id,lt.code,lt.name_ar ORDER BY lt.name_ar`,
       ),
       this.db.query(
-        "SELECT code, name_ar name FROM authorities WHERE is_active=1 ORDER BY name_ar",
+        `SELECT au.code,au.name_ar name,COUNT(l.id) count FROM authorities au
+         LEFT JOIN legislations l ON l.authority_id=au.id AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+         WHERE au.is_active=1 GROUP BY au.id,au.code,au.name_ar ORDER BY au.name_ar`,
       ),
       this.db.query(
         `SELECT year, COUNT(*) count FROM legislations WHERE status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') GROUP BY year ORDER BY year DESC`,
       ),
       this.db.query(
-        "SELECT code,name_ar name FROM subjects WHERE is_active=1 ORDER BY name_ar",
+        `SELECT s.code,s.name_ar name,COUNT(l.id) count FROM subjects s
+         LEFT JOIN legislation_subjects ls ON ls.subject_id=s.id
+         LEFT JOIN legislations l ON l.id=ls.legislation_id AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+         WHERE s.is_active=1 GROUP BY s.id,s.code,s.name_ar ORDER BY s.name_ar`,
       ),
     ]);
     const total = Number(countRows[0]?.total ?? 0);

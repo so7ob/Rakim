@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { ErrorPanel, LoadingCards } from "../components/StatePanel";
 import { useApi } from "../hooks/use-api";
+import { ConstitutionDocumentPage } from "./ConstitutionDocumentPage";
 
 export interface PublicContent {
   eyebrow: string;
@@ -43,6 +44,7 @@ interface ManagedPage {
   titleAr: string;
   introAr: string;
   sections: Array<{ title: string; body: string }>;
+  updatedAt?: string;
 }
 
 export function ManagedPublicContentPage({ slug }: { slug: string }) {
@@ -64,6 +66,19 @@ export function ManagedPublicContentPage({ slug }: { slug: string }) {
         />
       </div>
     );
+  if (slug === "constitution") {
+    return (
+      <ConstitutionDocumentPage
+        content={{
+          eyebrow: page.data.eyebrowAr,
+          title: page.data.titleAr,
+          intro: page.data.introAr,
+          sections: page.data.sections,
+          updatedAt: page.data.updatedAt,
+        }}
+      />
+    );
+  }
   return (
     <PublicContentPage
       content={{

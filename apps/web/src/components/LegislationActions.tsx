@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiRequest } from "../api";
 import { useAuth } from "../auth/AuthContext";
 import { useApi } from "../hooks/use-api";
+import { UiIcon } from "./UiIcon";
 interface Favorite {
   id: string;
 }
@@ -47,7 +48,7 @@ export function LegislationActions({
             setMsg("نُسخ الرابط.");
           }}
         >
-          <span aria-hidden="true">↩</span>
+          <UiIcon name="link" />
         </button>
         <button
           type="button"
@@ -56,7 +57,7 @@ export function LegislationActions({
           title="طباعة"
           onClick={() => window.print()}
         >
-          <span aria-hidden="true">▣</span>
+          <UiIcon name="print" />
         </button>
         <button
           type="button"
@@ -72,7 +73,7 @@ export function LegislationActions({
             else await navigator.clipboard?.writeText(location.href);
           }}
         >
-          <span aria-hidden="true">⌯</span>
+          <UiIcon name="share" />
         </button>
         {sourceAvailable ? (
           <a
@@ -81,7 +82,7 @@ export function LegislationActions({
             aria-label="تنزيل مصدر التشريع"
             title="تنزيل المصدر"
           >
-            <span aria-hidden="true">⇩</span>
+            <UiIcon name="download" />
           </a>
         ) : (
           <button
@@ -91,7 +92,7 @@ export function LegislationActions({
             aria-label="لا يوجد ملف مصدر عام"
             title="لا يوجد ملف مصدر عام"
           >
-            <span aria-hidden="true">⇩</span>
+            <UiIcon name="download" />
           </button>
         )}
         {auth.user ? (
@@ -104,7 +105,7 @@ export function LegislationActions({
               aria-pressed={favorite}
               onClick={toggle}
             >
-              <span aria-hidden="true">{favorite ? "★" : "♡"}</span>
+              <UiIcon name="heart" fill={favorite ? "currentColor" : "none"} />
             </button>
             <details className="tool-popover">
               <summary
@@ -112,7 +113,7 @@ export function LegislationActions({
                 aria-label="إضافة ملاحظة خاصة"
                 title="ملاحظة خاصة"
               >
-                <span aria-hidden="true">▤</span>
+                <UiIcon name="note" />
               </summary>
               <ToolForm id={id} kind="note" done={setMsg} />
             </details>
@@ -134,7 +135,7 @@ export function LegislationActions({
             aria-label="تسجيل الدخول لاستخدام المفضلة والملاحظات"
             title="المفضلة والملاحظات"
           >
-            <span aria-hidden="true">♡</span>
+            <UiIcon name="heart" />
           </Link>
         )}
       </div>

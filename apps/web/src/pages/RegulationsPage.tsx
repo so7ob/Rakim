@@ -1,8 +1,9 @@
 import { lazy, Suspense, useState } from "react";
-import { useParams, useSearchParams } from "react-router-dom";
+import { Link, useParams, useSearchParams } from "react-router-dom";
 import { EmptyPanel, ErrorPanel, LoadingCards } from "../components/StatePanel";
 import { useApi } from "../hooks/use-api";
 import { LegislationSubpageHeader } from "../components/LegislationSubpageHeader";
+import { UiIcon } from "../components/UiIcon";
 const PdfViewer = lazy(() =>
   import("../components/PdfViewer").then((module) => ({
     default: module.PdfViewer,
@@ -46,11 +47,15 @@ export function RegulationsPage() {
       <div className="container subresource-shell">
         <section className="subresource-panel">
           <header className="subresource-title">
-            <div>
-              <span className="eyebrow dark">إصدارات زمنية مستقلة</span>
-              <h1>اللوائح والجداول والملاحق</h1>
-            </div>
-            <p>ملف المصدر محفوظ مع كل إصدار ولا تحذف النسخة المستبدلة.</p>
+            <h1 aria-label="اللوائح والجداول والملاحق">لوائح وجداول</h1>
+            {id && (
+              <Link
+                className="legislation-full-link"
+                to={`/ar/legislations/${id}`}
+              >
+                للاطلاع على كامل التشريع يرجى الضغط هنا
+              </Link>
+            )}
           </header>
           {loading ? (
             <LoadingCards />
@@ -67,13 +72,12 @@ export function RegulationsPage() {
                   key={annex.versionId}
                 >
                   <header>
+                    <time dateTime={annex.validFrom}>{annex.validFrom}</time>
                     <div>
-                      <span className="tag">
-                        {labels[annex.annexType] ?? annex.annexType}
-                      </span>
                       <h2>{annex.titleAr}</h2>
                       <p>
-                        الإصدار {annex.versionNo} — نافذ من {annex.validFrom}
+                        {labels[annex.annexType] ?? annex.annexType} — الإصدار{" "}
+                        {annex.versionNo}
                       </p>
                     </div>
                     <div className="annex-actions">
@@ -94,7 +98,12 @@ export function RegulationsPage() {
                         }
                         aria-expanded={open === annex.versionId}
                       >
-                        {open === annex.versionId ? "إغلاق" : "فتح"}
+                        <UiIcon
+                          name={open === annex.versionId ? "minus" : "plus"}
+                        />
+                        <span className="sr-only">
+                          {open === annex.versionId ? "إغلاق" : "فتح"}
+                        </span>
                       </button>
                     </div>
                   </header>

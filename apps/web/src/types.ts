@@ -1,6 +1,7 @@
 export interface FilterOption {
   code: string;
   name: string;
+  count?: number;
 }
 export interface LegislationSummary {
   id: string;

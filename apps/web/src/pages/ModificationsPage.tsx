@@ -1,5 +1,5 @@
 import { useMemo, useRef, useState } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { ErrorPanel, LoadingCards } from "../components/StatePanel";
 import { useApi } from "../hooks/use-api";
 import { LegislationSubpageHeader } from "../components/LegislationSubpageHeader";
@@ -62,11 +62,15 @@ export function ModificationsPage() {
       <div className="container subresource-shell">
         <section className="subresource-panel">
           <header className="subresource-title">
-            <div>
-              <span className="eyebrow dark">سجل لا يفقد التاريخ</span>
-              <h1>تعديلات التشريع</h1>
-            </div>
-            <p>المادة والنسخة السابقة والنص النافذ ومصدر كل عملية.</p>
+            <h1>تعديلات التشريع</h1>
+            {id && (
+              <Link
+                className="legislation-full-link"
+                to={`/ar/legislations/${id}`}
+              >
+                للاطلاع على كامل التشريع يرجى الضغط هنا
+              </Link>
+            )}
           </header>
           {loading ? (
             <LoadingCards />
@@ -121,12 +125,12 @@ export function ModificationsPage() {
                 {shown.map((amendment) => (
                   <article className="card amendment-card" key={amendment.id}>
                     <header>
+                      <time dateTime={amendment.issueDate}>
+                        {amendment.issueDate}
+                      </time>
                       <div>
-                        <span className="tag">
-                          أثره من {amendment.effectiveFrom}
-                        </span>
                         <h2>{amendment.titleAr}</h2>
-                        <p>صدر في {amendment.issueDate}</p>
+                        <p>أثره من {amendment.effectiveFrom}</p>
                       </div>
                       <small>المصدر: {amendment.sourceName}</small>
                     </header>

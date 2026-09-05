@@ -37,14 +37,15 @@ export function RelatedLegislationsPage() {
       <div className="container subresource-shell">
         <section className="subresource-panel">
           <header className="subresource-title">
-            <div>
-              <span className="eyebrow dark">علاقات قانونية موجهة</span>
-              <h1>التشريعات ذات الصلة</h1>
-            </div>
-            <p>
-              الاتجاه والنطاق والمصدر يميزان العلاقة القانونية عن التشابه
-              الموضوعي.
-            </p>
+            <h1>التشريعات ذات الصلة</h1>
+            {id && (
+              <Link
+                className="legislation-full-link"
+                to={`/ar/legislations/${id}`}
+              >
+                للاطلاع على كامل التشريع يرجى الضغط هنا
+              </Link>
+            )}
           </header>
           {loading ? (
             <LoadingCards />
@@ -53,13 +54,20 @@ export function RelatedLegislationsPage() {
           ) : !data?.length ? (
             <EmptyPanel />
           ) : (
-            <div className="relation-grid reference-relations">
+            <div className="relation-grid reference-relations" role="table">
+              <div className="relation-table-head" role="row">
+                <span role="columnheader">نوع العلاقة</span>
+                <span role="columnheader">التشريع</span>
+                <span role="columnheader">رقم التشريع</span>
+                <span role="columnheader">سنة الإصدار</span>
+              </div>
               {data.map((relation) => (
                 <article
                   className={`card relation-card ${relation.relationType === "TOPICALLY_RELATED" ? "thematic" : ""}`}
                   key={relation.id}
+                  role="row"
                 >
-                  <div className="relation-label">
+                  <div className="relation-label" role="cell">
                     <span>
                       {relation.direction === "OUTGOING"
                         ? (labels[relation.relationType] ??
@@ -72,28 +80,34 @@ export function RelatedLegislationsPage() {
                         : "غير مراجع"}
                     </small>
                   </div>
-                  <h2>
+                  <h2 role="cell">
                     <Link to={`/ar/legislations/${relation.relatedId}`}>
                       {relation.relatedTitle}
                     </Link>
                   </h2>
-                  <p>
-                    رقم {relation.relatedNumber} لسنة {relation.relatedYear}
-                  </p>
-                  <dl className="inline-meta">
-                    <div>
-                      <dt>النطاق</dt>
-                      <dd>{relation.scopeText}</dd>
-                    </div>
-                    <div>
-                      <dt>تاريخ الأثر</dt>
-                      <dd>{relation.effectiveFrom}</dd>
-                    </div>
-                    <div>
-                      <dt>دليل العلاقة</dt>
-                      <dd>{relation.evidenceSource}</dd>
-                    </div>
-                  </dl>
+                  <span className="relation-number" role="cell">
+                    {relation.relatedNumber}
+                  </span>
+                  <span className="relation-year" role="cell">
+                    {relation.relatedYear}
+                  </span>
+                  <details className="relation-evidence" role="cell">
+                    <summary>تفاصيل العلاقة</summary>
+                    <dl className="inline-meta">
+                      <div>
+                        <dt>النطاق</dt>
+                        <dd>{relation.scopeText}</dd>
+                      </div>
+                      <div>
+                        <dt>تاريخ الأثر</dt>
+                        <dd>{relation.effectiveFrom}</dd>
+                      </div>
+                      <div>
+                        <dt>دليل العلاقة</dt>
+                        <dd>{relation.evidenceSource}</dd>
+                      </div>
+                    </dl>
+                  </details>
                 </article>
               ))}
             </div>

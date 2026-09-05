@@ -27,13 +27,13 @@ const defaults: SiteConfig = {
     "branding.subtitle": "مرجع قانوني غير رسمي",
     "branding.logo_url": "",
     "branding.show_default_emblem": true,
-    "theme.navy": "#314B67",
-    "theme.burgundy": "#AD405B",
+    "theme.navy": "#344B61",
+    "theme.burgundy": "#AC4459",
     "theme.sand": "#9B7C57",
     "theme.surface_rose": "#F7F2F4",
     "theme.surface_gray": "#E6E8EB",
-    "theme.hero_start": "#AD405B",
-    "theme.hero_end": "#314B67",
+    "theme.hero_start": "#AC4459",
+    "theme.hero_end": "#344B61",
     "theme.page_background": "#FBFBFC",
     "theme.hero_background_url": "",
     "typography.legal_size": "22",
@@ -115,10 +115,46 @@ const SiteContext = createContext<SiteContextValue>({
   refresh: async () => undefined,
 });
 
+function contrastSafeColor(value: unknown) {
+  const match = /^#([0-9a-f]{6})$/i.exec(String(value));
+  if (!match) return "#7B2E3D";
+  const channels = [0, 2, 4].map((offset) =>
+    Number.parseInt(match[1]!.slice(offset, offset + 2), 16),
+  );
+  const luminance = (rgb: number[]) =>
+    rgb
+      .map((channel) => channel / 255)
+      .map((channel) =>
+        channel <= 0.04045
+          ? channel / 12.92
+          : ((channel + 0.055) / 1.055) ** 2.4,
+      )
+      .reduce(
+        (sum, channel, index) =>
+          sum + channel * [0.2126, 0.7152, 0.0722][index]!,
+        0,
+      );
+  // Use a 5:1 white-background target so the color also remains AA-safe on the
+  // slightly darker rose surfaces used by chips and supporting links.
+  if (1.05 / (luminance(channels) + 0.05) >= 5) return String(value);
+  for (let factor = 0.9; factor >= 0.35; factor -= 0.05) {
+    const candidate = channels.map((channel) => Math.round(channel * factor));
+    if (1.05 / (luminance(candidate) + 0.05) >= 5)
+      return `#${candidate.map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
+  }
+  return "#5A2631";
+}
+
 export function SiteConfigProvider({ children }: { children: ReactNode }) {
   const [config, setConfig] = useState(defaults);
   const refresh = useCallback(async () => {
-    setConfig(await apiGet<SiteConfig>("/site/config"));
+    const remote = await apiGet<SiteConfig>("/site/config");
+    setConfig({
+      settings: { ...defaults.settings, ...remote.settings },
+      navigation: remote.navigation.length
+        ? remote.navigation
+        : defaults.navigation,
+    });
   }, []);
   useEffect(() => {
     refresh().catch(() => undefined);
@@ -128,7 +164,10 @@ export function SiteConfigProvider({ children }: { children: ReactNode }) {
     const root = document.documentElement;
     const variables: Record<string, string> = {
       "--color-navy": String(s["theme.navy"]),
-      "--color-burgundy": String(s["theme.burgundy"]),
+      "--color-burgundy": contrastSafeColor(s["theme.burgundy"]),
+      "--color-secondary": String(s["theme.navy"]),
+      "--color-primary": String(s["theme.burgundy"]),
+      "--color-action": contrastSafeColor(s["theme.burgundy"]),
       "--color-sand": String(s["theme.sand"]),
       "--color-surface-rose": String(s["theme.surface_rose"]),
       "--color-surface-gray": String(s["theme.surface_gray"]),
