@@ -14,6 +14,7 @@ import {
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import {
   ArrayUnique,
+  ArrayMaxSize,
   IsArray,
   IsBoolean,
   IsDateString,
@@ -21,6 +22,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  IsUUID,
   Length,
   Max,
   Min,
@@ -148,6 +150,20 @@ class UpdateArticleMetadataDto {
   @IsOptional() @IsString() structureNodeId?: string;
   @IsDateString() validFrom!: string;
   @IsString() @Length(1, 1000000) text!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class UpdateArticleAssignmentsDto {
+  @IsUUID("4") legislationId!: string;
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @ArrayUnique()
+  @IsUUID("4", { each: true })
+  assign!: string[];
+  @IsArray()
+  @ArrayMaxSize(1000)
+  @ArrayUnique()
+  @IsUUID("4", { each: true })
+  unassign!: string[];
   @IsString() @Length(3, 1000) reason!: string;
 }
 class UpdateSourceDto {
@@ -282,8 +298,11 @@ export class AdminController {
   }
   @Get("legislations/:id")
   @Permissions("legislation.view")
-  legislation(@Param("id") id: string) {
-    return this.service.legislation(id);
+  legislation(
+    @Param("id") id: string,
+    @Query("articleContent") articleContent?: string,
+  ) {
+    return this.service.legislation(id, articleContent === "full");
   }
   @Patch("legislations/:id")
   @Permissions("legislation.update", "legislation.published_metadata.update")
@@ -359,6 +378,39 @@ export class AdminController {
   ) {
     const { reason, ...input } = dto;
     return this.service.updateStructure(id, input, request.user!, reason);
+  }
+  @Get("structure/:id/articles")
+  @Permissions("legislation.view")
+  @ApiOperation({ summary: "قائمة مواد خفيفة لإدارة ربط عقدة بنيوية" })
+  structureArticles(
+    @Param("id") id: string,
+    @Query("q") q?: string,
+    @Query("state") state?: string,
+    @Query("page") page?: string,
+    @Query("pageSize") pageSize?: string,
+  ) {
+    return this.service.structureArticles(id, {
+      q,
+      state,
+      page: Number(page || 1),
+      pageSize: Number(pageSize || 100),
+    });
+  }
+  @Patch("structure/:id/articles")
+  @Permissions("article.update")
+  @ApiOperation({ summary: "ربط أو فك أو نقل مواد جماعيًا وبصورة ذرية" })
+  updateArticleAssignments(
+    @Param("id") id: string,
+    @Body() dto: UpdateArticleAssignmentsDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    const { reason, ...input } = dto;
+    return this.service.updateArticleAssignments(
+      id,
+      input,
+      request.user!,
+      reason,
+    );
   }
   @Post("legislations/:id/structure")
   @Permissions("structure.create")
