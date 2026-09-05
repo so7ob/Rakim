@@ -50,7 +50,8 @@ export class SiteService {
   async adminState() {
     const [settings, navigation, pages] = await Promise.all([
       this.db.query(
-        `SELECT setting_key settingKey,group_code groupCode,label_ar labelAr,input_type inputType,value_json valueJson,is_public isPublic,updated_at updatedAt FROM platform_settings ORDER BY group_code,setting_key`,
+        `SELECT setting_key settingKey,group_code groupCode,label_ar labelAr,input_type inputType,value_json valueJson,is_public isPublic,updated_at updatedAt
+         FROM platform_settings WHERE group_code<>'WORKFLOW' ORDER BY group_code,setting_key`,
       ),
       this.db.query(
         `SELECT id,location,label_ar labelAr,path,sort_order sortOrder,is_visible isVisible,updated_at updatedAt FROM navigation_items ORDER BY location,sort_order,id`,
@@ -87,6 +88,14 @@ export class SiteService {
       );
       if (rows.length !== keys.length)
         throw new BadRequestException("يتضمن الطلب مفتاح إعداد غير معروف.");
+      if (
+        rows.some(
+          (row: Record<string, unknown>) => row.groupCode === "WORKFLOW",
+        )
+      )
+        throw new BadRequestException(
+          "تدار سياسات سير العمل حصريًا من واجهة سياسات سير العمل.",
+        );
       const before: Record<string, unknown> = {};
       for (const row of rows) {
         const key = String(row.settingKey);
@@ -212,6 +221,18 @@ export class SiteService {
     actor: AuthUser,
     reason: string,
   ) {
+    if (!actor.permissions.includes("public_page.update"))
+      throw new ForbiddenException("تعديل الصفحة العامة يتطلب صلاحية مستقلة.");
+    const statePermission =
+      input.status === "PUBLISHED"
+        ? "public_page.publish"
+        : input.status === "ARCHIVED"
+          ? "public_page.archive"
+          : null;
+    if (statePermission && !actor.permissions.includes(statePermission))
+      throw new ForbiddenException(
+        "لا تملك صلاحية تغيير حالة نشر الصفحة العامة.",
+      );
     if (!input.sections.length)
       throw new BadRequestException(
         "يجب أن تحتوي الصفحة على قسم واحد على الأقل.",
@@ -222,6 +243,10 @@ export class SiteService {
         [id],
       );
       if (!rows[0]) throw new NotFoundException("صفحة المحتوى غير موجودة.");
+      if (rows[0].status !== "DRAFT" && input.status === "DRAFT")
+        throw new BadRequestException(
+          "لا يدعم نموذج الصلاحيات الحالي سحب نشر صفحة أو استعادة صفحة مؤرشفة إلى مسودة.",
+        );
       await manager.query(
         `UPDATE public_pages SET eyebrow_ar=?,title_ar=?,intro_ar=?,sections_json=?,status=?,updated_by=? WHERE id=?`,
         [
@@ -264,10 +289,9 @@ export class SiteService {
   private settingPermission(group: string) {
     if (["COLORS", "BACKGROUND", "TYPOGRAPHY"].includes(group))
       return "settings.appearance.update";
-    if (["HEADER", "FOOTER"].includes(group))
-      return "settings.navigation.update";
-    if (group === "TABS") return "settings.content.update";
-    if (group === "WORKFLOW") return "settings.workflow.manage";
+    if (group === "HEADER") return "settings.header.update";
+    if (group === "FOOTER") return "settings.footer.update";
+    if (group === "TABS") return "settings.legislation_page.update";
     return "settings.general.update";
   }
 

@@ -18,24 +18,25 @@ interface RoleDetail {
   nameAr: string;
   descriptionAr: string | null;
   isSystem: boolean;
+  isProtected?: boolean;
   isActive: boolean;
   updatedAt: string;
-  permissions: Array<PermissionItem & { scope: string }>;
-  users: Array<{
-    id: string;
-    username: string;
-    displayName: string;
-    isActive: boolean;
-    assignedAt: string;
-    assignedBy: string | null;
-  }>;
-  audit: Array<{
-    id: string;
-    action: string;
-    reason: string;
-    occurredAt: string;
-    actorName: string | null;
-  }>;
+}
+type RolePermission = PermissionItem & { scope: string };
+interface RoleUser {
+  id: string;
+  username: string;
+  displayName: string;
+  isActive: boolean;
+  assignedAt: string;
+  assignedBy: string | null;
+}
+interface RoleAudit {
+  id: string;
+  action: string;
+  reason: string;
+  occurredAt: string;
+  actorName: string | null;
 }
 interface Catalog {
   permissions: PermissionItem[];
@@ -55,6 +56,17 @@ export function AdminRoleDetailPage() {
       } as Record<string, boolean>
     )[tab] ?? false;
   const role = useApi<RoleDetail>(id ? `/admin/access-roles/${id}` : null);
+  const rolePermissions = useApi<RolePermission[]>(
+    tabAllowed && tab === "permissions"
+      ? `/admin/access-roles/${id}/permissions`
+      : null,
+  );
+  const roleUsers = useApi<RoleUser[]>(
+    tabAllowed && tab === "users" ? `/admin/access-roles/${id}/users` : null,
+  );
+  const roleAudit = useApi<RoleAudit[]>(
+    tabAllowed && tab === "activity" ? `/admin/access-roles/${id}/audit` : null,
+  );
   const catalog = useApi<Catalog>(
     tabAllowed && tab === "permissions" ? "/admin/permissions" : null,
   );
@@ -64,9 +76,9 @@ export function AdminRoleDetailPage() {
     () =>
       selection ??
       new Map(
-        role.data?.permissions.map((item) => [item.code, item.scope]) ?? [],
+        rolePermissions.data?.map((item) => [item.code, item.scope]) ?? [],
       ),
-    [selection, role.data],
+    [selection, rolePermissions.data],
   );
   if (!tabAllowed) return <Navigate to="/ar/admin/no-permission" replace />;
   if (role.loading) return <LoadingCards />;
@@ -82,7 +94,13 @@ export function AdminRoleDetailPage() {
   return (
     <section>
       <AdminPageHeader
-        eyebrow={data.isSystem ? "دور نظامي محمي" : "دور مخصص"}
+        eyebrow={
+          data.isProtected
+            ? "دور محمي"
+            : data.isSystem
+              ? "دور نظامي"
+              : "دور مخصص"
+        }
         title={data.nameAr}
         description={data.descriptionAr ?? data.code}
         breadcrumbs={[
@@ -107,7 +125,7 @@ export function AdminRoleDetailPage() {
                 {
                   label: "الصلاحيات",
                   to: `${base}/permissions`,
-                  count: data.permissions.length,
+                  count: rolePermissions.data?.length,
                 },
               ]
             : []),
@@ -116,7 +134,7 @@ export function AdminRoleDetailPage() {
                 {
                   label: "المستخدمون",
                   to: `${base}/users`,
-                  count: data.users.length,
+                  count: roleUsers.data?.length,
                 },
               ]
             : []),
@@ -125,7 +143,7 @@ export function AdminRoleDetailPage() {
                 {
                   label: "سجل التغييرات",
                   to: `${base}/activity`,
-                  count: data.audit.length,
+                  count: roleAudit.data?.length,
                 },
               ]
             : []),
@@ -170,7 +188,9 @@ export function AdminRoleDetailPage() {
                 name="nameAr"
                 defaultValue={data.nameAr}
                 required
-                disabled={!auth.hasPermission("role.update")}
+                disabled={
+                  data.isProtected || !auth.hasPermission("role.update")
+                }
               />
             </label>
             <label>
@@ -182,7 +202,11 @@ export function AdminRoleDetailPage() {
               <select
                 name="isActive"
                 defaultValue={String(data.isActive)}
-                disabled={data.isSystem || !auth.hasPermission("role.update")}
+                disabled={
+                  data.isSystem ||
+                  data.isProtected ||
+                  !auth.hasPermission("role.update")
+                }
               >
                 <option value="true">فعال</option>
                 <option value="false">معطل</option>
@@ -194,10 +218,10 @@ export function AdminRoleDetailPage() {
             <textarea
               name="descriptionAr"
               defaultValue={data.descriptionAr ?? ""}
-              disabled={!auth.hasPermission("role.update")}
+              disabled={data.isProtected || !auth.hasPermission("role.update")}
             />
           </label>
-          {auth.hasPermission("role.update") && (
+          {!data.isProtected && auth.hasPermission("role.update") && (
             <>
               <label>
                 سبب التغيير
@@ -206,33 +230,35 @@ export function AdminRoleDetailPage() {
               <button className="button">حفظ بيانات الدور</button>
             </>
           )}
-          {!data.isSystem && auth.hasPermission("role.delete") && (
-            <button
-              type="button"
-              className="link-button danger"
-              onClick={async () => {
-                if (
-                  !window.confirm(
-                    "لن يمكن استعادة الدور بعد الحذف. هل تريد المتابعة؟",
+          {!data.isSystem &&
+            !data.isProtected &&
+            auth.hasPermission("role.delete") && (
+              <button
+                type="button"
+                className="link-button danger"
+                onClick={async () => {
+                  if (
+                    !window.confirm(
+                      "لن يمكن استعادة الدور بعد الحذف. هل تريد المتابعة؟",
+                    )
                   )
-                )
-                  return;
-                try {
-                  await apiRequest(`/admin/access-roles/${id}`, {
-                    method: "DELETE",
-                    body: { reason: "حذف دور مخصص بعد التحقق من عدم إسناده" },
-                  });
-                  navigate("/ar/admin/roles");
-                } catch (error) {
-                  setMessage(
-                    error instanceof Error ? error.message : "تعذر الحذف.",
-                  );
-                }
-              }}
-            >
-              حذف الدور المخصص
-            </button>
-          )}
+                    return;
+                  try {
+                    await apiRequest(`/admin/access-roles/${id}`, {
+                      method: "DELETE",
+                      body: { reason: "حذف دور مخصص بعد التحقق من عدم إسناده" },
+                    });
+                    navigate("/ar/admin/roles");
+                  } catch (error) {
+                    setMessage(
+                      error instanceof Error ? error.message : "تعذر الحذف.",
+                    );
+                  }
+                }}
+              >
+                حذف الدور المخصص
+              </button>
+            )}
         </form>
       )}
       {tab === "permissions" && (
@@ -243,12 +269,19 @@ export function AdminRoleDetailPage() {
               <p>حدد الصلاحيات التي سيرثها كل مستخدم يحمل هذا الدور.</p>
             </div>
           </div>
-          {catalog.loading ? (
+          {catalog.loading || rolePermissions.loading ? (
             <LoadingCards />
-          ) : catalog.error || !catalog.data ? (
+          ) : catalog.error || rolePermissions.error || !catalog.data ? (
             <ErrorPanel
-              message={catalog.error?.message ?? "تعذر تحميل الصلاحيات."}
-              retry={catalog.retry}
+              message={
+                catalog.error?.message ??
+                rolePermissions.error?.message ??
+                "تعذر تحميل الصلاحيات."
+              }
+              retry={() => {
+                catalog.retry();
+                rolePermissions.retry();
+              }}
             />
           ) : (
             <>
@@ -257,54 +290,58 @@ export function AdminRoleDetailPage() {
                 mode="role"
                 roleSelection={selected}
                 onRoleChange={
-                  auth.hasPermission("role.manage_permissions")
+                  !data.isProtected &&
+                  auth.hasPermission("role.permissions.manage")
                     ? setSelection
                     : undefined
                 }
               />
-              {auth.hasPermission("role.manage_permissions") && (
-                <form
-                  className="permission-savebar"
-                  onSubmit={async (event) => {
-                    event.preventDefault();
-                    const form = new FormData(event.currentTarget);
-                    try {
-                      await apiRequest(
-                        `/admin/access-roles/${id}/permissions`,
-                        {
-                          method: "PATCH",
-                          body: {
-                            selections: [...selected].map(([code, scope]) => ({
-                              code,
-                              scope,
-                            })),
-                            reason: form.get("reason"),
+              {!data.isProtected &&
+                auth.hasPermission("role.permissions.manage") && (
+                  <form
+                    className="permission-savebar"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      const form = new FormData(event.currentTarget);
+                      try {
+                        await apiRequest(
+                          `/admin/access-roles/${id}/permissions`,
+                          {
+                            method: "PATCH",
+                            body: {
+                              selections: [...selected].map(
+                                ([code, scope]) => ({
+                                  code,
+                                  scope,
+                                }),
+                              ),
+                              reason: form.get("reason"),
+                            },
                           },
-                        },
-                      );
-                      setMessage(
-                        "حُفظت صلاحيات الدور وأُبطلت جلسات المستخدمين المتأثرين.",
-                      );
-                      setSelection(null);
-                      role.retry();
-                    } catch (error) {
-                      setMessage(
-                        error instanceof Error
-                          ? error.message
-                          : "تعذر حفظ الصلاحيات.",
-                      );
-                    }
-                  }}
-                >
-                  <label>
-                    سبب التغيير
-                    <input name="reason" required />
-                  </label>
-                  <button className="button" disabled={selection === null}>
-                    حفظ صلاحيات الدور
-                  </button>
-                </form>
-              )}
+                        );
+                        setMessage(
+                          "حُفظت صلاحيات الدور وأُبطلت جلسات المستخدمين المتأثرين.",
+                        );
+                        setSelection(null);
+                        rolePermissions.retry();
+                      } catch (error) {
+                        setMessage(
+                          error instanceof Error
+                            ? error.message
+                            : "تعذر حفظ الصلاحيات.",
+                        );
+                      }
+                    }}
+                  >
+                    <label>
+                      سبب التغيير
+                      <input name="reason" required />
+                    </label>
+                    <button className="button" disabled={selection === null}>
+                      حفظ صلاحيات الدور
+                    </button>
+                  </form>
+                )}
             </>
           )}
         </section>
@@ -312,7 +349,14 @@ export function AdminRoleDetailPage() {
       {tab === "users" && (
         <section className="admin-card">
           <h2>المستخدمون المسند إليهم الدور</h2>
-          {data.users.length ? (
+          {roleUsers.loading ? (
+            <LoadingCards />
+          ) : roleUsers.error ? (
+            <ErrorPanel
+              message={roleUsers.error.message}
+              retry={roleUsers.retry}
+            />
+          ) : roleUsers.data?.length ? (
             <div className="admin-table-wrap">
               <table>
                 <thead>
@@ -324,7 +368,7 @@ export function AdminRoleDetailPage() {
                   </tr>
                 </thead>
                 <tbody>
-                  {data.users.map((user) => (
+                  {roleUsers.data.map((user) => (
                     <tr key={user.id}>
                       <td>
                         <a href={`/ar/admin/users/${user.id}/profile`}>
@@ -352,9 +396,16 @@ export function AdminRoleDetailPage() {
       {tab === "activity" && (
         <section className="admin-card">
           <h2>سجل تغييرات الدور</h2>
-          {data.audit.length ? (
+          {roleAudit.loading ? (
+            <LoadingCards />
+          ) : roleAudit.error ? (
+            <ErrorPanel
+              message={roleAudit.error.message}
+              retry={roleAudit.retry}
+            />
+          ) : roleAudit.data?.length ? (
             <div className="audit-list full">
-              {data.audit.map((item) => (
+              {roleAudit.data.map((item) => (
                 <article key={item.id}>
                   <strong>{item.action}</strong>
                   <p>{item.reason}</p>

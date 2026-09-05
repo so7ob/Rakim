@@ -76,6 +76,21 @@ export class AccessControlController {
   ) {
     return this.service.role(id);
   }
+  @Get("access-roles/:id/permissions")
+  @Permissions("permission.view")
+  rolePermissionList(@Param("id") id: string) {
+    return this.service.rolePermissions(id);
+  }
+  @Get("access-roles/:id/users")
+  @Permissions("user.view")
+  roleUsers(@Param("id") id: string) {
+    return this.service.roleUsers(id);
+  }
+  @Get("access-roles/:id/audit")
+  @Permissions("audit.view")
+  roleAudit(@Param("id") id: string) {
+    return this.service.roleAudit(id);
+  }
   @Patch("access-roles/:id") @Permissions("role.update") updateRole(
     @Param("id") id: string,
     @Body() dto: RoleUpdateDto,
@@ -85,7 +100,7 @@ export class AccessControlController {
     return this.service.updateRole(id, input, request.user!, reason);
   }
   @Patch("access-roles/:id/permissions")
-  @Permissions("role.manage_permissions")
+  @Permissions("role.permissions.manage")
   rolePermissions(
     @Param("id") id: string,
     @Body() dto: PermissionSelectionDto,
@@ -113,6 +128,17 @@ export class AccessControlController {
   ) {
     return this.service.user(id);
   }
+  @Get("users/:id/roles") @Permissions("role.view") userRoles(
+    @Param("id") id: string,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.service.userRoles(id, request.user!);
+  }
+  @Get("users/:id/permissions")
+  @Permissions("permission.view")
+  userPermissionList(@Param("id") id: string) {
+    return this.service.userPermissions(id);
+  }
   @Patch("users/:id/profile") @Permissions("user.update") userProfile(
     @Param("id") id: string,
     @Body() dto: UserProfileDto,
@@ -126,7 +152,7 @@ export class AccessControlController {
     );
   }
   @Patch("users/:id/granular-permissions")
-  @Permissions("user.manage_permissions")
+  @Permissions("user.permissions.manage")
   userPermissions(
     @Param("id") id: string,
     @Body() dto: PermissionSelectionDto,

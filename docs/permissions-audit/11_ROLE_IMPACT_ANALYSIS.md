@@ -1,6 +1,19 @@
 # تحليل أثر النموذج على الأدوار والمستخدمين
 
-البيانات snapshot من قاعدة التطوير المحلية بقراءات فقط. لا تعرض أسماء مستخدمين أو credentials، ولم تُعدّل grants.
+يعرض القسم الأول snapshot التدقيق قبل التنفيذ، ثم يثبت القسم الثاني نتيجة الترحيل الفعلية. لا يعرض التقرير أسماء مستخدمين أو credentials.
+
+## نتيجة الترحيل المعتمدة
+
+| Role              | Canonical grants after | القرار المنفذ                                                                                 |
+| ----------------- | ---------------------: | --------------------------------------------------------------------------------------------- |
+| `READER`          |                      0 | بقي بلا صلاحيات إدارية                                                                        |
+| `DATA_ENTRY`      |                     18 | `prepare+submit` دون `return`؛ structure create/update؛ annex create/update فقط               |
+| `LEGAL_REVIEWER`  |                     15 | `return` دون prepare/submit؛ العلاقات الثلاث؛ `quality.resolve`                               |
+| `CONTENT_MANAGER` |                     36 | عمليات annex الخمس؛ relation create/update دون review؛ خرائط المحتوى/search/settings المعتمدة |
+| `SYSTEM_ADMIN`    |                     36 | الوصول والإعدادات وworkflow view/update؛ دون overrides أو نشر المحتوى تلقائيًا                |
+| `SUPER`           |                     75 | نظامي ومحمي؛ كل RBAC canonical دون قدرات policy الاستثنائية الخمس                             |
+
+اكتملت المقارنة set-by-set مع `CANONICAL_ROLE_PERMISSION_MAP` دون مفاتيح ناقصة أو زائدة. رُفعت نسخة نموذج الدور إلى `permission_model_version=2`، ولذلك لا تُقرأ aliases القديمة لهذه الأدوار بعد الترحيل.
 
 ## الأدوار الحالية
 
@@ -60,13 +73,7 @@
 
 ### SUPER
 
-الدور custom (`is_system=0`) مع 56/56. لا يطبق الترحيل عليه تلقائيًا. الخيارات تحتاج موافقة مالك:
-
-1. تحويله إلى protected break-glass role مع ضوابط وجلسات خاصة.
-2. إلغاؤه تدريجيًا بعد نقل الحاجة إلى SYSTEM_ADMIN/roles محددة.
-3. إبقاؤه custom لكن عدم منحه تلقائيًا كل الـ74؛ مراجعة كل قدرة يدويًا.
-
-الخيار الثالث هو أقل افتراضًا في مرحلة التصميم، لكن بقاء role غير محمي كامل السلطة خطر غير مقبول للتنفيذ النهائي.
+نُفّذ القرار المعتمد: أصبح `SUPER` نظاميًا ومحميًا بسلطة 1000، ومنح الـ75 RBAC permissions فقط. لا تُضاف له قدرات workflow exception الخمس؛ منحها يبقى قرار policy مستقلًا وقابلًا للتدقيق.
 
 ## عدد المستخدمين المتأثرين بكل Current key
 
@@ -99,16 +106,17 @@
 
 ## قرارات mapping التي تمنع التوسع التلقائي
 
-| Broad current grant                   | Role               | Proposed least-privilege mapping         | Requires owner approval |
-| ------------------------------------- | ------------------ | ---------------------------------------- | ----------------------- |
-| legislation.submit                    | DATA_ENTRY         | prepare + submit                         | نعم                     |
-| legislation.submit                    | LEGAL_REVIEWER     | return (أو submit+return للتوافق الحرفي) | نعم                     |
-| annex.manage                          | DATA_ENTRY         | create + update                          | نعم                     |
-| annex.manage + legislation.publish    | CONTENT_MANAGER    | all five annex operations                | نعم                     |
-| relation.manage + legislation.approve | LEGAL_REVIEWER     | create + update + review                 | نعم                     |
-| relation.manage فقط                   | CONTENT_MANAGER    | create + update                          | نعم                     |
-| settings.workflow.manage              | SYSTEM_ADMIN/SUPER | policy update + override manage          | نعم؛ override critical  |
-| all 56                                | SUPER              | لا automatic all-74 mapping              | **نعم، حرج**            |
+| Broad current grant                   | Role            | Proposed least-privilege mapping         | Requires owner approval |
+| ------------------------------------- | --------------- | ---------------------------------------- | ----------------------- |
+| legislation.submit                    | DATA_ENTRY      | prepare + submit                         | نعم                     |
+| legislation.submit                    | LEGAL_REVIEWER  | return (أو submit+return للتوافق الحرفي) | نعم                     |
+| annex.manage                          | DATA_ENTRY      | create + update                          | نعم                     |
+| annex.manage + legislation.publish    | CONTENT_MANAGER | all five annex operations                | نعم                     |
+| relation.manage + legislation.approve | LEGAL_REVIEWER  | create + update + review                 | نعم                     |
+| relation.manage فقط                   | CONTENT_MANAGER | create + update                          | نعم                     |
+| settings.workflow.manage              | SYSTEM_ADMIN    | policy view + update دون override manage | **اعتمد ونُفذ**         |
+| settings.workflow.manage              | SUPER           | RBAC الثلاث دون policy capabilities      | **اعتمد ونُفذ**         |
+| all 56                                | SUPER           | جميع الـ75 canonical RBAC فقط            | **اعتمد ونُفذ**         |
 
 ## مخاطر الترحيل
 

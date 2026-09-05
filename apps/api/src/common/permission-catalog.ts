@@ -28,7 +28,7 @@ const permission = (
   sensitivity,
 });
 
-export const PERMISSION_CATALOG: PermissionDefinition[] = [
+export const LEGACY_PERMISSION_CATALOG: PermissionDefinition[] = [
   permission(
     "dashboard.view",
     "OVERVIEW",
@@ -603,5 +603,12 @@ export const LEGACY_ROLE_PERMISSION_MAP: Record<string, string[]> = {
   ),
 };
 
+export const PERMISSION_CATALOG = CANONICAL_PERMISSION_CATALOG;
+export const ROLE_PERMISSION_MAP = CANONICAL_ROLE_PERMISSION_MAP;
+
 export const permissionDefinition = (code: string) =>
   PERMISSION_CATALOG.find((item) => item.code === code);
+import {
+  CANONICAL_PERMISSION_CATALOG,
+  CANONICAL_ROLE_PERMISSION_MAP,
+} from "./canonical-permission-catalog.js";

@@ -54,6 +54,8 @@ export async function rebuildSearchIndex(): Promise<number> {
         JOIN articles a ON a.id = av.article_id
         JOIN legislations l ON l.id = a.legislation_id
         WHERE l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+          AND av.status IN ('PUBLISHED','REPEALED')
+          AND av.valid_from<=CURRENT_DATE()
       `)) as Array<Record<string, string | null>>;
       const today = new Date().toISOString().slice(0, 10);
       for (const version of versions) {
@@ -90,7 +92,7 @@ export async function rebuildSearchIndex(): Promise<number> {
         (await manager.query(`SELECT am.id,am.amended_legislation_id legislation_id,am.title_ar,
         GROUP_CONCAT(CONCAT(ao.operation_type,' ',ao.citation_text) SEPARATOR ' ') body,l.verification_level
         FROM amendments am JOIN amendment_operations ao ON ao.amendment_id=am.id JOIN legislations l ON l.id=am.amended_legislation_id
-        WHERE am.status='PUBLISHED' GROUP BY am.id`)) as Array<
+        WHERE am.status='PUBLISHED' AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') GROUP BY am.id`)) as Array<
           Record<string, string>
         >;
       for (const item of amendments) {
@@ -114,7 +116,9 @@ export async function rebuildSearchIndex(): Promise<number> {
       const annexPages =
         (await manager.query(`SELECT af.id,ax.id annex_id,ax.legislation_id,ax.title_ar,af.extracted_text,l.verification_level
         FROM annex_files af JOIN annex_versions av ON av.id=af.annex_version_id JOIN annexes ax ON ax.id=av.annex_id
-        JOIN legislations l ON l.id=ax.legislation_id WHERE ax.status='PUBLISHED' AND af.ocr_status<>'UNREVIEWED'`)) as Array<
+        JOIN legislations l ON l.id=ax.legislation_id WHERE ax.status='PUBLISHED'
+        AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+        AND av.valid_from<=CURRENT_DATE() AND af.ocr_status<>'UNREVIEWED'`)) as Array<
           Record<string, string>
         >;
       for (const item of annexPages) {
@@ -141,7 +145,11 @@ export async function rebuildSearchIndex(): Promise<number> {
         (await manager.query(`SELECT lr.id,lr.source_legislation_id legislation_id,lr.relation_type,lr.scope_text,
         CONCAT(source.title_ar,' ',target.title_ar) title_ar,source.verification_level
         FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id
-        WHERE lr.review_status='REVIEWED'`)) as Array<Record<string, string>>;
+        WHERE lr.review_status='REVIEWED'
+          AND source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+          AND target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`)) as Array<
+          Record<string, string>
+        >;
       for (const item of relations) {
         const body = `${item.relation_type} ${item.scope_text ?? ""}`;
         await manager.query(

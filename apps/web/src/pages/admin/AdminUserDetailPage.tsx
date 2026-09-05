@@ -20,16 +20,33 @@ interface UserAccess {
   createdAt: string;
   lastLoginAt: string | null;
   failedLoginCount: number;
-  roles: Array<{
-    id: string;
-    code: string;
-    nameAr: string;
-    descriptionAr: string;
-    isSystem: boolean;
-    isActive: boolean;
-    assignedAt: string;
-    assignedBy: string | null;
-  }>;
+}
+interface UserRole {
+  id: string;
+  code: string;
+  nameAr: string;
+  descriptionAr: string;
+  isSystem: boolean;
+  isProtected?: boolean;
+  isActive: boolean;
+  assignedAt: string;
+  assignedBy: string | null;
+}
+interface AssignableRole {
+  id: string;
+  code: string;
+  nameAr: string;
+  descriptionAr: string | null;
+  isSystem: boolean;
+  isProtected: boolean;
+  isActive: boolean;
+  authorityLevel: number;
+}
+interface UserRolesAccess {
+  assigned: UserRole[];
+  assignable: AssignableRole[];
+}
+interface UserPermissionAccess {
   directOverrides: Array<{
     code: string;
     effect: "ALLOW" | "DENY";
@@ -39,9 +56,6 @@ interface UserAccess {
     grantedBy: string | null;
   }>;
   effectivePermissions: PermissionItem[];
-  policyOverrides: Array<{ code: string; labelAr: string }>;
-  sessionSummary: { total: number; active: number };
-  recentActivity: Activity[];
 }
 interface Activity {
   id: string;
@@ -58,12 +72,6 @@ interface Session {
   expiresAt: string;
   revokedAt: string | null;
   expired: boolean;
-}
-interface Role {
-  id: string;
-  code: string;
-  nameAr: string;
-  descriptionAr?: string;
 }
 interface Catalog {
   permissions: PermissionItem[];
@@ -82,8 +90,13 @@ export function AdminUserDetailPage() {
   };
   const tabAllowed = allowedTabs[tab] ?? false;
   const user = useApi<UserAccess>(id ? `/admin/users/${id}/access` : null);
-  const roles = useApi<Role[]>(
-    tabAllowed && tab === "roles" ? "/admin/roles" : null,
+  const userRoles = useApi<UserRolesAccess>(
+    tabAllowed && tab === "roles" ? `/admin/users/${id}/roles` : null,
+  );
+  const permissionAccess = useApi<UserPermissionAccess>(
+    tabAllowed && ["permissions", "effective"].includes(tab)
+      ? `/admin/users/${id}/permissions`
+      : null,
   );
   const catalog = useApi<Catalog>(
     tabAllowed && ["permissions", "effective"].includes(tab)
@@ -103,17 +116,26 @@ export function AdminUserDetailPage() {
   > | null>(null);
   const [message, setMessage] = useState("");
   const selectedRoles =
-    roleSelection ?? new Set(user.data?.roles.map((role) => role.code) ?? []);
+    roleSelection ??
+    new Set(userRoles.data?.assigned.map((role) => role.code) ?? []);
+  const displayedRoles = useMemo(() => {
+    const result = new Map<string, UserRole | AssignableRole>();
+    for (const role of userRoles.data?.assigned ?? [])
+      result.set(role.code, role);
+    for (const role of userRoles.data?.assignable ?? [])
+      result.set(role.code, role);
+    return [...result.values()];
+  }, [userRoles.data]);
   const selectedOverrides = useMemo(
     () =>
       overrides ??
       new Map(
-        user.data?.directOverrides.map((item) => [
+        permissionAccess.data?.directOverrides.map((item) => [
           item.code,
           { effect: item.effect, scope: item.scope },
         ]) ?? [],
       ),
-    [overrides, user.data],
+    [overrides, permissionAccess.data],
   );
   if (!tabAllowed) return <Navigate to="/ar/admin/no-permission" replace />;
   if (user.loading) return <LoadingCards />;
@@ -154,7 +176,7 @@ export function AdminUserDetailPage() {
                 {
                   label: "الأدوار",
                   to: `${base}/roles`,
-                  count: data.roles.length,
+                  count: userRoles.data?.assigned.length,
                 },
               ]
             : []),
@@ -163,12 +185,12 @@ export function AdminUserDetailPage() {
                 {
                   label: "الصلاحيات",
                   to: `${base}/permissions`,
-                  count: data.directOverrides.length,
+                  count: permissionAccess.data?.directOverrides.length,
                 },
                 {
                   label: "الصلاحيات الفعالة",
                   to: `${base}/effective`,
-                  count: data.effectivePermissions.filter(
+                  count: permissionAccess.data?.effectivePermissions.filter(
                     (item) => item.allowed,
                   ).length,
                 },
@@ -182,7 +204,6 @@ export function AdminUserDetailPage() {
                 {
                   label: "الجلسات",
                   to: `${base}/sessions`,
-                  count: data.sessionSummary.active,
                 },
               ]
             : []),
@@ -208,10 +229,13 @@ export function AdminUserDetailPage() {
         <section className="admin-card">
           <h2>الأدوار المسندة</h2>
           <p>تُجمع صلاحيات جميع الأدوار النشطة لحساب الصلاحيات الفعالة.</p>
-          {roles.loading ? (
+          {userRoles.loading ? (
             <LoadingCards />
-          ) : roles.error ? (
-            <ErrorPanel message={roles.error.message} retry={roles.retry} />
+          ) : userRoles.error ? (
+            <ErrorPanel
+              message={userRoles.error.message}
+              retry={userRoles.retry}
+            />
           ) : (
             <form
               onSubmit={async (event) => {
@@ -227,7 +251,7 @@ export function AdminUserDetailPage() {
                   });
                   setMessage("حُفظت الأدوار وأُبطلت جلسات المستخدم.");
                   setRoleSelection(null);
-                  user.retry();
+                  userRoles.retry();
                 } catch (error) {
                   setMessage(
                     error instanceof Error
@@ -238,8 +262,11 @@ export function AdminUserDetailPage() {
               }}
             >
               <div className="role-assignment-grid">
-                {roles.data?.map((role) => {
-                  const assignment = data.roles.find(
+                {displayedRoles.map((role) => {
+                  const assignment = userRoles.data?.assigned.find(
+                    (item) => item.code === role.code,
+                  );
+                  const assignable = userRoles.data?.assignable.some(
                     (item) => item.code === role.code,
                   );
                   return (
@@ -250,7 +277,11 @@ export function AdminUserDetailPage() {
                       <input
                         type="checkbox"
                         checked={selectedRoles.has(role.code)}
-                        disabled={!auth.hasPermission("user.manage_roles")}
+                        disabled={
+                          !auth.hasPermission("user.roles.manage") ||
+                          !assignable ||
+                          role.isProtected
+                        }
                         onChange={(event) =>
                           setRoleSelection((current) => {
                             const next = new Set(current ?? selectedRoles);
@@ -278,7 +309,7 @@ export function AdminUserDetailPage() {
                   );
                 })}
               </div>
-              {auth.hasPermission("user.manage_roles") && (
+              {auth.hasPermission("user.roles.manage") && (
                 <div className="permission-savebar">
                   <label>
                     سبب التغيير
@@ -300,22 +331,19 @@ export function AdminUserDetailPage() {
             استخدم المنح أو الرفض المباشر للحالات الاستثنائية فقط. استثناءات
             سياسات سير العمل تدار حصريًا من صفحة السياسة.
           </p>
-          {data.policyOverrides.length > 0 && (
-            <div className="policy-context-note">
-              <strong>استثناءات سياسات سير العمل:</strong>
-              {data.policyOverrides.map((item) => (
-                <span className="tag" key={item.code}>
-                  {item.labelAr}
-                </span>
-              ))}
-            </div>
-          )}
-          {catalog.loading ? (
+          {catalog.loading || permissionAccess.loading ? (
             <LoadingCards />
-          ) : catalog.error || !catalog.data ? (
+          ) : catalog.error || permissionAccess.error || !catalog.data ? (
             <ErrorPanel
-              message={catalog.error?.message ?? "تعذر تحميل الصلاحيات."}
-              retry={catalog.retry}
+              message={
+                catalog.error?.message ??
+                permissionAccess.error?.message ??
+                "تعذر تحميل الصلاحيات."
+              }
+              retry={() => {
+                catalog.retry();
+                permissionAccess.retry();
+              }}
             />
           ) : (
             <>
@@ -324,12 +352,12 @@ export function AdminUserDetailPage() {
                 mode="user"
                 userOverrides={selectedOverrides}
                 onUserOverrideChange={
-                  auth.hasPermission("user.manage_permissions")
+                  auth.hasPermission("user.permissions.manage")
                     ? setOverrides
                     : undefined
                 }
               />
-              {auth.hasPermission("user.manage_permissions") && (
+              {auth.hasPermission("user.permissions.manage") && (
                 <form
                   className="permission-savebar"
                   onSubmit={async (event) => {
@@ -352,7 +380,7 @@ export function AdminUserDetailPage() {
                         "حُفظت الصلاحيات المباشرة وأُبطلت جلسات المستخدم.",
                       );
                       setOverrides(null);
-                      user.retry();
+                      permissionAccess.retry();
                     } catch (error) {
                       setMessage(
                         error instanceof Error
@@ -382,11 +410,16 @@ export function AdminUserDetailPage() {
             النتيجة النهائية بعد دمج الأدوار والمنح والرفض المباشر. الرفض
             المباشر يتقدم على الدور.
           </p>
-          {catalog.loading ? (
+          {catalog.loading || permissionAccess.loading ? (
             <LoadingCards />
+          ) : permissionAccess.error ? (
+            <ErrorPanel
+              message={permissionAccess.error.message}
+              retry={permissionAccess.retry}
+            />
           ) : (
             <PermissionExplorer
-              permissions={data.effectivePermissions}
+              permissions={permissionAccess.data?.effectivePermissions ?? []}
               mode="effective"
             />
           )}
@@ -583,7 +616,7 @@ function ProfileTab({
           </div>
           <div>
             <dt>الجلسات النشطة</dt>
-            <dd>{user.sessionSummary.active}</dd>
+            <dd>تُعرض من تبويب الجلسات عند توفر الصلاحية.</dd>
           </div>
         </dl>
         {auth.hasPermission("user.disable") && (

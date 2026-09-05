@@ -5,6 +5,7 @@ import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
+import { useAuth } from "../../auth/AuthContext";
 
 interface Item {
   id: string;
@@ -26,6 +27,7 @@ const labels = {
 
 export function AdminReferenceDataPage() {
   const { kind = "types" } = useParams();
+  const auth = useAuth();
   const data = useApi<Data>("/admin/reference-data");
   const [message, setMessage] = useState("");
   if (data.loading) return <LoadingCards />;
@@ -89,14 +91,17 @@ export function AdminReferenceDataPage() {
                   kind={activeKind}
                   item={item}
                   subjects={data.data!.subjects}
+                  editable={auth.hasPermission("reference.update")}
                   done={done}
                 />
               ))}
-              <NewReference
-                kind={activeKind}
-                subjects={data.data!.subjects}
-                done={done}
-              />
+              {auth.hasPermission("reference.create") && (
+                <NewReference
+                  kind={activeKind}
+                  subjects={data.data!.subjects}
+                  done={done}
+                />
+              )}
             </div>
           </section>
         ))}
@@ -154,11 +159,13 @@ function ReferenceEditor({
   kind,
   item,
   subjects,
+  editable,
   done,
 }: {
   kind: keyof typeof labels;
   item: Item;
   subjects: Item[];
+  editable: boolean;
   done: (x: string) => void;
 }) {
   return (
@@ -166,34 +173,36 @@ function ReferenceEditor({
       <summary>
         {item.nameAr} — {item.code} {item.isActive ? "" : "(معطل)"}
       </summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const f = new FormData(event.currentTarget);
-          try {
-            await apiRequest(`/admin/reference-data/${kind}/${item.id}`, {
-              method: "PATCH",
-              body: {
-                code: f.get("code"),
-                nameAr: f.get("nameAr"),
-                parentId: f.get("parentId"),
-                isActive: f.has("isActive"),
-                reason: f.get("reason"),
-              },
-            });
-            done("حُفظ عنصر القائمة المرجعية.");
-          } catch (error) {
-            done(error instanceof Error ? error.message : "تعذر الحفظ.");
-          }
-        }}
-      >
-        {fields(kind, item, subjects)}
-        <label>
-          سبب التغيير
-          <input name="reason" required />
-        </label>
-        <button className="button secondary">حفظ</button>
-      </form>
+      {editable && (
+        <form
+          onSubmit={async (event) => {
+            event.preventDefault();
+            const f = new FormData(event.currentTarget);
+            try {
+              await apiRequest(`/admin/reference-data/${kind}/${item.id}`, {
+                method: "PATCH",
+                body: {
+                  code: f.get("code"),
+                  nameAr: f.get("nameAr"),
+                  parentId: f.get("parentId"),
+                  isActive: f.has("isActive"),
+                  reason: f.get("reason"),
+                },
+              });
+              done("حُفظ عنصر القائمة المرجعية.");
+            } catch (error) {
+              done(error instanceof Error ? error.message : "تعذر الحفظ.");
+            }
+          }}
+        >
+          {fields(kind, item, subjects)}
+          <label>
+            سبب التغيير
+            <input name="reason" required />
+          </label>
+          <button className="button secondary">حفظ</button>
+        </form>
+      )}
     </details>
   );
 }

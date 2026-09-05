@@ -55,21 +55,23 @@ export function AdminSettingsPage() {
   const { tab = "general" } = useParams();
   const auth = useAuth();
   const siteConfig = useSiteConfig();
-  const state = useApi<SettingsState>("/admin/site");
+  const isWorkflow = tab === "workflow";
+  const state = useApi<SettingsState>(isWorkflow ? null : "/admin/site");
   const [message, setMessage] = useState("");
-  if (state.loading) return <LoadingCards />;
-  if (state.error || !state.data)
-    return (
-      <ErrorPanel
-        message={state.error?.message ?? "تعذر تحميل الإعدادات."}
-        retry={state.retry}
-      />
-    );
+  const canViewSettings = auth.hasPermission("settings.view");
+  const canViewWorkflow = auth.hasPermission("workflow_policy.view");
   const canGeneral = auth.hasPermission("settings.general.update");
   const canAppearance = auth.hasPermission("settings.appearance.update");
-  const canNavigation = auth.hasPermission("settings.navigation.update");
-  const canContent = auth.hasPermission("settings.content.update");
-  const canWorkflow = auth.hasPermission("settings.workflow.manage");
+  const canHeader = auth.hasPermission("settings.header.update");
+  const canFooter = auth.hasPermission("settings.footer.update");
+  const canLegislationPage = auth.hasPermission(
+    "settings.legislation_page.update",
+  );
+  const canNavigationCreate = auth.hasPermission("navigation.create");
+  const canNavigationUpdate = auth.hasPermission("navigation.update");
+  const canPublicPageUpdate = auth.hasPermission("public_page.update");
+  const canPublicPagePublish = auth.hasPermission("public_page.publish");
+  const canPublicPageArchive = auth.hasPermission("public_page.archive");
   const knownTabs = [
     "general",
     "appearance",
@@ -78,9 +80,25 @@ export function AdminSettingsPage() {
     "workflow",
     "pages",
   ];
-  if (!knownTabs.includes(tab) || (tab === "workflow" && !canWorkflow))
+  if (
+    !knownTabs.includes(tab) ||
+    (isWorkflow ? !canViewWorkflow : !canViewSettings)
+  )
     return <Navigate to="/ar/admin/no-permission" replace />;
-  const groups = state.data.settings.reduce<Record<string, Setting[]>>(
+  if (!isWorkflow && state.loading) return <LoadingCards />;
+  if (!isWorkflow && (state.error || !state.data))
+    return (
+      <ErrorPanel
+        message={state.error?.message ?? "تعذر تحميل الإعدادات."}
+        retry={state.retry}
+      />
+    );
+  const settingsState = state.data ?? {
+    settings: [],
+    navigation: [],
+    pages: [],
+  };
+  const groups = settingsState.settings.reduce<Record<string, Setting[]>>(
     (result, setting) => {
       if (setting.groupCode === "WORKFLOW") return result;
       (result[setting.groupCode] ??= []).push(setting);
@@ -100,8 +118,10 @@ export function AdminSettingsPage() {
       : ["COLORS", "BACKGROUND", "TYPOGRAPHY"].includes(group)
         ? canAppearance
         : ["HEADER", "FOOTER"].includes(group)
-          ? canNavigation
-          : canContent;
+          ? group === "HEADER"
+            ? canHeader
+            : canFooter
+          : canLegislationPage;
   const currentGroups = tabGroups[tab] ?? [];
   return (
     <section>
@@ -117,18 +137,32 @@ export function AdminSettingsPage() {
       <AdminTabs
         label="أقسام إعدادات المنصة"
         items={[
-          { label: "عام", to: "/ar/admin/settings/general" },
-          { label: "الهوية والمظهر", to: "/ar/admin/settings/appearance" },
-          { label: "التنقل", to: "/ar/admin/settings/navigation" },
-          { label: "صفحة التشريع", to: "/ar/admin/settings/legislation" },
-          ...(canWorkflow
+          ...(canViewSettings
+            ? [
+                { label: "عام", to: "/ar/admin/settings/general" },
+                {
+                  label: "الهوية والمظهر",
+                  to: "/ar/admin/settings/appearance",
+                },
+                { label: "التنقل", to: "/ar/admin/settings/navigation" },
+                {
+                  label: "صفحة التشريع",
+                  to: "/ar/admin/settings/legislation",
+                },
+              ]
+            : []),
+          ...(canViewWorkflow
             ? [{ label: "سياسات سير العمل", to: "/ar/admin/settings/workflow" }]
             : []),
-          {
-            label: "الصفحات العامة",
-            to: "/ar/admin/settings/pages",
-            count: state.data.pages.length,
-          },
+          ...(canViewSettings
+            ? [
+                {
+                  label: "الصفحات العامة",
+                  to: "/ar/admin/settings/pages",
+                  count: settingsState.pages.length,
+                },
+              ]
+            : []),
         ]}
       />
       {message && (
@@ -136,7 +170,7 @@ export function AdminSettingsPage() {
           {message}
         </p>
       )}
-      {tab === "workflow" && canWorkflow && <WorkflowPoliciesEditor />}
+      {isWorkflow && canViewWorkflow && <WorkflowPoliciesEditor />}
       {currentGroups.map((group) => {
         const settings = groups[group] ?? [];
         const editable = editableForGroup(group);
@@ -161,11 +195,11 @@ export function AdminSettingsPage() {
         <section className="admin-card">
           <h2>التبويبات وروابط الترويسة والتذييل</h2>
           <div className="draft-articles">
-            {state.data.navigation.map((item) => (
+            {settingsState.navigation.map((item) => (
               <NavigationEditor
                 key={item.id}
                 item={item}
-                editable={canNavigation}
+                editable={canNavigationUpdate}
                 done={(text) => {
                   setMessage(text);
                   state.retry();
@@ -174,7 +208,7 @@ export function AdminSettingsPage() {
               />
             ))}
           </div>
-          {canNavigation && (
+          {canNavigationCreate && (
             <NewNavigation
               done={(text) => {
                 setMessage(text);
@@ -193,11 +227,13 @@ export function AdminSettingsPage() {
             القانونية.
           </p>
           <div className="draft-articles">
-            {state.data.pages.map((page) => (
+            {settingsState.pages.map((page) => (
               <PageEditor
                 key={page.id}
                 page={page}
-                editable={canContent}
+                canUpdate={canPublicPageUpdate}
+                canPublish={canPublicPagePublish}
+                canArchive={canPublicPageArchive}
                 done={(text) => {
                   setMessage(text);
                   state.retry();
@@ -478,15 +514,25 @@ function NewNavigation({ done }: { done: (x: string) => void }) {
 
 function PageEditor({
   page,
-  editable,
+  canUpdate,
+  canPublish,
+  canArchive,
   done,
 }: {
   page: ContentPage;
-  editable: boolean;
+  canUpdate: boolean;
+  canPublish: boolean;
+  canArchive: boolean;
   done: (x: string) => void;
 }) {
   const [sections, setSections] = useState(page.sections);
-  if (!editable)
+  const canSaveCurrentStatus =
+    page.status === "DRAFT"
+      ? canUpdate
+      : page.status === "PUBLISHED"
+        ? canUpdate && canPublish
+        : canUpdate && canArchive;
+  if (!canSaveCurrentStatus)
     return (
       <details className="draft-article">
         <summary>
@@ -535,9 +581,13 @@ function PageEditor({
           <label>
             الحالة
             <select name="status" defaultValue={page.status}>
-              <option>DRAFT</option>
-              <option>PUBLISHED</option>
-              <option>ARCHIVED</option>
+              {page.status === "DRAFT" && <option>DRAFT</option>}
+              {(page.status === "PUBLISHED" || canPublish) && (
+                <option>PUBLISHED</option>
+              )}
+              {(page.status === "ARCHIVED" || canArchive) && (
+                <option>ARCHIVED</option>
+              )}
             </select>
           </label>
         </div>

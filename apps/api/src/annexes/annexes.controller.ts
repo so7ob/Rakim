@@ -29,7 +29,10 @@ export class AnnexesController {
       af.id fileId,af.original_name fileName,af.media_type mediaType,af.byte_size byteSize,af.page_count pageCount,af.ocr_status ocrStatus,
       av.structured_table_json structuredTable FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id
       LEFT JOIN annex_files af ON af.annex_version_id=av.id JOIN legislations l ON l.id=ax.legislation_id
-      WHERE ax.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') ORDER BY av.valid_from DESC`,
+      WHERE ax.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+        AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+        AND av.valid_from<=CURRENT_DATE()
+      ORDER BY av.valid_from DESC`,
       [id],
     );
     if (!rows[0]) throw new NotFoundException("الملحق غير موجود أو غير منشور.");
@@ -54,6 +57,7 @@ export class AnnexesController {
       `SELECT af.storage_key storageKey,af.original_name fileName,af.media_type mediaType
       FROM annex_files af JOIN annex_versions av ON av.id=af.annex_version_id JOIN annexes ax ON ax.id=av.annex_id
       JOIN legislations l ON l.id=ax.legislation_id WHERE ax.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      AND ax.status IN ('PUBLISHED','REPLACED','REPEALED') AND av.valid_from<=CURRENT_DATE()
       AND (? IS NULL OR av.id=?)
       ORDER BY av.valid_from DESC LIMIT 1`,
       [id, version ?? null, version ?? null],

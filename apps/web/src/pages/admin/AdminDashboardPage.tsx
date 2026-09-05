@@ -7,13 +7,6 @@ interface Dashboard {
   imports: Array<{ status: string; count: number }>;
   quality: Array<{ severity: string; count: number }>;
   jobs: Array<{ status: string; count: number }>;
-  recentAudit: Array<{
-    id: string;
-    action: string;
-    actorName: string;
-    reason: string;
-    occurredAt: string;
-  }>;
 }
 export function AdminDashboardPage() {
   const { data, error, loading, retry } = useApi<Dashboard>("/admin/dashboard");
@@ -22,7 +15,7 @@ export function AdminDashboardPage() {
       <AdminPageHeader
         title="لوحة الإدارة"
         eyebrow="نظرة تشغيلية"
-        description="ملخص دورة المحتوى والاستيراد والمهام وآخر أحداث التدقيق."
+        description="ملخص دورة المحتوى والاستيراد والمهام الخلفية."
         breadcrumbs={[{ label: "لوحة الإدارة" }]}
         actions={
           <button className="button secondary" onClick={retry}>
@@ -71,22 +64,6 @@ export function AdminDashboardPage() {
               ) : (
                 <p>الطابور فارغ.</p>
               )}
-            </section>
-            <section className="admin-card wide">
-              <h2>آخر أحداث التدقيق</h2>
-              <div className="audit-list">
-                {data?.recentAudit.map((item) => (
-                  <article key={item.id}>
-                    <strong>{item.action}</strong>
-                    <span>
-                      {item.actorName ?? "النظام"} — {item.reason}
-                    </span>
-                    <time>
-                      {new Date(item.occurredAt).toLocaleString("ar-YE")}
-                    </time>
-                  </article>
-                ))}
-              </div>
             </section>
           </div>
         </>

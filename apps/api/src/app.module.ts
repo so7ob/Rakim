@@ -11,6 +11,7 @@ import { ImportsModule } from "./imports/imports.module.js";
 import { UserToolsModule } from "./users/user-tools.module.js";
 import { AmendmentsModule } from "./amendments/amendments.module.js";
 import { SiteModule } from "./site/site.module.js";
+import { ApiExceptionFilter } from "./common/api-exception.filter.js";
 
 @Module({
   imports: [
@@ -27,5 +28,6 @@ import { SiteModule } from "./site/site.module.js";
     SiteModule,
   ],
   controllers: [HealthController],
+  providers: [ApiExceptionFilter],
 })
 export class AppModule {}

@@ -17,7 +17,7 @@ interface Report {
 }
 export function AdminReportsPage() {
   const { hasPermission } = useAuth();
-  const canManage = hasPermission("report.manage");
+  const canManage = hasPermission("report.update");
   const data = useApi<Report[]>("/admin/reports");
   const [msg, setMsg] = useState("");
   const update = async (item: Report, status: string) => {

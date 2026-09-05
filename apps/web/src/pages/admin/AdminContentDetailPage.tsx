@@ -113,7 +113,7 @@ export function AdminContentDetailPage() {
   const isDraft = ["INBOX", "DRAFT", "IN_REVIEW"].includes(law.status);
   const canEditMetadata =
     (isDraft && auth.hasPermission("legislation.update")) ||
-    (!isDraft && auth.hasPermission("legislation.update_published_metadata"));
+    (!isDraft && auth.hasPermission("legislation.published_metadata.update"));
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -454,7 +454,7 @@ export function AdminContentDetailPage() {
           <h2>الأبواب والفصول والأقسام</h2>
           <div className="draft-articles">
             {law.structures.length === 0 &&
-              !auth.hasPermission("structure.manage") && (
+              !auth.hasPermission("structure.update") && (
                 <p>لا توجد بنية هرمية مسجلة لهذا التشريع.</p>
               )}
             {law.structures.map((node) => (
@@ -462,14 +462,14 @@ export function AdminContentDetailPage() {
                 key={node.id}
                 node={node}
                 nodes={law.structures}
-                editable={auth.hasPermission("structure.manage")}
+                editable={auth.hasPermission("structure.update")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
                 }}
               />
             ))}
-            {auth.hasPermission("structure.manage") && (
+            {auth.hasPermission("structure.create") && (
               <NewStructureEditor
                 id={law.id}
                 nodes={law.structures}
@@ -490,24 +490,38 @@ export function AdminContentDetailPage() {
           </p>
           <div className="draft-articles">
             {law.annexes.length === 0 &&
-              !auth.hasPermission("annex.manage") && (
+              !auth.hasPermission("annex.update") && (
                 <p>لا توجد ملاحق أو جداول مسجلة.</p>
               )}
             {law.annexes.map((annex) => (
               <AnnexEditor
                 key={annex.id}
                 annex={annex}
-                editable={auth.hasPermission("annex.manage")}
+                editable={
+                  auth.hasPermission("annex.update") &&
+                  (annex.status === "DRAFT" ||
+                    auth.hasPermission(
+                      annex.status === "PUBLISHED"
+                        ? "annex.publish"
+                        : annex.status === "REPLACED"
+                          ? "annex.replace"
+                          : "annex.repeal",
+                    ))
+                }
+                canPublish={auth.hasPermission("annex.publish")}
+                canReplace={auth.hasPermission("annex.replace")}
+                canRepeal={auth.hasPermission("annex.repeal")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
                 }}
               />
             ))}
-            {auth.hasPermission("annex.manage") && (
+            {auth.hasPermission("annex.create") && (
               <NewAnnexEditor
                 id={law.id}
                 sources={law.sources}
+                canPublish={auth.hasPermission("annex.publish")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
@@ -522,7 +536,7 @@ export function AdminContentDetailPage() {
           <h2>العلاقات القانونية</h2>
           <div className="draft-articles">
             {law.relations.length === 0 &&
-              !auth.hasPermission("relation.manage") && (
+              !auth.hasPermission("relation.update") && (
                 <p>لا توجد علاقات قانونية مسجلة.</p>
               )}
             {law.relations.map((relation) => (
@@ -531,18 +545,24 @@ export function AdminContentDetailPage() {
                 relation={relation}
                 options={law.references.legislationOptions}
                 sources={law.sources}
-                editable={auth.hasPermission("relation.manage")}
+                editable={
+                  auth.hasPermission("relation.update") &&
+                  (relation.reviewStatus === "UNREVIEWED" ||
+                    auth.hasPermission("relation.review"))
+                }
+                canReview={auth.hasPermission("relation.review")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
                 }}
               />
             ))}
-            {auth.hasPermission("relation.manage") && (
+            {auth.hasPermission("relation.create") && (
               <NewRelationEditor
                 id={law.id}
                 options={law.references.legislationOptions}
                 sources={law.sources}
+                canReview={auth.hasPermission("relation.review")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
@@ -930,10 +950,16 @@ function NewStructureEditor({
 function AnnexEditor({
   annex,
   editable,
+  canPublish,
+  canReplace,
+  canRepeal,
   done,
 }: {
   annex: Detail["annexes"][number];
   editable: boolean;
+  canPublish: boolean;
+  canReplace: boolean;
+  canRepeal: boolean;
   done: (message: string) => void;
 }) {
   return (
@@ -987,9 +1013,16 @@ function AnnexEditor({
             <label>
               الحالة
               <select name="status" defaultValue={annex.status}>
-                {["DRAFT", "PUBLISHED", "REPLACED", "REPEALED"].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
+                {annex.status === "DRAFT" && <option>DRAFT</option>}
+                {(annex.status === "PUBLISHED" || canPublish) && (
+                  <option>PUBLISHED</option>
+                )}
+                {(annex.status === "REPLACED" || canReplace) && (
+                  <option>REPLACED</option>
+                )}
+                {(annex.status === "REPEALED" || canRepeal) && (
+                  <option>REPEALED</option>
+                )}
               </select>
             </label>
           </div>
@@ -1007,10 +1040,12 @@ function AnnexEditor({
 function NewAnnexEditor({
   id,
   sources,
+  canPublish,
   done,
 }: {
   id: string;
   sources: Detail["sources"];
+  canPublish: boolean;
   done: (x: string) => void;
 }) {
   if (!sources.length) return <p>اربط مصدرًا بالتشريع قبل إضافة ملحق.</p>;
@@ -1067,7 +1102,7 @@ function NewAnnexEditor({
             الحالة
             <select name="status">
               <option>DRAFT</option>
-              <option>PUBLISHED</option>
+              {canPublish && <option>PUBLISHED</option>}
             </select>
           </label>
           <label>
@@ -1107,12 +1142,14 @@ function RelationEditor({
   options,
   sources,
   editable,
+  canReview,
   done,
 }: {
   relation: Detail["relations"][number];
   options: Detail["references"]["legislationOptions"];
   sources: Detail["sources"];
   editable: boolean;
+  canReview: boolean;
   done: (message: string) => void;
 }) {
   return (
@@ -1185,9 +1222,9 @@ function RelationEditor({
             <label>
               حالة المراجعة
               <select name="reviewStatus" defaultValue={relation.reviewStatus}>
-                {["UNREVIEWED", "REVIEWED", "REJECTED"].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
+                <option>UNREVIEWED</option>
+                {canReview && <option>REVIEWED</option>}
+                {canReview && <option>REJECTED</option>}
               </select>
             </label>
             <label>
@@ -1224,11 +1261,13 @@ function NewRelationEditor({
   id,
   options,
   sources,
+  canReview,
   done,
 }: {
   id: string;
   options: Detail["references"]["legislationOptions"];
   sources: Detail["sources"];
+  canReview: boolean;
   done: (x: string) => void;
 }) {
   return (
@@ -1293,8 +1332,8 @@ function NewRelationEditor({
             المراجعة
             <select name="reviewStatus">
               <option>UNREVIEWED</option>
-              <option>REVIEWED</option>
-              <option>REJECTED</option>
+              {canReview && <option>REVIEWED</option>}
+              {canReview && <option>REJECTED</option>}
             </select>
           </label>
           <label>
@@ -1437,13 +1476,17 @@ function WorkflowActions({
   setMessage: (x: string) => void;
 }) {
   const actions = [] as Array<{ target: string; label: string }>;
+  if (status === "INBOX" && permissions.includes("legislation.prepare"))
+    actions.push({ target: "DRAFT", label: "تجهيز كمسودة" });
   if (status === "DRAFT" && permissions.includes("legislation.submit"))
     actions.push({ target: "IN_REVIEW", label: "إرسال للمراجعة" });
+  if (status === "IN_REVIEW" && permissions.includes("legislation.return"))
+    actions.push({ target: "DRAFT", label: "إعادة للمسودة" });
   if (status === "IN_REVIEW" && permissions.includes("legislation.approve"))
-    actions.push(
-      { target: "DRAFT", label: "إعادة للمسودة" },
-      { target: "APPROVED_FOR_PUBLISHING", label: "اعتماد للنشر" },
-    );
+    actions.push({
+      target: "APPROVED_FOR_PUBLISHING",
+      label: "اعتماد للنشر",
+    });
   if (
     status === "APPROVED_FOR_PUBLISHING" &&
     permissions.includes("legislation.publish")

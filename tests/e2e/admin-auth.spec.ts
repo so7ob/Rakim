@@ -157,14 +157,17 @@ test("platform settings and full legislation metadata are manageable with audite
   expect(policyResponse.ok()).toBeTruthy();
   const policyState = await policyResponse.json();
   expect(policyState.policies).toHaveLength(5);
-  expect(policyState.users.length).toBeGreaterThan(0);
+  expect(policyState.users).toEqual([]);
   expect(
-    state.settings.some(
-      (item: { settingKey: string; value: boolean }) =>
-        item.settingKey === "workflow.enforce_approval_separation" &&
-        typeof item.value === "boolean",
+    policyState.policies.every(
+      (item: { userIds: string[] }) => item.userIds.length === 0,
     ),
   ).toBeTruthy();
+  expect(
+    state.settings.some(
+      (item: { groupCode: string }) => item.groupCode === "WORKFLOW",
+    ),
+  ).toBeFalsy();
   expect(state.pages.length).toBeGreaterThanOrEqual(10);
   const siteName = state.settings.find(
     (item: { settingKey: string }) => item.settingKey === "branding.site_name",
@@ -258,6 +261,7 @@ test("system administrator can open the platform settings editor", async ({
       name: "لا يجوز لمن استورد أو حرر المحتوى أن يعتمد التشريع نفسه",
     }),
   ).toBeVisible();
+  await expect(page.locator(".policy-user-options")).toHaveCount(0);
   const system = await login(request, "system_admin");
   const policyState = await (
     await request.get("/api/v1/admin/workflow-policies", {
@@ -267,45 +271,97 @@ test("system administrator can open the platform settings editor", async ({
   const policy = policyState.policies.find(
     (item: { code: string }) => item.code === "LEGISLATION_SELF_APPROVAL",
   );
-  const reader = policyState.users.find(
+  expect(policyState.users).toEqual([]);
+  expect(policy.userIds).toEqual([]);
+  const updatePolicy = await request.patch(
+    `/api/v1/admin/workflow-policies/${policy.code}`,
+    {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": system.csrfToken,
+      },
+      data: {
+        enabled: policy.enabled,
+        reason: "اختبار صلاحية تحديث إعداد السياسة دون إدارة الاستثناءات",
+      },
+    },
+  );
+  expect(updatePolicy.ok()).toBeTruthy();
+  const deniedOverride = await request.patch(
+    `/api/v1/admin/workflow-policies/${policy.code}/overrides`,
+    {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": system.csrfToken,
+      },
+      data: {
+        userIds: [],
+        reason: "اختبار منع مدير النظام من إدارة الاستثناءات",
+      },
+    },
+  );
+  expect(deniedOverride.status()).toBe(403);
+
+  const accessUsers = await (
+    await request.get("/api/v1/admin/users", {
+      headers: { cookie: system.cookie },
+    })
+  ).json();
+  const protectedAdmin = accessUsers.find((item: { roles: string | null }) =>
+    String(item.roles ?? "")
+      .split(",")
+      .includes("SUPER"),
+  );
+  const superAdmin = await login(request, protectedAdmin.username);
+  const privilegedState = await (
+    await request.get("/api/v1/admin/workflow-policies", {
+      headers: { cookie: superAdmin.cookie },
+    })
+  ).json();
+  expect(privilegedState.users.length).toBeGreaterThan(0);
+  const privilegedPolicy = privilegedState.policies.find(
+    (item: { code: string }) => item.code === policy.code,
+  );
+  const reader = privilegedState.users.find(
     (item: { username: string }) => item.username === "reader",
   );
-  const originalUserIds = [...policy.userIds];
+  const originalUserIds = [...privilegedPolicy.userIds];
   try {
-    const policyPanel = page.getByRole("tabpanel");
-    const readerOverride = policyPanel
-      .locator(".policy-user-options label")
-      .filter({ hasText: "reader" })
-      .getByRole("checkbox");
-    if (await readerOverride.isChecked()) await readerOverride.uncheck();
-    await readerOverride.check();
-    await policyPanel
-      .getByLabel("سبب التغيير")
-      .fill("اختبار منح استثناء من صفحة السياسة");
-    await policyPanel
-      .getByRole("button", { name: "حفظ السياسة والاستثناءات" })
-      .click();
-    await expect(page.getByRole("status")).toContainText("حُفظت السياسة");
-    await page.getByRole("button", { name: "المستخدمون والوصول" }).click();
-    await page.getByRole("link", { name: "المستخدمون", exact: true }).click();
-    await expect(
-      page.getByRole("heading", { name: "المستخدمون" }),
-    ).toBeVisible();
-    const readerRow = page.getByRole("row").filter({
-      has: page.getByText("reader", { exact: true }),
-    });
-    await expect(readerRow.getByText(policy.labelAr)).toBeVisible();
-    await expect(readerRow.locator(".permission-editor")).toHaveCount(0);
-  } finally {
-    const restore = await request.patch(
-      `/api/v1/admin/workflow-policies/${policy.code}`,
+    const grant = await request.patch(
+      `/api/v1/admin/workflow-policies/${policy.code}/overrides`,
       {
         headers: {
-          cookie: system.cookie,
-          "x-csrf-token": system.csrfToken,
+          cookie: superAdmin.cookie,
+          "x-csrf-token": superAdmin.csrfToken,
         },
         data: {
-          enabled: policy.enabled,
+          userIds: [...new Set([...originalUserIds, reader.id])],
+          reason: "اختبار منح استثناء من endpoint السياسة المنفصل",
+        },
+      },
+    );
+    expect(grant.ok()).toBeTruthy();
+    const readerAuth = await login(request, "reader");
+    const readerStatus = await (
+      await request.get("/api/v1/auth/status", {
+        headers: { cookie: readerAuth.cookie },
+      })
+    ).json();
+    expect(readerStatus.user.permissions).not.toContain(
+      privilegedPolicy.permissionCode,
+    );
+    expect(readerStatus.user.policyCapabilities).toContain(
+      privilegedPolicy.permissionCode,
+    );
+  } finally {
+    const restore = await request.patch(
+      `/api/v1/admin/workflow-policies/${policy.code}/overrides`,
+      {
+        headers: {
+          cookie: superAdmin.cookie,
+          "x-csrf-token": superAdmin.csrfToken,
+        },
+        data: {
           userIds: originalUserIds,
           reason: "إعادة استثناءات السياسة بعد الاختبار",
         },
@@ -313,6 +369,191 @@ test("system administrator can open the platform settings editor", async ({
     );
     expect(restore.ok()).toBeTruthy();
   }
+});
+
+test("authority ceiling blocks API privilege escalation and preserves role boundaries", async ({
+  request,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  const system = await login(request, "system_admin");
+  const deniedAuditBefore = await (
+    await request.get("/api/v1/admin/audit", {
+      headers: { cookie: system.cookie },
+      params: { action: "DENY_ROLE_AUTHORITY_CEILING_BYPASS" },
+    })
+  ).json();
+  const status = await (
+    await request.get("/api/v1/auth/status", {
+      headers: { cookie: system.cookie },
+    })
+  ).json();
+  const users = await (
+    await request.get("/api/v1/admin/users", {
+      headers: { cookie: system.cookie },
+    })
+  ).json();
+  const superUser = users.find((item: { roles: string | null }) =>
+    String(item.roles ?? "")
+      .split(",")
+      .includes("SUPER"),
+  );
+  const roles = await (
+    await request.get("/api/v1/admin/access-roles", {
+      headers: { cookie: system.cookie },
+    })
+  ).json();
+  const superRole = roles.find(
+    (item: { code: string }) => item.code === "SUPER",
+  );
+
+  const createSuper = await request.post("/api/v1/admin/users", {
+    headers: {
+      cookie: system.cookie,
+      "x-csrf-token": status.csrfToken,
+    },
+    data: {
+      username: `forbidden_super_${Date.now()}`,
+      displayName: "محاولة تصعيد مرفوضة",
+      password,
+      roles: ["SUPER"],
+    },
+  });
+  expect(createSuper.status()).toBe(403);
+  expect(JSON.stringify(await createSuper.json())).toContain(
+    "دورًا غير قابل للإسناد",
+  );
+
+  const selfRole = await request.patch(
+    `/api/v1/admin/users/${status.user.id}/roles`,
+    {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": status.csrfToken,
+      },
+      data: {
+        roles: ["SYSTEM_ADMIN"],
+        reason: "اختبار منع تعديل أدوار الحساب الحالي",
+      },
+    },
+  );
+  expect(selfRole.status()).toBe(403);
+
+  const selfPermission = await request.patch(
+    `/api/v1/admin/users/${status.user.id}/granular-permissions`,
+    {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": status.csrfToken,
+      },
+      data: {
+        selections: [
+          { code: "legislation.publish", effect: "ALLOW", scope: "ALL" },
+        ],
+        reason: "اختبار منع منح الحساب الحالي",
+      },
+    },
+  );
+  expect(selfPermission.status()).toBe(403);
+
+  const assignSuper = await request.patch(
+    `/api/v1/admin/users/${users.find((item: { username: string }) => item.username === "reader").id}/roles`,
+    {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": status.csrfToken,
+      },
+      data: {
+        roles: ["SUPER"],
+        reason: "اختبار سقف إسناد الدور الأعلى",
+      },
+    },
+  );
+  expect(assignSuper.status()).toBe(403);
+
+  const mutateProtected = await request.patch(
+    `/api/v1/admin/access-roles/${superRole.id}/permissions`,
+    {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": status.csrfToken,
+      },
+      data: {
+        selections: [],
+        reason: "اختبار منع تفريغ الدور المحمي",
+      },
+    },
+  );
+  expect(mutateProtected.status()).toBe(403);
+
+  const disableProtectedAdmin = () =>
+    request.patch(`/api/v1/admin/users/${superUser.id}/state`, {
+      headers: {
+        cookie: system.cookie,
+        "x-csrf-token": status.csrfToken,
+      },
+      data: { active: false, reason: "اختبار منع تعطيل السلطة الأعلى" },
+    });
+  const concurrentDisableAttempts = await Promise.all([
+    disableProtectedAdmin(),
+    disableProtectedAdmin(),
+  ]);
+  expect(
+    concurrentDisableAttempts.map((response) => response.status()),
+  ).toEqual([403, 403]);
+  const usersAfterConcurrentAttempt = await (
+    await request.get("/api/v1/admin/users", {
+      headers: { cookie: system.cookie },
+    })
+  ).json();
+  expect(
+    usersAfterConcurrentAttempt.find(
+      (item: { id: string }) => item.id === superUser.id,
+    ).isActive,
+  ).toBeTruthy();
+  const deniedAudit = await (
+    await request.get("/api/v1/admin/audit", {
+      headers: { cookie: system.cookie },
+      params: { action: "DENY_ROLE_AUTHORITY_CEILING_BYPASS" },
+    })
+  ).json();
+  expect(deniedAudit.meta.total).toBeGreaterThan(deniedAuditBefore.meta.total);
+  expect(JSON.stringify(deniedAudit.items[0].afterValue)).toContain("DENIED");
+
+  const [dataEntry, reviewer, contentManager, superAdmin] = await Promise.all([
+    login(request, "data_entry"),
+    login(request, "legal_reviewer"),
+    login(request, "content_manager"),
+    login(request, superUser.username),
+  ]);
+  const authStatus = async (cookie: string) =>
+    (
+      await (
+        await request.get("/api/v1/auth/status", { headers: { cookie } })
+      ).json()
+    ).user;
+  const [entryUser, reviewerUser, contentUser, superAuthUser] =
+    await Promise.all([
+      authStatus(dataEntry.cookie),
+      authStatus(reviewer.cookie),
+      authStatus(contentManager.cookie),
+      authStatus(superAdmin.cookie),
+    ]);
+  expect(entryUser.permissions).toEqual(
+    expect.arrayContaining(["legislation.prepare", "legislation.submit"]),
+  );
+  expect(entryUser.permissions).not.toContain("legislation.return");
+  expect(reviewerUser.permissions).toContain("legislation.return");
+  expect(reviewerUser.permissions).not.toContain("legislation.submit");
+  expect(contentUser.permissions).toEqual(
+    expect.arrayContaining(["annex.publish", "annex.replace", "annex.repeal"]),
+  );
+  expect(contentUser.permissions).not.toContain("relation.review");
+  expect(status.user.permissions).not.toContain("legislation.publish");
+  expect(status.user.permissions).not.toContain(
+    "workflow_policy.overrides.manage",
+  );
+  expect(superAuthUser.permissions).toHaveLength(75);
+  expect(superAuthUser.policyCapabilities).toEqual([]);
 });
 
 test("granular permissions persist, enforce in the API, and drive navigation", async ({
@@ -326,7 +567,7 @@ test("granular permissions persist, enforce in the API, and drive navigation", a
   });
   expect(catalogResponse.ok()).toBeTruthy();
   const catalog = await catalogResponse.json();
-  expect(catalog.permissions.length).toBeGreaterThan(40);
+  expect(catalog.permissions).toHaveLength(75);
 
   const users = await (
     await request.get("/api/v1/admin/users", {
@@ -337,7 +578,7 @@ test("granular permissions persist, enforce in the API, and drive navigation", a
     (item: { username: string }) => item.username === "reader",
   );
   const access = await (
-    await request.get(`/api/v1/admin/users/${readerUser.id}/access`, {
+    await request.get(`/api/v1/admin/users/${readerUser.id}/permissions`, {
       headers: { cookie: system.cookie },
     })
   ).json();
@@ -375,6 +616,20 @@ test("granular permissions persist, enforce in the API, and drive navigation", a
       },
     );
     expect(grant.ok()).toBeTruthy();
+    const persisted = await (
+      await request.get(`/api/v1/admin/users/${readerUser.id}/permissions`, {
+        headers: { cookie: system.cookie },
+      })
+    ).json();
+    expect(persisted.directOverrides).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          code: "quality.view",
+          effect: "ALLOW",
+          scope: "ALL",
+        }),
+      ]),
+    );
     const after = await login(request, "reader");
     expect(
       (
@@ -463,6 +718,20 @@ test("role permissions are inherited and removed with the role", async ({
     });
     expect(create.ok()).toBeTruthy();
     roleId = (await create.json()).id;
+    const rejectedScope = await request.patch(
+      `/api/v1/admin/access-roles/${roleId}/permissions`,
+      {
+        headers: {
+          cookie: system.cookie,
+          "x-csrf-token": system.csrfToken,
+        },
+        data: {
+          selections: [{ code: "dashboard.view", scope: "OWN" }],
+          reason: "اختبار رفض نطاق غير معتمد",
+        },
+      },
+    );
+    expect(rejectedScope.status()).toBe(400);
     const grant = await request.patch(
       `/api/v1/admin/access-roles/${roleId}/permissions`,
       {
@@ -500,7 +769,7 @@ test("role permissions are inherited and removed with the role", async ({
       ).status(),
     ).toBe(200);
     const access = await (
-      await request.get(`/api/v1/admin/users/${readerUser.id}/access`, {
+      await request.get(`/api/v1/admin/users/${readerUser.id}/permissions`, {
         headers: { cookie: system.cookie },
       })
     ).json();

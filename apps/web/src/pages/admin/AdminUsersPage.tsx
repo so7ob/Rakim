@@ -13,8 +13,7 @@ interface User {
   isActive: boolean | number;
   createdAt: string;
   lastLoginAt: string | null;
-  roles: string;
-  policyOverrides: Array<{ code: string; labelAr: string }>;
+  roles: string | null;
 }
 interface Role {
   id: string;
@@ -26,7 +25,9 @@ const pageSize = 10;
 export function AdminUsersPage() {
   const auth = useAuth();
   const users = useApi<User[]>("/admin/users");
-  const roles = useApi<Role[]>("/admin/roles");
+  const roles = useApi<Role[]>(
+    auth.hasPermission("role.view") ? "/admin/roles" : null,
+  );
   const [message, setMessage] = useState("");
   const [query, setQuery] = useState("");
   const [status, setStatus] = useState("");
@@ -203,26 +204,35 @@ export function AdminUsersPage() {
         </label>
         <span>{filtered.length} مستخدم</span>
       </div>
-      {selected.size > 0 && auth.hasPermission("user.disable") && (
-        <div className="admin-bulkbar">
-          <strong>{selected.size} محدد</strong>
-          <button className="button secondary" onClick={() => bulkState(true)}>
-            تفعيل
-          </button>
-          <button
-            className="button secondary danger"
-            onClick={() => bulkState(false)}
-          >
-            تعطيل
-          </button>
-          <button
-            className="link-button"
-            onClick={() => setSelected(new Set())}
-          >
-            إلغاء التحديد
-          </button>
-        </div>
-      )}
+      {selected.size > 0 &&
+        (auth.hasPermission("user.enable") ||
+          auth.hasPermission("user.disable")) && (
+          <div className="admin-bulkbar">
+            <strong>{selected.size} محدد</strong>
+            {auth.hasPermission("user.enable") && (
+              <button
+                className="button secondary"
+                onClick={() => bulkState(true)}
+              >
+                تفعيل
+              </button>
+            )}
+            {auth.hasPermission("user.disable") && (
+              <button
+                className="button secondary danger"
+                onClick={() => bulkState(false)}
+              >
+                تعطيل
+              </button>
+            )}
+            <button
+              className="link-button"
+              onClick={() => setSelected(new Set())}
+            >
+              إلغاء التحديد
+            </button>
+          </div>
+        )}
       {users.loading || roles.loading ? (
         <LoadingCards />
       ) : users.error || roles.error ? (
@@ -261,7 +271,6 @@ export function AdminUsersPage() {
                   </th>
                   <th>المستخدم</th>
                   <th>الأدوار</th>
-                  <th>استثناءات السياسات</th>
                   <th>تاريخ الإنشاء</th>
                   <th>آخر دخول</th>
                   <th>الحالة</th>
@@ -291,9 +300,6 @@ export function AdminUsersPage() {
                       <small>{user.username}</small>
                     </td>
                     <td>{user.roles?.split(",").join("، ") || "دون دور"}</td>
-                    <td>
-                      <PolicyOverrideBadges overrides={user.policyOverrides} />
-                    </td>
                     <td>
                       {new Date(user.createdAt).toLocaleDateString("ar-YE")}
                     </td>
@@ -343,21 +349,5 @@ export function AdminUsersPage() {
         </>
       )}
     </section>
-  );
-}
-
-function PolicyOverrideBadges({
-  overrides,
-}: {
-  overrides: User["policyOverrides"];
-}) {
-  if (!overrides.length)
-    return <span className="policy-overrides-empty">لا توجد</span>;
-  return (
-    <ul className="policy-override-badges" aria-label="استثناءات السياسات">
-      {overrides.map((override) => (
-        <li key={override.code}>{override.labelAr}</li>
-      ))}
-    </ul>
   );
 }

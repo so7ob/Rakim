@@ -3,23 +3,29 @@ import type { DataSource } from "typeorm";
 import { describe, expect, it, vi } from "vitest";
 import type { AuthUser } from "../auth/auth.types.js";
 import { AccessControlService } from "./access-control.service.js";
+import type { AuthorizationPolicyService } from "./authorization-policy.service.js";
 
 const actor: AuthUser = {
   id: "actor-1",
   username: "admin",
   displayName: "مدير النظام",
   roles: [],
-  permissions: ["permission.manage", "role.manage_permissions"],
+  permissions: ["permission.view", "role.permissions.manage"],
 };
+
+const policy = {} as AuthorizationPolicyService;
 
 describe("AccessControlService permission scopes", () => {
   it.each(["OWN", "ASSIGNED"] as const)(
     "rejects the unsupported %s role scope before touching the database",
     async (scope) => {
       const transaction = vi.fn();
-      const service = new AccessControlService({
-        transaction,
-      } as unknown as DataSource);
+      const service = new AccessControlService(
+        {
+          transaction,
+        } as unknown as DataSource,
+        policy,
+      );
 
       await expect(
         service.updateRolePermissions(
@@ -37,9 +43,12 @@ describe("AccessControlService permission scopes", () => {
     "rejects the unsupported %s user scope before touching the database",
     async (scope) => {
       const transaction = vi.fn();
-      const service = new AccessControlService({
-        transaction,
-      } as unknown as DataSource);
+      const service = new AccessControlService(
+        {
+          transaction,
+        } as unknown as DataSource,
+        policy,
+      );
 
       await expect(
         service.updateUserPermissions(

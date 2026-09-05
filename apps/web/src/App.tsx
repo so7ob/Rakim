@@ -284,7 +284,9 @@ export function App() {
             <Route
               path="settings/:tab"
               element={
-                <RequirePermission anyOf={["settings.view"]}>
+                <RequirePermission
+                  anyOf={["settings.view", "workflow_policy.view"]}
+                >
                   <AdminSettingsPage />
                 </RequirePermission>
               }
@@ -296,7 +298,7 @@ export function App() {
             <Route
               path="reference-data/:kind"
               element={
-                <RequirePermission anyOf={["reference.manage"]}>
+                <RequirePermission anyOf={["reference.view"]}>
                   <AdminReferenceDataPage />
                 </RequirePermission>
               }

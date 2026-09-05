@@ -17,7 +17,7 @@ interface Issue {
 }
 export function AdminQualityPage() {
   const { hasPermission } = useAuth();
-  const canManage = hasPermission("quality.manage");
+  const canManage = hasPermission("quality.resolve");
   const { data, error, loading, retry } = useApi<{
     stored: Issue[];
     live: Issue[];
