@@ -132,10 +132,26 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   await draftLink.click();
 
   await expect(page).toHaveURL(/\/ar\/admin\/content\/.+\/structure/);
-  await expect(page.getByText("الأحكام العامة — TITLE")).toBeVisible();
-  await expect(page.getByText("التعاريف — CHAPTER")).toBeVisible();
-  await expect(page.getByText("المصطلحات — SECTION")).toBeVisible();
-  await expect(page.getByText("نطاق التطبيق — SECTION")).toBeVisible();
+  const savedTree = page.getByRole("tree", {
+    name: "شجرة البنية القانونية",
+  });
+  await expect(
+    savedTree.getByRole("button").filter({ hasText: "الباب الأول" }),
+  ).toBeVisible();
+  const savedChapter = savedTree
+    .getByRole("button")
+    .filter({ hasText: "الفصل الأول" });
+  await expect(savedChapter).toBeVisible();
+  await expect(
+    savedTree.getByRole("button").filter({ hasText: "القسم الأول" }),
+  ).toBeVisible();
+  await expect(
+    savedTree.getByRole("button").filter({ hasText: "القسم الثاني" }),
+  ).toBeVisible();
+  await savedChapter.click();
+  await expect(
+    page.getByRole("heading", { name: "الفصل الأول — التعاريف" }),
+  ).toBeVisible();
   await page.getByRole("link", { name: /النص والمواد/ }).click();
   await expect(
     page.getByText("المادة 1 — النسخة 1", { exact: false }),

@@ -286,7 +286,7 @@ export class AdminService {
     };
   }
 
-  async legislation(id: string) {
+  async legislation(id: string, includeArticleText = false) {
     const rows = await this.db.query(
       `SELECT l.*,lt.name_ar typeName,au.name_ar authorityName
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id WHERE l.id=?`,
@@ -348,7 +348,11 @@ export class AdminService {
       ),
       this.db.query(
         `SELECT a.id,a.current_label currentLabel,a.published_label publishedLabel,a.sort_key sortKey,a.structure_node_id structureNodeId,
-        av.id versionId,av.version_no versionNo,av.text_original textOriginal,av.status,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,
+        av.id versionId,av.version_no versionNo,${
+          includeArticleText
+            ? "av.text_original textOriginal"
+            : "LEFT(REPLACE(REPLACE(av.text_original,'\\r',' '),'\\n',' '),180) textPreview"
+        },av.status,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,
         DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,av.ending_reason endingReason,av.source_document_id sourceDocumentId
         FROM articles a JOIN article_versions av ON av.article_id=a.id WHERE a.legislation_id=? AND av.version_no=(SELECT MAX(v.version_no) FROM article_versions v WHERE v.article_id=a.id) ORDER BY a.sort_key`,
         [id],
@@ -359,7 +363,10 @@ export class AdminService {
         [id],
       ),
       this.db.query(
-        `SELECT id,parent_id parentId,node_type nodeType,label_ar labelAr,title_ar titleAr,sort_key sortKey FROM structure_nodes WHERE legislation_id=? ORDER BY sort_key`,
+        `SELECT sn.id,sn.parent_id parentId,sn.node_type nodeType,sn.label_ar labelAr,
+         sn.title_ar titleAr,sn.sort_key sortKey,
+         (SELECT COUNT(*) FROM articles a WHERE a.structure_node_id=sn.id) directArticleCount
+         FROM structure_nodes sn WHERE sn.legislation_id=? ORDER BY sn.sort_key`,
         [id],
       ),
       this.db.query(
@@ -515,6 +522,269 @@ export class AdminService {
         reason,
       );
       return { id, versionId: item.versionId };
+    });
+  }
+
+  async structureArticles(
+    nodeId: string,
+    query: {
+      q?: string;
+      state?: string;
+      page?: number;
+      pageSize?: number;
+    },
+  ) {
+    const nodes = await this.db.query(
+      `SELECT sn.id,sn.legislation_id legislationId,sn.label_ar labelAr,
+       sn.title_ar titleAr,l.status legislationStatus
+       FROM structure_nodes sn JOIN legislations l ON l.id=sn.legislation_id
+       WHERE sn.id=?`,
+      [nodeId],
+    );
+    const node = nodes[0];
+    if (!node) throw new NotFoundException("عنصر الهيكل غير موجود.");
+
+    const state = ["all", "unassigned", "current", "elsewhere"].includes(
+      query.state ?? "all",
+    )
+      ? (query.state ?? "all")
+      : "all";
+    const page = Math.max(1, Number(query.page) || 1);
+    const pageSize = Math.min(500, Math.max(1, Number(query.pageSize) || 100));
+    const where = ["a.legislation_id=?"];
+    const values: Array<string | number> = [node.legislationId];
+    if (state === "unassigned") where.push("a.structure_node_id IS NULL");
+    if (state === "current") {
+      where.push("a.structure_node_id=?");
+      values.push(nodeId);
+    }
+    if (state === "elsewhere") {
+      where.push("a.structure_node_id IS NOT NULL AND a.structure_node_id<>?");
+      values.push(nodeId);
+    }
+    const needle = String(query.q ?? "")
+      .trim()
+      .slice(0, 120);
+    if (needle) {
+      where.push(
+        `(a.current_label LIKE ? OR a.published_label LIKE ?
+          OR LEFT(av.text_original,500) LIKE ?)`,
+      );
+      const like = `%${needle}%`;
+      values.push(like, like, like);
+    }
+    const from = `FROM articles a
+      JOIN article_versions av ON av.article_id=a.id
+       AND av.version_no=(SELECT MAX(latest.version_no) FROM article_versions latest WHERE latest.article_id=a.id)
+      LEFT JOIN structure_nodes assigned ON assigned.id=a.structure_node_id
+      WHERE ${where.join(" AND ")}`;
+    const [countRows, items] = await Promise.all([
+      this.db.query(`SELECT COUNT(*) total ${from}`, values),
+      this.db.query(
+        `SELECT a.id,a.current_label currentLabel,a.published_label publishedLabel,
+         a.sort_key sortKey,a.structure_node_id structureNodeId,
+         assigned.label_ar structureLabel,assigned.title_ar structureTitle,
+         LEFT(REPLACE(REPLACE(av.text_original,'\\r',' '),'\\n',' '),180) textPreview,
+         LEFT(SUBSTRING_INDEX(REPLACE(av.text_original,'\\r',''),'\\n',1),180) articleTitle,
+         av.status versionStatus
+         ${from} ORDER BY a.sort_key,a.id LIMIT ? OFFSET ?`,
+        [...values, pageSize, (page - 1) * pageSize],
+      ),
+    ]);
+    const total = Number(countRows[0]?.total ?? 0);
+    return {
+      node,
+      items,
+      meta: {
+        page,
+        pageSize,
+        total,
+        pageCount: Math.ceil(total / pageSize),
+      },
+    };
+  }
+
+  async updateArticleAssignments(
+    nodeId: string,
+    input: { legislationId: string; assign: string[]; unassign: string[] },
+    actor: AuthUser,
+    reason: string,
+  ) {
+    const assign = input.assign ?? [];
+    const unassign = input.unassign ?? [];
+    if (reason.trim().length < 3)
+      throw new BadRequestException("سبب تغيير الربط مطلوب.");
+    if (!assign.length && !unassign.length)
+      throw new BadRequestException("حدد مادة واحدة على الأقل لتغيير ربطها.");
+    if (assign.length + unassign.length > 1000)
+      throw new BadRequestException("الحد الأقصى للعملية الواحدة 1000 مادة.");
+    if (
+      new Set(assign).size !== assign.length ||
+      new Set(unassign).size !== unassign.length
+    )
+      throw new BadRequestException("لا تقبل العملية معرفات مواد مكررة.");
+    const overlap = assign.find((id) => unassign.includes(id));
+    if (overlap)
+      throw new BadRequestException(
+        "لا يمكن ربط المادة وفك ربطها في العملية نفسها.",
+      );
+    const ids = [...assign, ...unassign];
+
+    return this.db.transaction(async (manager) => {
+      const nodeRows = await manager.query(
+        `SELECT sn.id,sn.legislation_id legislationId,sn.label_ar labelAr,
+         sn.title_ar titleAr,l.status legislationStatus
+         FROM structure_nodes sn JOIN legislations l ON l.id=sn.legislation_id
+         WHERE sn.id=? FOR UPDATE`,
+        [nodeId],
+      );
+      const node = nodeRows[0];
+      if (!node) throw new NotFoundException("عنصر الهيكل غير موجود.");
+      if (node.legislationId !== input.legislationId)
+        throw new BadRequestException(
+          "العقدة الهدف ليست تابعة للتشريع المحدد.",
+        );
+      if (!["INBOX", "DRAFT", "IN_REVIEW"].includes(node.legislationStatus))
+        throw new ConflictException(
+          "لا يمكن تغيير مواقع مواد تشريع منشور في مكانها؛ أنشئ مسار تصحيح معتمدًا.",
+        );
+
+      const placeholders = ids.map(() => "?").join(",");
+      const articles = (await manager.query(
+        `SELECT a.id,a.legislation_id legislationId,
+         a.structure_node_id structureNodeId,a.current_label currentLabel,
+         av.status versionStatus
+         FROM articles a JOIN article_versions av ON av.article_id=a.id
+          AND av.version_no=(SELECT MAX(latest.version_no) FROM article_versions latest WHERE latest.article_id=a.id)
+         WHERE a.id IN (${placeholders}) FOR UPDATE`,
+        ids,
+      )) as Array<{
+        id: string;
+        legislationId: string;
+        structureNodeId: string | null;
+        currentLabel: string;
+        versionStatus: string;
+      }>;
+      if (articles.length !== ids.length)
+        throw new NotFoundException(
+          "تحتوي العملية مادة غير موجودة أو بلا نسخة حالية.",
+        );
+      if (
+        articles.some(
+          (article) => article.legislationId !== input.legislationId,
+        )
+      )
+        throw new BadRequestException(
+          "لا يمكن ربط مواد من تشريع آخر بهذه العقدة.",
+        );
+      if (articles.some((article) => article.versionStatus !== "DRAFT"))
+        throw new ConflictException(
+          "تحتوي العملية مادة منشورة أو تاريخية لا يجوز تغيير موقعها مباشرة.",
+        );
+
+      const byId = new Map(articles.map((article) => [article.id, article]));
+      const assignedCount = assign.filter(
+        (id) => byId.get(id)?.structureNodeId === null,
+      ).length;
+      const movedCount = assign.filter((id) => {
+        const current = byId.get(id)?.structureNodeId;
+        return Boolean(current && current !== nodeId);
+      }).length;
+      const unchangedAssignmentCount = assign.filter(
+        (id) => byId.get(id)?.structureNodeId === nodeId,
+      ).length;
+      const unassignedCount = unassign.filter(
+        (id) => byId.get(id)?.structureNodeId === nodeId,
+      ).length;
+      const changedCount = assignedCount + movedCount + unassignedCount;
+
+      if (unassign.length)
+        await manager.query(
+          `UPDATE articles SET structure_node_id=NULL
+           WHERE structure_node_id=? AND id IN (${unassign.map(() => "?").join(",")})`,
+          [nodeId, ...unassign],
+        );
+      if (assign.length)
+        await manager.query(
+          `UPDATE articles SET structure_node_id=?
+           WHERE id IN (${assign.map(() => "?").join(",")})
+             AND NOT (structure_node_id <=> ?)`,
+          [nodeId, ...assign, nodeId],
+        );
+
+      if (changedCount) {
+        const sourceCounts = new Map<string, number>();
+        for (const id of assign) {
+          const source = byId.get(id)?.structureNodeId;
+          if (source && source !== nodeId)
+            sourceCounts.set(source, (sourceCounts.get(source) ?? 0) + 1);
+        }
+        const action = movedCount
+          ? assignedCount || unassignedCount
+            ? "BULK_UPDATE_ARTICLE_ASSIGNMENTS"
+            : "BULK_MOVE_ARTICLES"
+          : unassignedCount && !assignedCount
+            ? "BULK_UNASSIGN_ARTICLES"
+            : "BULK_ASSIGN_ARTICLES";
+        const summarizeIds = (values: string[]) => ({
+          count: values.length,
+          ids: values.slice(0, 50),
+          omitted: Math.max(0, values.length - 50),
+        });
+        await this.ensureResponsibility(
+          manager,
+          input.legislationId,
+          actor.id,
+          "EDIT",
+        );
+        await this.auditWith(
+          manager,
+          actor.id,
+          action,
+          "STRUCTURE_NODE",
+          nodeId,
+          {
+            sourceNodes: [...sourceCounts].map(([sourceNodeId, count]) => ({
+              sourceNodeId,
+              count,
+            })),
+            unassign: summarizeIds(unassign),
+          },
+          {
+            legislationId: input.legislationId,
+            targetNodeId: nodeId,
+            assign: summarizeIds(assign),
+            assignedCount,
+            movedCount,
+            unassignedCount,
+          },
+          reason.trim(),
+        );
+      }
+
+      const updated = await manager.query(
+        `SELECT id,structure_node_id structureNodeId FROM articles
+         WHERE id IN (${placeholders}) ORDER BY sort_key,id`,
+        ids,
+      );
+      const directCountRows = await manager.query(
+        "SELECT COUNT(*) total FROM articles WHERE structure_node_id=?",
+        [nodeId],
+      );
+      return {
+        node: { id: nodeId, labelAr: node.labelAr, titleAr: node.titleAr },
+        assignments: updated,
+        summary: {
+          requestedCount: ids.length,
+          changedCount,
+          assignedCount,
+          movedCount,
+          unassignedCount,
+          unchangedCount:
+            unchangedAssignmentCount + (unassign.length - unassignedCount),
+          directArticleCount: Number(directCountRows[0]?.total ?? 0),
+        },
+      };
     });
   }
 
