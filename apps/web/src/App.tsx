@@ -140,7 +140,11 @@ export function App() {
             <Route path="users" element={<AdminUsersPage />} />
             <Route path="synonyms" element={<AdminSynonymsPage />} />
             <Route path="quality" element={<AdminQualityPage />} />
-            <Route path="settings" element={<AdminSettingsPage />} />
+            <Route
+              path="settings"
+              element={<Navigate to="/ar/admin/settings/general" replace />}
+            />
+            <Route path="settings/:tab" element={<AdminSettingsPage />} />
             <Route path="reference-data" element={<AdminReferenceDataPage />} />
           </Route>
         </Route>

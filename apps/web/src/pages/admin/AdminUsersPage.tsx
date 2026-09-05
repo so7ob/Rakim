@@ -11,6 +11,7 @@ interface User {
   lastLoginAt: string | null;
   failedLoginCount: number;
   roles: string;
+  policyOverrides: Array<{ code: string; labelAr: string }>;
 }
 interface Role {
   id: string;
@@ -133,6 +134,7 @@ export function AdminUsersPage() {
               <tr>
                 <th>المستخدم</th>
                 <th>الأدوار</th>
+                <th>استثناءات السياسات</th>
                 <th>آخر دخول</th>
                 <th>الحالة</th>
                 <th>الإجراءات</th>
@@ -154,6 +156,15 @@ export function AdminUsersPage() {
                         refresh();
                       }}
                     />
+                  </td>
+                  <td>
+                    {user.policyOverrides.length
+                      ? user.policyOverrides.map((override) => (
+                          <span className="tag" key={override.code}>
+                            {override.labelAr}
+                          </span>
+                        ))
+                      : "لا توجد"}
                   </td>
                   <td>
                     {user.lastLoginAt
