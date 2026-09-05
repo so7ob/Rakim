@@ -6,7 +6,13 @@ const execFile = promisify(execFileCallback);
 const password = "DevOnly!ChangeMe2026";
 
 async function login(page: import("@playwright/test").Page, username: string) {
+  const sessionBootstrap = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/auth/status") &&
+      response.request().method() === "GET",
+  );
   await page.goto("/ar/login");
+  await sessionBootstrap;
   await page.getByLabel("اسم المستخدم").fill(username);
   await page.getByLabel("كلمة المرور").fill(password);
   await page.getByRole("button", { name: "تسجيل الدخول" }).click();
