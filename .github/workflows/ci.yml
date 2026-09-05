@@ -52,7 +52,8 @@ jobs:
       - name: Install infrastructure and extraction dependencies
         run: >-
           sudo apt-get update && sudo apt-get install --yes
-          nginx poppler-utils tesseract-ocr tesseract-ocr-ara
+          mariadb-server nginx nodejs poppler-utils
+          tesseract-ocr tesseract-ocr-ara
       - run: npm run db:migrate
       - run: npm run seed
       - run: npm run lint
