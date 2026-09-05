@@ -1,5 +1,6 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -81,7 +82,7 @@ export class SiteService {
     if (!keys.length) throw new BadRequestException("لم ترسل إعدادات للحفظ.");
     return this.db.transaction(async (manager) => {
       const rows = await manager.query(
-        `SELECT setting_key settingKey,input_type inputType,value_json valueJson FROM platform_settings WHERE setting_key IN (${keys.map(() => "?").join(",")}) FOR UPDATE`,
+        `SELECT setting_key settingKey,group_code groupCode,input_type inputType,value_json valueJson FROM platform_settings WHERE setting_key IN (${keys.map(() => "?").join(",")}) FOR UPDATE`,
         keys,
       );
       if (rows.length !== keys.length)
@@ -90,6 +91,11 @@ export class SiteService {
       for (const row of rows) {
         const key = String(row.settingKey);
         const value = values[key]!;
+        const permission = this.settingPermission(String(row.groupCode));
+        if (!actor.permissions.includes(permission))
+          throw new ForbiddenException(
+            "لا تملك الصلاحية المطلوبة لتعديل مجموعة الإعدادات هذه.",
+          );
         this.validateSetting(String(row.inputType), value);
         before[key] = this.parseJson(row.valueJson);
         await manager.query(
@@ -253,6 +259,16 @@ export class SiteService {
       throw new BadRequestException(
         "رابط الشعار يجب أن يكون HTTPS أو مسارًا محليًا يبدأ بشرطة مائلة.",
       );
+  }
+
+  private settingPermission(group: string) {
+    if (["COLORS", "BACKGROUND", "TYPOGRAPHY"].includes(group))
+      return "settings.appearance.update";
+    if (["HEADER", "FOOTER"].includes(group))
+      return "settings.navigation.update";
+    if (group === "TABS") return "settings.content.update";
+    if (group === "WORKFLOW") return "settings.workflow.manage";
+    return "settings.general.update";
   }
 
   private validatePath(path: string) {

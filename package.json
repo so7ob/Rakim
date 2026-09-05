@@ -25,6 +25,7 @@
     "visual:reference": "node scripts/reference/capture-reference.mjs",
     "visual:implementation": "node scripts/reference/capture-implementation.mjs",
     "visual:workflow": "node scripts/reference/capture-workflow-controls.mjs",
+    "visual:admin": "node scripts/reference/capture-admin-ui.mjs",
     "visual:compare": "node scripts/reference/compare-visuals.mjs",
     "visual:provided": "node scripts/reference/compare-provided-screenshots.mjs",
     "db:migrate": "npm run db:migrate -w @ylp/api",

@@ -27,6 +27,7 @@ import { Type } from "class-transformer";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { RoleGuard, Roles } from "../common/role.guard.js";
+import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { SiteService } from "./site.service.js";
 
 class SettingsDto {
@@ -76,26 +77,40 @@ export class SiteController {
 
 @ApiTags("إدارة إعدادات المنصة")
 @Controller("admin/site")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
 export class AdminSiteController {
   constructor(@Inject(SiteService) private readonly service: SiteService) {}
-  @Get() @Roles("SYSTEM_ADMIN", "CONTENT_MANAGER") state() {
+  @Get()
+  @Permissions("settings.view")
+  @Roles("SYSTEM_ADMIN", "CONTENT_MANAGER")
+  state() {
     return this.service.adminState();
   }
-  @Patch("settings") @Roles("SYSTEM_ADMIN") settings(
-    @Body() dto: SettingsDto,
-    @Req() req: AuthenticatedRequest,
-  ) {
+  @Patch("settings")
+  @Permissions(
+    "settings.general.update",
+    "settings.appearance.update",
+    "settings.navigation.update",
+    "settings.content.update",
+  )
+  @Roles("SYSTEM_ADMIN")
+  settings(@Body() dto: SettingsDto, @Req() req: AuthenticatedRequest) {
     return this.service.updateSettings(dto.values, req.user!, dto.reason);
   }
-  @Post("navigation") @Roles("SYSTEM_ADMIN") createNavigation(
+  @Post("navigation")
+  @Permissions("settings.navigation.update")
+  @Roles("SYSTEM_ADMIN")
+  createNavigation(
     @Body() dto: NavigationDto,
     @Req() req: AuthenticatedRequest,
   ) {
     const { reason, ...input } = dto;
     return this.service.createNavigation(input, req.user!, reason);
   }
-  @Patch("navigation/:id") @Roles("SYSTEM_ADMIN") navigation(
+  @Patch("navigation/:id")
+  @Permissions("settings.navigation.update")
+  @Roles("SYSTEM_ADMIN")
+  navigation(
     @Param("id") id: string,
     @Body() dto: NavigationDto,
     @Req() req: AuthenticatedRequest,
@@ -103,7 +118,10 @@ export class AdminSiteController {
     const { reason, ...input } = dto;
     return this.service.updateNavigation(id, input, req.user!, reason);
   }
-  @Patch("pages/:id") @Roles("SYSTEM_ADMIN", "CONTENT_MANAGER") page(
+  @Patch("pages/:id")
+  @Permissions("settings.content.update")
+  @Roles("SYSTEM_ADMIN", "CONTENT_MANAGER")
+  page(
     @Param("id") id: string,
     @Body() dto: PageDto,
     @Req() req: AuthenticatedRequest,

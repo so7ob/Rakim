@@ -1,7 +1,10 @@
 import { useState } from "react";
+import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminTabs } from "../../components/admin/AdminTabs";
 
 interface Item {
   id: string;
@@ -22,6 +25,7 @@ const labels = {
 } as const;
 
 export function AdminReferenceDataPage() {
+  const { kind = "types" } = useParams();
   const data = useApi<Data>("/admin/reference-data");
   const [message, setMessage] = useState("");
   if (data.loading) return <LoadingCards />;
@@ -38,41 +42,64 @@ export function AdminReferenceDataPage() {
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">قواميس قابلة للإدارة</span>
-          <h1>القوائم المرجعية</h1>
-        </div>
-      </header>
-      <p className="admin-lead">
-        الأنواع والجهات والموضوعات المستخدمة في نماذج التشريعات ومرشحات البحث.
-      </p>
+      <AdminPageHeader
+        eyebrow="قواميس قابلة للإدارة"
+        title="القوائم المرجعية"
+        description="الأنواع والجهات والموضوعات المستخدمة في نماذج التشريعات ومرشحات البحث."
+        breadcrumbs={[
+          { label: "لوحة الإدارة", to: "/ar/admin" },
+          { label: "إدارة المحتوى" },
+          { label: "القوائم المرجعية" },
+        ]}
+      />
+      <AdminTabs
+        label="أنواع القوائم المرجعية"
+        items={[
+          {
+            label: "أنواع التشريعات",
+            to: "/ar/admin/reference-data/types",
+            count: data.data.types.length,
+          },
+          {
+            label: "التصنيفات والموضوعات",
+            to: "/ar/admin/reference-data/subjects",
+            count: data.data.subjects.length,
+          },
+          {
+            label: "الجهات",
+            to: "/ar/admin/reference-data/authorities",
+            count: data.data.authorities.length,
+          },
+        ]}
+      />
       {message && (
         <p role="status" className="form-message">
           {message}
         </p>
       )}
-      {(Object.keys(labels) as Array<keyof typeof labels>).map((kind) => (
-        <section className="admin-card" key={kind}>
-          <h2>{labels[kind]}</h2>
-          <div className="draft-articles">
-            {data.data![kind].map((item) => (
-              <ReferenceEditor
-                key={item.id}
-                kind={kind}
-                item={item}
+      {(Object.keys(labels) as Array<keyof typeof labels>)
+        .filter((item) => item === kind)
+        .map((activeKind) => (
+          <section className="admin-card" key={activeKind}>
+            <h2>{labels[activeKind]}</h2>
+            <div className="draft-articles">
+              {data.data![activeKind].map((item) => (
+                <ReferenceEditor
+                  key={item.id}
+                  kind={activeKind}
+                  item={item}
+                  subjects={data.data!.subjects}
+                  done={done}
+                />
+              ))}
+              <NewReference
+                kind={activeKind}
                 subjects={data.data!.subjects}
                 done={done}
               />
-            ))}
-            <NewReference
-              kind={kind}
-              subjects={data.data!.subjects}
-              done={done}
-            />
-          </div>
-        </section>
-      ))}
+            </div>
+          </section>
+        ))}
     </section>
   );
 }

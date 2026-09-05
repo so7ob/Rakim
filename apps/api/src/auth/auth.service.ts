@@ -108,27 +108,83 @@ export class AuthService {
       [id],
     );
     if (!users[0]) throw new UnauthorizedException("الحساب غير متاح.");
-    const assignments = (await this.db.query(
-      `SELECT r.code,r.permissions_json permissions
-      FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=? ORDER BY r.code`,
-      [id],
-    )) as Array<{ code: string; permissions: string | string[] }>;
-    const policyOverrides = (await this.db.query(
-      "SELECT permission_code permissionCode FROM user_permissions WHERE user_id=? ORDER BY permission_code",
-      [id],
-    )) as Array<{ permissionCode: string }>;
+    const [assignments, roleGrants, directOverrides, policyOverrides] =
+      await Promise.all([
+        this.db.query(
+          `SELECT r.code,r.name_ar nameAr,r.description_ar descriptionAr
+        FROM roles r JOIN user_roles ur ON ur.role_id=r.id
+        WHERE ur.user_id=? AND r.is_active=1 ORDER BY r.code`,
+          [id],
+        ) as Promise<Array<{ code: string; nameAr: string }>>,
+        this.db.query(
+          `SELECT rp.permission_code permissionCode,rp.scope_code scopeCode,r.code roleCode
+        FROM role_permissions rp JOIN user_roles ur ON ur.role_id=rp.role_id
+        JOIN roles r ON r.id=rp.role_id
+        WHERE ur.user_id=? AND r.is_active=1 ORDER BY rp.permission_code,r.code`,
+          [id],
+        ) as Promise<
+          Array<{ permissionCode: string; scopeCode: "ALL"; roleCode: string }>
+        >,
+        this.db.query(
+          `SELECT permission_code permissionCode,effect,scope_code scopeCode
+        FROM user_permission_overrides WHERE user_id=? ORDER BY permission_code`,
+          [id],
+        ) as Promise<
+          Array<{
+            permissionCode: string;
+            effect: "ALLOW" | "DENY";
+            scopeCode: "ALL" | "OWN" | "ASSIGNED";
+          }>
+        >,
+        this.db.query(
+          "SELECT permission_code permissionCode FROM user_permissions WHERE user_id=? ORDER BY permission_code",
+          [id],
+        ) as Promise<Array<{ permissionCode: string }>>,
+      ]);
     const roles = assignments.map((item) => item.code);
-    const permissions = [
-      ...new Set([
-        ...assignments.flatMap((item) =>
-          typeof item.permissions === "string"
-            ? (JSON.parse(item.permissions) as string[])
-            : item.permissions,
-        ),
-        ...policyOverrides.map((item) => item.permissionCode),
-      ]),
-    ];
-    return { ...users[0], roles, permissions } as AuthUser;
+    const effective = new Map<
+      string,
+      {
+        code: string;
+        scope: "ALL" | "OWN" | "ASSIGNED";
+        source: "ROLE" | "DIRECT" | "POLICY_OVERRIDE";
+        sourceCodes: string[];
+      }
+    >();
+    for (const grant of roleGrants) {
+      const existing = effective.get(grant.permissionCode);
+      if (existing) existing.sourceCodes.push(grant.roleCode);
+      else
+        effective.set(grant.permissionCode, {
+          code: grant.permissionCode,
+          scope: grant.scopeCode,
+          source: "ROLE",
+          sourceCodes: [grant.roleCode],
+        });
+    }
+    for (const override of directOverrides) {
+      if (override.effect === "DENY") effective.delete(override.permissionCode);
+      else
+        effective.set(override.permissionCode, {
+          code: override.permissionCode,
+          scope: override.scopeCode,
+          source: "DIRECT",
+          sourceCodes: ["DIRECT_ALLOW"],
+        });
+    }
+    for (const override of policyOverrides)
+      effective.set(override.permissionCode, {
+        code: override.permissionCode,
+        scope: "ALL",
+        source: "POLICY_OVERRIDE",
+        sourceCodes: ["WORKFLOW_POLICY"],
+      });
+    return {
+      ...users[0],
+      roles,
+      permissions: [...effective.keys()],
+      permissionDetails: [...effective.values()],
+    } as AuthUser;
   }
 
   async logout(sessionId: string, actorId: string): Promise<void> {

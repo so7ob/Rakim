@@ -1,9 +1,12 @@
 import { useEffect, useState, type FormEvent } from "react";
+import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminTabs } from "../../components/admin/AdminTabs";
 interface ImportItem {
   id: string;
   status: string;
@@ -24,6 +27,7 @@ interface Refs {
   authorities: Array<{ id: string; name: string }>;
 }
 export function AdminImportsPage() {
+  const { tab = "queue" } = useParams();
   const auth = useAuth();
   const imports = useApi<ImportItem[]>("/imports");
   const refs = useApi<Refs>("/admin/references");
@@ -58,16 +62,35 @@ export function AdminImportsPage() {
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">المصدر منفصل عن النص</span>
-          <h1>الاستيراد والمصادر</h1>
-        </div>
-        <button className="button secondary" onClick={imports.retry}>
-          تحديث الحالات
-        </button>
-      </header>
-      {auth.hasRole("DATA_ENTRY") && (
+      <AdminPageHeader
+        eyebrow="المصدر منفصل عن النص"
+        title="الاستيراد والمصادر"
+        description="راقب طابور المصادر أو ارفع مصدرًا جديدًا في تبويب مستقل."
+        breadcrumbs={[
+          { label: "لوحة الإدارة", to: "/ar/admin" },
+          { label: "إدارة المحتوى" },
+          { label: "الاستيراد والمصادر" },
+        ]}
+        actions={
+          <button className="button secondary" onClick={imports.retry}>
+            تحديث الحالات
+          </button>
+        }
+      />
+      <AdminTabs
+        label="إدارة المصادر"
+        items={[
+          {
+            label: "طابور المصادر",
+            to: "/ar/admin/imports/queue",
+            count: imports.data?.length,
+          },
+          ...(auth.hasPermission("source.upload")
+            ? [{ label: "رفع مصدر", to: "/ar/admin/imports/upload" }]
+            : []),
+        ]}
+      />
+      {tab === "upload" && auth.hasPermission("source.upload") && (
         <form className="admin-card upload-form" onSubmit={upload}>
           <h2>رفع مصدر جديد</h2>
           <label>
@@ -97,67 +120,68 @@ export function AdminImportsPage() {
           )}
         </form>
       )}
-      {imports.loading ? (
-        <LoadingCards />
-      ) : imports.error ? (
-        <ErrorPanel message={imports.error.message} retry={imports.retry} />
-      ) : (
-        <div className="admin-list">
-          {imports.data?.map((item) => (
-            <details className="admin-card import-row" key={item.id}>
-              <summary>
-                <div>
-                  <strong>{item.originalName}</strong>
-                  <span>
-                    {item.detectedFormat} —{" "}
-                    {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
-                    {item.uploadedBy}
-                  </span>
+      {tab === "queue" &&
+        (imports.loading ? (
+          <LoadingCards />
+        ) : imports.error ? (
+          <ErrorPanel message={imports.error.message} retry={imports.retry} />
+        ) : (
+          <div className="admin-list">
+            {imports.data?.map((item) => (
+              <details className="admin-card import-row" key={item.id}>
+                <summary>
+                  <div>
+                    <strong>{item.originalName}</strong>
+                    <span>
+                      {item.detectedFormat} —{" "}
+                      {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
+                      {item.uploadedBy}
+                    </span>
+                  </div>
+                  <StatusBadge status={item.status} />
+                </summary>
+                <div className="import-details">
+                  <dl>
+                    <div>
+                      <dt>SHA-256</dt>
+                      <dd className="hash">{item.sha256}</dd>
+                    </div>
+                    <div>
+                      <dt>حالة الاستخراج</dt>
+                      <dd>{item.extractionStatus}</dd>
+                    </div>
+                    <div>
+                      <dt>ثقة OCR</dt>
+                      <dd>{item.ocrConfidence ?? "غير مطلوب"}</dd>
+                    </div>
+                  </dl>
+                  {auth.hasPermission("source.review") &&
+                    item.status === "READY_FOR_REVIEW" && (
+                      <ReviewImport id={item.id} done={imports.retry} />
+                    )}{" "}
+                  {auth.hasPermission("source.create_draft") &&
+                    !item.legislationId &&
+                    ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
+                    refs.data && (
+                      <CreateDraft
+                        id={item.id}
+                        refs={refs.data}
+                        done={imports.retry}
+                      />
+                    )}{" "}
+                  {item.legislationTitle && (
+                    <p>المسودة المرتبطة: {item.legislationTitle}</p>
+                  )}
+                  <ImportPreview
+                    id={item.id}
+                    mediaType={item.mediaType}
+                    name={item.originalName}
+                  />
                 </div>
-                <StatusBadge status={item.status} />
-              </summary>
-              <div className="import-details">
-                <dl>
-                  <div>
-                    <dt>SHA-256</dt>
-                    <dd className="hash">{item.sha256}</dd>
-                  </div>
-                  <div>
-                    <dt>حالة الاستخراج</dt>
-                    <dd>{item.extractionStatus}</dd>
-                  </div>
-                  <div>
-                    <dt>ثقة OCR</dt>
-                    <dd>{item.ocrConfidence ?? "غير مطلوب"}</dd>
-                  </div>
-                </dl>
-                {auth.hasRole("LEGAL_REVIEWER") &&
-                  item.status === "READY_FOR_REVIEW" && (
-                    <ReviewImport id={item.id} done={imports.retry} />
-                  )}{" "}
-                {auth.hasRole("DATA_ENTRY") &&
-                  !item.legislationId &&
-                  ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
-                  refs.data && (
-                    <CreateDraft
-                      id={item.id}
-                      refs={refs.data}
-                      done={imports.retry}
-                    />
-                  )}{" "}
-                {item.legislationTitle && (
-                  <p>المسودة المرتبطة: {item.legislationTitle}</p>
-                )}
-                <ImportPreview
-                  id={item.id}
-                  mediaType={item.mediaType}
-                  name={item.originalName}
-                />
-              </div>
-            </details>
-          ))}
-        </div>
-      )}
+              </details>
+            ))}
+          </div>
+        ))}
     </section>
   );
 }

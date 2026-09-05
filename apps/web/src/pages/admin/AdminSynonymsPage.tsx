@@ -3,6 +3,8 @@ import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { useAuth } from "../../auth/AuthContext";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 interface Synonym {
   setId: string;
   versionNo: number;
@@ -13,6 +15,8 @@ interface Synonym {
   publishedAt: string | null;
 }
 export function AdminSynonymsPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission("search.synonym.manage");
   const data = useApi<Synonym[]>("/admin/synonyms");
   const [msg, setMsg] = useState("");
   const sets = useMemo(
@@ -59,23 +63,29 @@ export function AdminSynonymsPage() {
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">قابل للإصدار والمراجعة</span>
-          <h1>قاموس البحث القانوني</h1>
-        </div>
-      </header>
-      <form className="admin-card inline-form" onSubmit={submit}>
-        <label>
-          المصطلح
-          <input name="term" required />
-        </label>
-        <label>
-          المرادف
-          <input name="synonym" required />
-        </label>
-        <button className="button">إضافة لمسودة</button>
-      </form>
+      <AdminPageHeader
+        title="قاموس البحث القانوني"
+        eyebrow="قابل للإصدار والمراجعة"
+        description="إدارة نسخ المرادفات القانونية المستخدمة في توسيع نتائج البحث."
+        breadcrumbs={[
+          { label: "لوحة التحكم", to: "/admin" },
+          { label: "إدارة البحث" },
+          { label: "قاموس المرادفات" },
+        ]}
+      />
+      {canManage && (
+        <form className="admin-card inline-form" onSubmit={submit}>
+          <label>
+            المصطلح
+            <input name="term" required />
+          </label>
+          <label>
+            المرادف
+            <input name="synonym" required />
+          </label>
+          <button className="button">إضافة لمسودة</button>
+        </form>
+      )}
       {msg && (
         <p className="form-message" role="status">
           {msg}
@@ -90,7 +100,7 @@ export function AdminSynonymsPage() {
             {set.publishedAt && (
               <p>نشر في {new Date(set.publishedAt).toLocaleString("ar-YE")}</p>
             )}
-            {set.status === "DRAFT" && (
+            {canManage && set.status === "DRAFT" && (
               <button className="button" onClick={() => activate(set.setId)}>
                 اعتماد هذا الإصدار ونشره
               </button>
@@ -124,7 +134,7 @@ export function AdminSynonymsPage() {
                   <td>{item.termAr ?? "—"}</td>
                   <td>{item.synonymAr ?? "—"}</td>
                   <td>
-                    {item.id && item.status === "DRAFT" && (
+                    {canManage && item.id && item.status === "DRAFT" && (
                       <button
                         className="link-button danger"
                         onClick={() => remove(item.id!)}

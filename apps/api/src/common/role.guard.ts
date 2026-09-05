@@ -8,6 +8,7 @@ import {
 } from "@nestjs/common";
 import { Reflector } from "@nestjs/core";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
+import { PERMISSIONS_KEY } from "./permission.guard.js";
 
 export const ROLES_KEY = "roles";
 export const Roles = (...roles: string[]) => SetMetadata(ROLES_KEY, roles);
@@ -17,6 +18,11 @@ export class RoleGuard implements CanActivate {
   constructor(@Inject(Reflector) private readonly reflector: Reflector) {}
 
   canActivate(context: ExecutionContext): boolean {
+    const permissions = this.reflector.getAllAndOverride<string[]>(
+      PERMISSIONS_KEY,
+      [context.getHandler(), context.getClass()],
+    );
+    if (permissions?.length) return true;
     const roles = this.reflector.getAllAndOverride<string[]>(ROLES_KEY, [
       context.getHandler(),
       context.getClass(),

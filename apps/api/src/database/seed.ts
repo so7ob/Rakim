@@ -3,6 +3,7 @@ import { copyFileSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { createDataSource } from "./config.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
+import { LEGACY_ROLE_PERMISSION_MAP } from "../common/permission-catalog.js";
 import { rebuildSearchIndex } from "./reindex.js";
 
 const types = [
@@ -536,30 +537,29 @@ async function seed() {
       }
 
       const roleDefinitions = [
-        ["READER", "قارئ/باحث", ["read"]],
-        ["DATA_ENTRY", "مدخل بيانات", ["read", "draft:create", "draft:edit"]],
-        ["LEGAL_REVIEWER", "مراجع قانوني", ["read", "review"]],
-        [
-          "CONTENT_MANAGER",
-          "مدير محتوى",
-          ["read", "publish", "dictionary:manage"],
-        ],
-        [
-          "SYSTEM_ADMIN",
-          "مدير نظام",
-          ["read", "users:manage", "backup:manage", "settings.workflow.manage"],
-        ],
+        ["READER", "قارئ/باحث"],
+        ["DATA_ENTRY", "مدخل بيانات"],
+        ["LEGAL_REVIEWER", "مراجع قانوني"],
+        ["CONTENT_MANAGER", "مدير محتوى"],
+        ["SYSTEM_ADMIN", "مدير نظام"],
       ] as const;
       const devPassword = "DevOnly!ChangeMe2026";
       const userIds = new Map<string, string>();
-      for (const [roleCode, roleName, permissions] of roleDefinitions) {
+      for (const [roleCode, roleName] of roleDefinitions) {
         const roleId = randomUUID();
         const userId = randomUUID();
+        const permissions = LEGACY_ROLE_PERMISSION_MAP[roleCode] ?? [];
         userIds.set(roleCode, userId);
         await m.query(
           "INSERT INTO roles (id, code, name_ar, permissions_json) VALUES (?, ?, ?, ?)",
           [roleId, roleCode, roleName, JSON.stringify(permissions)],
         );
+        for (const permissionCode of permissions)
+          await m.query(
+            `INSERT INTO role_permissions
+            (role_id,permission_code,scope_code) VALUES (?,?,'ALL')`,
+            [roleId, permissionCode],
+          );
         await m.query(
           "INSERT INTO users (id, username, display_name, password_hash) VALUES (?, ?, ?, ?)",
           [

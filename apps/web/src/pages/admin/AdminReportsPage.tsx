@@ -3,6 +3,8 @@ import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { useAuth } from "../../auth/AuthContext";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 interface Report {
   id: string;
   entityType: string;
@@ -14,6 +16,8 @@ interface Report {
   reporterName: string | null;
 }
 export function AdminReportsPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission("report.manage");
   const data = useApi<Report[]>("/admin/reports");
   const [msg, setMsg] = useState("");
   const update = async (item: Report, status: string) => {
@@ -33,12 +37,16 @@ export function AdminReportsPage() {
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">ملاحظات الجمهور والباحثين</span>
-          <h1>البلاغات</h1>
-        </div>
-      </header>
+      <AdminPageHeader
+        title="البلاغات"
+        eyebrow="ملاحظات الجمهور والباحثين"
+        description="فرز البلاغات المرتبطة بالمحتوى ومتابعة معالجتها."
+        breadcrumbs={[
+          { label: "لوحة التحكم", to: "/admin" },
+          { label: "الحوكمة" },
+          { label: "البلاغات" },
+        ]}
+      />
       {msg && (
         <p className="form-message" role="status">
           {msg}
@@ -65,32 +73,34 @@ export function AdminReportsPage() {
                   {new Date(item.createdAt).toLocaleString("ar-YE")}
                 </small>
               </div>
-              <div className="row-actions">
-                {item.status === "OPEN" && (
-                  <button
-                    className="button secondary"
-                    onClick={() => update(item, "TRIAGED")}
-                  >
-                    بدء المعالجة
-                  </button>
-                )}{" "}
-                {!["RESOLVED", "REJECTED"].includes(item.status) && (
-                  <>
+              {canManage && (
+                <div className="row-actions">
+                  {item.status === "OPEN" && (
                     <button
-                      className="button"
-                      onClick={() => update(item, "RESOLVED")}
+                      className="button secondary"
+                      onClick={() => update(item, "TRIAGED")}
                     >
-                      حل البلاغ
+                      بدء المعالجة
                     </button>
-                    <button
-                      className="link-button danger"
-                      onClick={() => update(item, "REJECTED")}
-                    >
-                      رفض
-                    </button>
-                  </>
-                )}
-              </div>
+                  )}{" "}
+                  {!["RESOLVED", "REJECTED"].includes(item.status) && (
+                    <>
+                      <button
+                        className="button"
+                        onClick={() => update(item, "RESOLVED")}
+                      >
+                        حل البلاغ
+                      </button>
+                      <button
+                        className="link-button danger"
+                        onClick={() => update(item, "REJECTED")}
+                      >
+                        رفض
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
             </article>
           ))}
         </div>

@@ -29,35 +29,35 @@ type WorkflowStatus =
 
 const transitions: Record<
   string,
-  { from: string[]; roles: string[]; action: string; duty: string }
+  { from: string[]; permission: string; action: string; duty: string }
 > = {
   DRAFT: {
     from: ["INBOX", "IN_REVIEW"],
-    roles: ["DATA_ENTRY", "LEGAL_REVIEWER"],
+    permission: "legislation.submit",
     action: "RETURN_OR_PREPARE_DRAFT",
     duty: "EDIT",
   },
   IN_REVIEW: {
     from: ["DRAFT"],
-    roles: ["DATA_ENTRY"],
+    permission: "legislation.submit",
     action: "SUBMIT_FOR_REVIEW",
     duty: "EDIT",
   },
   APPROVED_FOR_PUBLISHING: {
     from: ["IN_REVIEW"],
-    roles: ["LEGAL_REVIEWER"],
+    permission: "legislation.approve",
     action: "APPROVE_FOR_PUBLISHING",
     duty: "APPROVE",
   },
   PUBLISHED: {
     from: ["APPROVED_FOR_PUBLISHING"],
-    roles: ["CONTENT_MANAGER"],
+    permission: "legislation.publish",
     action: "PUBLISH",
     duty: "PUBLISH",
   },
   ARCHIVED: {
     from: ["PUBLISHED", "AMENDED", "REPEALED", "SUSPENDED"],
-    roles: ["CONTENT_MANAGER"],
+    permission: "legislation.archive",
     action: "ARCHIVE",
     duty: "PUBLISH",
   },
@@ -525,7 +525,7 @@ export class AdminService {
   ) {
     if (
       input.extractionStatus === "REVIEWED" &&
-      !actor.roles.includes("LEGAL_REVIEWER")
+      !actor.permissions.includes("source.review")
     )
       throw new ForbiddenException(
         "اعتماد المصدر المستخرج من صلاحية المراجع القانوني.",
@@ -580,7 +580,7 @@ export class AdminService {
       if (!rows[0]) throw new NotFoundException("عنصر الهيكل غير موجود.");
       if (
         !["INBOX", "DRAFT", "IN_REVIEW"].includes(rows[0].lawStatus) &&
-        !actor.roles.includes("CONTENT_MANAGER")
+        !actor.permissions.includes("legislation.update_published_metadata")
       )
         throw new ConflictException("يتطلب تصحيح هيكل منشور مدير محتوى.");
       if (input.parentId === id)
@@ -639,7 +639,7 @@ export class AdminService {
       if (!law[0]) throw new NotFoundException("التشريع غير موجود.");
       if (
         !["INBOX", "DRAFT", "IN_REVIEW"].includes(law[0].status) &&
-        !actor.roles.includes("CONTENT_MANAGER")
+        !actor.permissions.includes("legislation.update_published_metadata")
       )
         throw new ConflictException("يتطلب إضافة هيكل إلى منشور مدير محتوى.");
       if (input.parentId) {
@@ -682,7 +682,10 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
-    if (input.status !== "DRAFT" && !actor.roles.includes("CONTENT_MANAGER"))
+    if (
+      input.status !== "DRAFT" &&
+      !actor.permissions.includes("legislation.publish")
+    )
       throw new ForbiddenException(
         "نشر أو استبدال أو إلغاء الملحق من صلاحية مدير المحتوى.",
       );
@@ -723,7 +726,10 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
-    if (input.status !== "DRAFT" && !actor.roles.includes("CONTENT_MANAGER"))
+    if (
+      input.status !== "DRAFT" &&
+      !actor.permissions.includes("legislation.publish")
+    )
       throw new ForbiddenException("نشر الملحق من صلاحية مدير المحتوى.");
     let structured: unknown = null;
     if (input.structuredTableJson?.trim()) {
@@ -814,7 +820,7 @@ export class AdminService {
       if (
         input.reviewStatus === "REVIEWED" &&
         rows[0].review_status !== "REVIEWED" &&
-        !actor.roles.includes("LEGAL_REVIEWER")
+        !actor.permissions.includes("legislation.approve")
       )
         throw new ForbiddenException(
           "اعتماد العلاقة القانونية من صلاحية المراجع القانوني.",
@@ -870,7 +876,7 @@ export class AdminService {
       throw new BadRequestException("لا يمكن ربط التشريع بنفسه.");
     if (
       input.reviewStatus === "REVIEWED" &&
-      !actor.roles.includes("LEGAL_REVIEWER")
+      !actor.permissions.includes("legislation.approve")
     )
       throw new ForbiddenException(
         "اعتماد العلاقة القانونية من صلاحية المراجع القانوني.",
@@ -936,7 +942,10 @@ export class AdminService {
     const isDraft = ["INBOX", "DRAFT", "IN_REVIEW"].includes(
       String(before.status),
     );
-    if (!isDraft && !actor.roles.includes("CONTENT_MANAGER"))
+    if (
+      !isDraft &&
+      !actor.permissions.includes("legislation.update_published_metadata")
+    )
       throw new ConflictException(
         "لا يملك دورك صلاحية تصحيح بيانات وصفية منشورة.",
       );
@@ -1068,7 +1077,7 @@ export class AdminService {
   ) {
     if (!reason?.trim()) throw new BadRequestException("سبب الإجراء إلزامي.");
     const rule = transitions[target];
-    if (!rule || !actor.roles.some((role) => rule.roles.includes(role)))
+    if (!rule || !actor.permissions.includes(rule.permission))
       throw new ForbiddenException("لا يسمح دورك بهذا الانتقال.");
     return this.db.transaction(async (manager) => {
       const rows = await manager.query(
@@ -1191,7 +1200,7 @@ export class AdminService {
 
   async roles() {
     return this.db.query(
-      "SELECT id,code,name_ar nameAr,permissions_json permissions FROM roles ORDER BY code",
+      "SELECT id,code,name_ar nameAr,description_ar descriptionAr,is_system isSystem,is_active isActive,permissions_json permissions FROM roles ORDER BY code",
     );
   }
 
@@ -1347,7 +1356,7 @@ export class AdminService {
     try {
       await this.db.transaction(async (manager) => {
         const roles = await manager.query(
-          `SELECT id,code FROM roles WHERE code IN (${input.roles.map(() => "?").join(",") || "''"})`,
+          `SELECT id,code FROM roles WHERE is_active=1 AND code IN (${input.roles.map(() => "?").join(",") || "''"})`,
           input.roles,
         );
         if (roles.length !== new Set(input.roles).size)
@@ -1358,8 +1367,8 @@ export class AdminService {
         );
         for (const role of roles)
           await manager.query(
-            "INSERT INTO user_roles (user_id,role_id) VALUES (?,?)",
-            [id, role.id],
+            "INSERT INTO user_roles (user_id,role_id,assigned_by) VALUES (?,?,?)",
+            [id, role.id, actor.id],
           );
         await this.auditWith(
           manager,
@@ -1406,8 +1415,22 @@ export class AdminService {
         throw new ConflictException(
           "لا يمكنك إزالة دور مدير النظام من حسابك الحالي.",
         );
+      if (
+        previous.some((r: { code: string }) => r.code === "SYSTEM_ADMIN") &&
+        !roleCodes.includes("SYSTEM_ADMIN")
+      ) {
+        const admins = await manager.query(
+          `SELECT COUNT(DISTINCT u.id) total FROM users u
+          JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
+          WHERE u.is_active=1 AND r.code='SYSTEM_ADMIN'`,
+        );
+        if (Number(admins[0]?.total) <= 1)
+          throw new ConflictException(
+            "لا يمكن إزالة دور مدير النظام من آخر مدير نشط.",
+          );
+      }
       const roles = await manager.query(
-        `SELECT id,code FROM roles WHERE code IN (${roleCodes.map(() => "?").join(",") || "''"})`,
+        `SELECT id,code FROM roles WHERE is_active=1 AND code IN (${roleCodes.map(() => "?").join(",") || "''"})`,
         roleCodes,
       );
       if (roles.length !== new Set(roleCodes).size)
@@ -1415,8 +1438,8 @@ export class AdminService {
       await manager.query("DELETE FROM user_roles WHERE user_id=?", [id]);
       for (const role of roles)
         await manager.query(
-          "INSERT INTO user_roles (user_id,role_id) VALUES (?,?)",
-          [id, role.id],
+          "INSERT INTO user_roles (user_id,role_id,assigned_by) VALUES (?,?,?)",
+          [id, role.id, actor.id],
         );
       await manager.query(
         "UPDATE user_sessions SET revoked_at=NOW(3) WHERE user_id=? AND revoked_at IS NULL",
@@ -1478,12 +1501,26 @@ export class AdminService {
   ) {
     if (id === actor.id && !active)
       throw new ConflictException("لا يمكنك تعطيل حسابك الحالي.");
-    const rows = await this.db.query(
-      "SELECT is_active isActive FROM users WHERE id=?",
-      [id],
-    );
-    if (!rows[0]) throw new NotFoundException("المستخدم غير موجود.");
     await this.db.transaction(async (manager) => {
+      const rows = await manager.query(
+        `SELECT u.is_active isActive,
+        EXISTS(
+          SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+          WHERE ur.user_id=u.id AND r.code='SYSTEM_ADMIN'
+        ) isSystemAdmin
+        FROM users u WHERE u.id=? FOR UPDATE`,
+        [id],
+      );
+      if (!rows[0]) throw new NotFoundException("المستخدم غير موجود.");
+      if (!active && Number(rows[0].isSystemAdmin) === 1) {
+        const admins = await manager.query(
+          `SELECT COUNT(DISTINCT u.id) total FROM users u
+          JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
+          WHERE u.is_active=1 AND r.code='SYSTEM_ADMIN'`,
+        );
+        if (Number(admins[0]?.total) <= 1)
+          throw new ConflictException("لا يمكن تعطيل آخر مدير نظام نشط.");
+      }
       await manager.query("UPDATE users SET is_active=? WHERE id=?", [
         active,
         id,
