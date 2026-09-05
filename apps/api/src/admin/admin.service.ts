@@ -1366,6 +1366,10 @@ export class AdminService {
         target === "PUBLISHED"
       )
         await this.assertPublishable(manager, id, target);
+      const publishedArticleCount =
+        target === "PUBLISHED"
+          ? await this.publishCurrentDraftArticles(manager, id)
+          : 0;
       await manager.query("UPDATE legislations SET status=? WHERE id=?", [
         target,
         id,
@@ -1396,7 +1400,7 @@ export class AdminService {
         "LEGISLATION",
         id,
         { status: law.status },
-        { status: target, separationControl },
+        { status: target, separationControl, publishedArticleCount },
         reason.trim(),
       );
       if (target === "PUBLISHED")
@@ -1410,6 +1414,7 @@ export class AdminService {
         to: target,
         action: rule.action,
         separationControl,
+        publishedArticleCount,
       };
     });
   }
@@ -2020,6 +2025,46 @@ export class AdminService {
       throw new ConflictException(
         "لا ينشر التشريع قبل تحديد النفاذ ومراجعة المصدر والنص المستخرج أو OCR.",
       );
+  }
+
+  private async publishCurrentDraftArticles(
+    manager: EntityManager,
+    legislationId: string,
+  ) {
+    const currentVersions = (await manager.query(
+      `SELECT a.id articleId,av.id versionId,av.status
+       FROM articles a LEFT JOIN article_versions av ON av.article_id=a.id
+        AND av.version_no=(SELECT MAX(latest.version_no)
+          FROM article_versions latest WHERE latest.article_id=a.id)
+       WHERE a.legislation_id=? ORDER BY a.sort_key,a.id FOR UPDATE`,
+      [legislationId],
+    )) as Array<{
+      articleId: string;
+      versionId: string | null;
+      status: string | null;
+    }>;
+    if (currentVersions.some((version) => !version.versionId))
+      throw new ConflictException(
+        "لا يمكن نشر التشريع لأن إحدى مواده بلا نسخة نصية حالية.",
+      );
+    const draftVersionIds = currentVersions
+      .filter((version) => version.status === "DRAFT")
+      .map((version) => version.versionId!);
+    let publishedArticleCount = 0;
+    for (let offset = 0; offset < draftVersionIds.length; offset += 500) {
+      const chunk = draftVersionIds.slice(offset, offset + 500);
+      const result = await manager.query(
+        `UPDATE article_versions SET status='PUBLISHED',verified_at=COALESCE(verified_at,NOW(3))
+         WHERE status='DRAFT' AND id IN (${chunk.map(() => "?").join(",")})`,
+        chunk,
+      );
+      publishedArticleCount += Number(result.affectedRows ?? 0);
+    }
+    if (publishedArticleCount !== draftVersionIds.length)
+      throw new ConflictException(
+        "تعارضت حالة مواد التشريع أثناء النشر؛ لم تحفظ أي تغييرات.",
+      );
+    return publishedArticleCount;
   }
 
   private async assertSeparation(
