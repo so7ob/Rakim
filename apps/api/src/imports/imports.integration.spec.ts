@@ -4,10 +4,12 @@ import type { DataSource } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
 import { createDataSource } from "../database/config.js";
 import { ImportsService } from "./imports.service.js";
+import { LegislationsService } from "../legislations/legislations.service.js";
 
 describe("structured import draft persistence", () => {
   let db: DataSource;
   let service: ImportsService;
+  let publicLegislations: LegislationsService;
   let actor: AuthUser;
   let typeId: string;
   let authorityId: string;
@@ -18,6 +20,7 @@ describe("structured import draft persistence", () => {
   beforeAll(async () => {
     db = await createDataSource().initialize();
     service = new ImportsService(db);
+    publicLegislations = new LegislationsService(db);
     const refs = await db.query(
       `SELECT
        (SELECT id FROM legislation_types LIMIT 1) typeId,
@@ -62,6 +65,33 @@ describe("structured import draft persistence", () => {
       [importId, sourceId, actor.id, body, JSON.stringify(parsed)],
     );
     return importId;
+  }
+
+  async function attachOfficialPdf(importId: string) {
+    const sourceId = randomUUID();
+    const body = `%PDF-1.4 integration-${sourceId}`;
+    sourceIds.push(sourceId);
+    await db.query(
+      `INSERT INTO source_documents
+       (id,original_name,storage_key,media_type,byte_size,sha256,received_at,
+        obtained_from,extraction_status,reviewed_at,created_by)
+       VALUES (?,?,?,'application/pdf',?,?,NOW(3),'اختبار تكامل','REVIEWED',NOW(3),?)`,
+      [
+        sourceId,
+        "نسخة القانون الرسمية.pdf",
+        `tests/${sourceId}.pdf`,
+        Buffer.byteLength(body),
+        createHash("sha256").update(body).digest("hex"),
+        actor.id,
+      ],
+    );
+    await db.query(
+      `INSERT INTO source_import_attachments
+       (source_import_id,source_document_id,attachment_role)
+       VALUES (?,?,'OFFICIAL_PDF')`,
+      [importId, sourceId],
+    );
+    return sourceId;
   }
 
   afterAll(async () => {
@@ -240,6 +270,8 @@ describe("structured import draft persistence", () => {
         reviewRequired: 0,
       },
     });
+    const extractionSourceId = sourceIds.at(-1)!;
+    const officialPdfId = await attachOfficialPdf(importId);
     const input = {
       titleAr: "تشريع تكامل البنية القانونية",
       officialNumber: "25",
@@ -339,6 +371,33 @@ describe("structured import draft persistence", () => {
         )[0].count,
       ),
     ).toBe(1);
+
+    const sourceLinks = await db.query(
+      `SELECT source_document_id sourceDocumentId,source_role sourceRole
+       FROM legislation_source_documents WHERE legislation_id=?
+       ORDER BY FIELD(source_role,'EXTRACTION','OFFICIAL_PDF')`,
+      [lawId],
+    );
+    expect(sourceLinks).toEqual([
+      { sourceDocumentId: extractionSourceId, sourceRole: "EXTRACTION" },
+      { sourceDocumentId: officialPdfId, sourceRole: "OFFICIAL_PDF" },
+    ]);
+    await db.query("UPDATE legislations SET status='PUBLISHED' WHERE id=?", [
+      lawId,
+    ]);
+    await db.query(
+      "UPDATE legislation_versions SET workflow_status='PUBLISHED' WHERE legislation_id=?",
+      [lawId],
+    );
+    await db.query(
+      `UPDATE article_versions av JOIN articles a ON a.id=av.article_id
+       SET av.status='PUBLISHED' WHERE a.legislation_id=?`,
+      [lawId],
+    );
+    await expect(publicLegislations.source(lawId)).resolves.toMatchObject({
+      fileName: "نسخة القانون الرسمية.pdf",
+      mediaType: "application/pdf",
+    });
   });
 
   it("rolls back the entire draft when a parsed relationship is invalid", async () => {

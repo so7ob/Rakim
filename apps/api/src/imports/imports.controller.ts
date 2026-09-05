@@ -10,11 +10,11 @@ import {
   Req,
   Res,
   StreamableFile,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { FileFieldsInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { IsInt, IsOptional, IsString, Length, Max, Min } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
@@ -51,20 +51,39 @@ export class ImportsController {
   @Permissions("source.upload")
   @ApiConsumes("multipart/form-data")
   @UseInterceptors(
-    FileInterceptor("file", {
-      limits: {
-        fileSize: Number(process.env.MAX_IMPORT_BYTES ?? 30 * 1024 * 1024),
-        files: 1,
+    FileFieldsInterceptor(
+      [
+        { name: "file", maxCount: 1 },
+        { name: "referencePdf", maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: Number(process.env.MAX_IMPORT_BYTES ?? 30 * 1024 * 1024),
+          files: 2,
+        },
       },
-    }),
+    ),
   )
-  @ApiOperation({ summary: "رفع مصدر وحساب SHA-256 وإنشاء مهمة استخراج" })
+  @ApiOperation({
+    summary: "رفع مصدر استخراج ونسخة PDF رسمية اختيارية للتشريع نفسه",
+  })
   upload(
-    @UploadedFile() file: Express.Multer.File | undefined,
+    @UploadedFiles()
+    files:
+      | {
+          file?: Express.Multer.File[];
+          referencePdf?: Express.Multer.File[];
+        }
+      | undefined,
     @Body() dto: UploadMetaDto,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.service.upload(file, dto.obtainedFrom, request.user!);
+    return this.service.upload(
+      files?.file?.[0],
+      dto.obtainedFrom,
+      request.user!,
+      files?.referencePdf?.[0],
+    );
   }
   @Get()
   @Permissions("source.view")
@@ -83,6 +102,27 @@ export class ImportsController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const file = await this.service.source(id);
+    const root = resolve(
+      process.env.DATA_ROOT ?? resolve(process.cwd(), "../../data"),
+    );
+    const target = resolve(root, file.storageKey);
+    if (!target.startsWith(`${root}${sep}`))
+      throw new NotFoundException("مسار المصدر غير صالح.");
+    response.setHeader("Content-Type", file.mediaType);
+    response.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    return new StreamableFile(createReadStream(target));
+  }
+  @Get(":id/attachments/:sourceDocumentId")
+  @Permissions("source.view")
+  async attachment(
+    @Param("id") id: string,
+    @Param("sourceDocumentId") sourceDocumentId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const file = await this.service.attachment(id, sourceDocumentId);
     const root = resolve(
       process.env.DATA_ROOT ?? resolve(process.cwd(), "../../data"),
     );

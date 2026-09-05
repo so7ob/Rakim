@@ -1749,8 +1749,14 @@ button:disabled {
   margin-bottom: 24px;
 }
 .upload-form h2,
+.upload-form .form-hint,
 .upload-form .form-message {
   grid-column: 1/-1;
+}
+.form-hint {
+  margin: 0;
+  color: var(--color-muted);
+  line-height: 1.8;
 }
 .admin-list {
   display: grid;

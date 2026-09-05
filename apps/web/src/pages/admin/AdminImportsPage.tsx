@@ -21,6 +21,8 @@ interface ImportItem {
   uploadedBy: string;
   legislationId: string | null;
   legislationTitle: string | null;
+  attachmentCount: number;
+  referencePdfName: string | null;
 }
 interface Refs {
   types: Array<{ id: string; name: string }>;
@@ -90,7 +92,12 @@ export function AdminImportsPage() {
     try {
       const body = new FormData(formElement);
       await apiRequest("/imports", { body });
-      setMessage("تم رفع المصدر ووضعه في طابور الاستخراج.");
+      setMessage(
+        body.get("referencePdf") instanceof File &&
+          (body.get("referencePdf") as File).size > 0
+          ? "تم رفع ملف النص ونسخة PDF معًا، ووُضع النص في طابور الاستخراج."
+          : "تم رفع المصدر ووضعه في طابور الاستخراج.",
+      );
       formElement.reset();
       imports.retry();
     } catch (error) {
@@ -131,15 +138,23 @@ export function AdminImportsPage() {
       />
       {tab === "upload" && auth.hasPermission("source.upload") && (
         <form className="admin-card upload-form" onSubmit={upload}>
-          <h2>رفع مصدر جديد</h2>
+          <h2>رفع مصادر تشريع واحد</h2>
+          <p className="form-hint">
+            استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية
+            للمقارنة والتنزيل من صفحة التشريع.
+          </p>
           <label>
-            الملف
+            ملف النص للاستخراج
             <input
               name="file"
               type="file"
               accept=".txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.csv,.xlsx"
               required
             />
+          </label>
+          <label>
+            نسخة PDF الرسمية (اختيارية)
+            <input name="referencePdf" type="file" accept=".pdf" />
           </label>
           <label>
             جهة الحصول
@@ -175,6 +190,8 @@ export function AdminImportsPage() {
                       {item.detectedFormat} —{" "}
                       {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
                       {item.uploadedBy}
+                      {Number(item.attachmentCount) > 0 &&
+                        ` — PDF: ${item.referencePdfName}`}
                     </span>
                   </div>
                   <StatusBadge status={item.status} />
@@ -244,6 +261,12 @@ function ImportPreview({
     extracted_text: string;
     error_details: string | null;
     analysis: ImportAnalysis | null;
+    attachments: Array<{
+      sourceDocumentId: string;
+      originalName: string;
+      mediaType: string;
+      role: "OFFICIAL_PDF";
+    }>;
   }>(`/imports/${id}`);
   if (loading) return <p>جار تحميل المعاينة…</p>;
   if (error)
@@ -252,8 +275,17 @@ function ImportPreview({
         تعذر تحميل المعاينة
       </button>
     );
+  const officialPdf = data?.attachments.find(
+    (attachment) => attachment.role === "OFFICIAL_PDF",
+  );
+  const sourceUrl = officialPdf
+    ? `/api/v1/imports/${id}/attachments/${officialPdf.sourceDocumentId}`
+    : `/api/v1/imports/${id}/source`;
+  const sourceName = officialPdf?.originalName ?? name;
   const viewable =
-    mediaType === "application/pdf" || mediaType.startsWith("image/");
+    Boolean(officialPdf) ||
+    mediaType === "application/pdf" ||
+    mediaType.startsWith("image/");
   return (
     <>
       <StructureAnalysisPreview analysis={data?.analysis ?? null} />
@@ -267,17 +299,13 @@ function ImportPreview({
         </section>
         <section>
           <h4>الملف الأصلي</h4>
+          {officialPdf && (
+            <p className="form-hint">نسخة PDF الرسمية: {sourceName}</p>
+          )}
           {viewable ? (
-            <iframe
-              title={`المصدر: ${name}`}
-              src={`/api/v1/imports/${id}/source`}
-            />
+            <iframe title={`المصدر: ${sourceName}`} src={sourceUrl} />
           ) : (
-            <a
-              className="button secondary"
-              href={`/api/v1/imports/${id}/source`}
-              download
-            >
+            <a className="button secondary" href={sourceUrl} download>
               تنزيل المصدر للمقارنة
             </a>
           )}

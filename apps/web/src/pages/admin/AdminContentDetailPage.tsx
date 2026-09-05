@@ -54,6 +54,7 @@ interface Detail {
     mediaType: string;
     sha256: string;
     byteSize: number;
+    sourceRole: "EXTRACTION" | "OFFICIAL_PDF" | "SUPPORTING";
   }>;
   structures: StructureNodeItem[];
   annexes: Array<{
@@ -1483,6 +1484,13 @@ function SourceEditor({
     <details className="draft-article">
       <summary>
         <strong>{source.originalName}</strong>{" "}
+        <span className="review-flag">
+          {source.sourceRole === "OFFICIAL_PDF"
+            ? "PDF رسمي للتنزيل"
+            : source.sourceRole === "EXTRACTION"
+              ? "مصدر الاستخراج"
+              : "مصدر داعم"}
+        </span>{" "}
         <StatusBadge status={source.extractionStatus} />
       </summary>
       <dl className="inline-meta">
