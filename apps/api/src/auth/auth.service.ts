@@ -113,15 +113,20 @@ export class AuthService {
       FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=? ORDER BY r.code`,
       [id],
     )) as Array<{ code: string; permissions: string | string[] }>;
+    const policyOverrides = (await this.db.query(
+      "SELECT permission_code permissionCode FROM user_permissions WHERE user_id=? ORDER BY permission_code",
+      [id],
+    )) as Array<{ permissionCode: string }>;
     const roles = assignments.map((item) => item.code);
     const permissions = [
-      ...new Set(
-        assignments.flatMap((item) =>
+      ...new Set([
+        ...assignments.flatMap((item) =>
           typeof item.permissions === "string"
             ? (JSON.parse(item.permissions) as string[])
             : item.permissions,
         ),
-      ),
+        ...policyOverrides.map((item) => item.permissionCode),
+      ]),
     ];
     return { ...users[0], roles, permissions } as AuthUser;
   }

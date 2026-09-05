@@ -547,7 +547,7 @@ async function seed() {
         [
           "SYSTEM_ADMIN",
           "مدير نظام",
-          ["read", "users:manage", "backup:manage"],
+          ["read", "users:manage", "backup:manage", "settings.workflow.manage"],
         ],
       ] as const;
       const devPassword = "DevOnly!ChangeMe2026";

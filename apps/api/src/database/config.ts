@@ -10,6 +10,8 @@ import { Observability1700000000004 } from "./migrations/1700000000004-observabi
 import { Preamble1700000000005 } from "./migrations/1700000000005-preamble.js";
 import { PlatformSettings1700000000006 } from "./migrations/1700000000006-platform-settings.js";
 import { VisualSettings1700000000007 } from "./migrations/1700000000007-visual-settings.js";
+import { WorkflowControls1700000000008 } from "./migrations/1700000000008-workflow-controls.js";
+import { WorkflowPolicyCatalog1700000000009 } from "./migrations/1700000000009-workflow-policy-catalog.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -40,6 +42,8 @@ export const createDataSource = () =>
       Preamble1700000000005,
       PlatformSettings1700000000006,
       VisualSettings1700000000007,
+      WorkflowControls1700000000008,
+      WorkflowPolicyCatalog1700000000009,
     ],
     migrationsTableName: "schema_migrations",
   });

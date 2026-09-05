@@ -12,6 +12,12 @@ import type { AuthUser } from "../auth/auth.types.js";
 import { hashPassword } from "../auth/password.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
 import { DATABASE } from "../database/database.module.js";
+import {
+  assertWorkflowPolicy,
+  parsePolicyBoolean,
+  workflowPolicy,
+  WORKFLOW_POLICIES,
+} from "./workflow-policies.js";
 
 type WorkflowStatus =
   | "INBOX"
@@ -1077,7 +1083,12 @@ export class AdminService {
         );
       const duty =
         target === "DRAFT" && law.status === "IN_REVIEW" ? "REVIEW" : rule.duty;
-      await this.assertSeparation(manager, id, actor.id, duty);
+      const separationControl = await this.assertSeparation(
+        manager,
+        id,
+        actor,
+        duty,
+      );
       if (
         target === "IN_REVIEW" ||
         target === "APPROVED_FOR_PUBLISHING" ||
@@ -1114,7 +1125,7 @@ export class AdminService {
         "LEGISLATION",
         id,
         { status: law.status },
-        { status: target },
+        { status: target, separationControl },
         reason.trim(),
       );
       if (target === "PUBLISHED")
@@ -1122,7 +1133,13 @@ export class AdminService {
           `INSERT INTO job_queue (id,job_type,payload_json,priority) VALUES (?,'REINDEX_ENTITY',?,20)`,
           [randomUUID(), JSON.stringify({ legislationId: id })],
         );
-      return { id, from: law.status, to: target, action: rule.action };
+      return {
+        id,
+        from: law.status,
+        to: target,
+        action: rule.action,
+        separationControl,
+      };
     });
   }
 
@@ -1148,16 +1165,165 @@ export class AdminService {
   }
 
   async users() {
-    return this.db
-      .query(`SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,u.last_login_at lastLoginAt,
-      u.failed_login_count failedLoginCount,GROUP_CONCAT(r.code ORDER BY r.code) roles
+    const rows = await this.db
+      .query(`SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,u.created_at createdAt,u.last_login_at lastLoginAt,
+      u.failed_login_count failedLoginCount,GROUP_CONCAT(r.code ORDER BY r.code) roles,
+      (SELECT GROUP_CONCAT(up.permission_code ORDER BY up.permission_code)
+       FROM user_permissions up WHERE up.user_id=u.id) directPermissions
       FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id GROUP BY u.id ORDER BY u.username`);
+    return rows.map((user: Record<string, unknown>) => {
+      const permissions = String(user.directPermissions ?? "")
+        .split(",")
+        .filter(Boolean);
+      return {
+        ...user,
+        policyOverrides: WORKFLOW_POLICIES.filter((policy) =>
+          permissions.includes(policy.permissionCode),
+        ).map((policy) => ({
+          code: policy.code,
+          labelAr: policy.labelAr,
+          permissionCode: policy.permissionCode,
+        })),
+        directPermissions: undefined,
+      };
+    });
   }
 
   async roles() {
     return this.db.query(
       "SELECT id,code,name_ar nameAr,permissions_json permissions FROM roles ORDER BY code",
     );
+  }
+
+  async workflowPolicies() {
+    const settingKeys = WORKFLOW_POLICIES.map((policy) => policy.settingKey);
+    const permissionCodes = WORKFLOW_POLICIES.map(
+      (policy) => policy.permissionCode,
+    );
+    const [settings, users, grants] = await Promise.all([
+      this.db.query(
+        `SELECT setting_key settingKey,value_json valueJson
+        FROM platform_settings WHERE setting_key IN (${settingKeys.map(() => "?").join(",")})`,
+        settingKeys,
+      ),
+      this.db.query(
+        `SELECT u.id,u.username,u.display_name displayName,
+        GROUP_CONCAT(r.code ORDER BY r.code) roles
+        FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id
+        LEFT JOIN roles r ON r.id=ur.role_id
+        WHERE u.is_active=1 GROUP BY u.id ORDER BY u.display_name,u.username`,
+      ),
+      this.db.query(
+        `SELECT user_id userId,permission_code permissionCode
+        FROM user_permissions WHERE permission_code IN (${permissionCodes.map(() => "?").join(",")})
+        ORDER BY permission_code,user_id`,
+        permissionCodes,
+      ),
+    ]);
+    const values = new Map(
+      settings.map((item: Record<string, unknown>) => [
+        String(item.settingKey),
+        item.valueJson,
+      ]),
+    );
+    return {
+      policies: WORKFLOW_POLICIES.map((policy) => ({
+        ...policy,
+        enabled: parsePolicyBoolean(values.get(policy.settingKey), true),
+        userIds: grants
+          .filter(
+            (grant: Record<string, unknown>) =>
+              grant.permissionCode === policy.permissionCode,
+          )
+          .map((grant: Record<string, unknown>) => String(grant.userId)),
+      })),
+      users: users.map((user: Record<string, unknown>) => ({
+        ...user,
+        roles: String(user.roles ?? "")
+          .split(",")
+          .filter(Boolean),
+      })),
+    };
+  }
+
+  async updateWorkflowPolicy(
+    code: string,
+    enabled: boolean,
+    userIds: string[],
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (!reason.trim())
+      throw new BadRequestException("سبب تعديل السياسة إلزامي.");
+    const policy = workflowPolicy(code);
+    if (!policy) throw new NotFoundException("سياسة سير العمل غير موجودة.");
+    if (new Set(userIds).size !== userIds.length)
+      throw new BadRequestException("لا يجوز تكرار المستخدم في الاستثناءات.");
+
+    await this.db.transaction(async (manager) => {
+      const settings = await manager.query(
+        `SELECT value_json valueJson FROM platform_settings
+        WHERE setting_key=? FOR UPDATE`,
+        [policy.settingKey],
+      );
+      if (!settings[0])
+        throw new NotFoundException("إعداد سياسة سير العمل غير موجود.");
+      const selectedUsers = userIds.length
+        ? await manager.query(
+            `SELECT id FROM users WHERE is_active=1 AND id IN (${userIds.map(() => "?").join(",")}) FOR UPDATE`,
+            userIds,
+          )
+        : [];
+      if (selectedUsers.length !== userIds.length)
+        throw new BadRequestException(
+          "تتضمن الاستثناءات مستخدمًا غير موجود أو معطلًا.",
+        );
+      const previousGrants = await manager.query(
+        `SELECT user_id userId FROM user_permissions
+        WHERE permission_code=? ORDER BY user_id FOR UPDATE`,
+        [policy.permissionCode],
+      );
+      const previousUserIds = previousGrants.map(
+        (grant: Record<string, unknown>) => String(grant.userId),
+      );
+      const before = {
+        enabled: parsePolicyBoolean(settings[0].valueJson, true),
+        userIds: previousUserIds,
+      };
+
+      await manager.query(
+        "UPDATE platform_settings SET value_json=?,updated_by=? WHERE setting_key=?",
+        [JSON.stringify(enabled), actor.id, policy.settingKey],
+      );
+      await manager.query(
+        "DELETE FROM user_permissions WHERE permission_code=?",
+        [policy.permissionCode],
+      );
+      for (const userId of userIds)
+        await manager.query(
+          `INSERT INTO user_permissions
+          (user_id,permission_code,granted_by,grant_reason) VALUES (?,?,?,?)`,
+          [userId, policy.permissionCode, actor.id, reason.trim()],
+        );
+      const affectedUsers = [...new Set([...previousUserIds, ...userIds])];
+      if (affectedUsers.length)
+        await manager.query(
+          `UPDATE user_sessions SET revoked_at=NOW(3)
+          WHERE user_id IN (${affectedUsers.map(() => "?").join(",")}) AND revoked_at IS NULL`,
+          affectedUsers,
+        );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_WORKFLOW_POLICY",
+        "WORKFLOW_POLICY",
+        policy.code,
+        before,
+        { enabled, userIds },
+        reason.trim(),
+      );
+    });
+    return this.workflowPolicies();
   }
 
   async createUser(
@@ -1560,29 +1726,34 @@ export class AdminService {
   private async assertSeparation(
     manager: EntityManager,
     id: string,
-    userId: string,
+    actor: AuthUser,
     duty: string,
   ) {
     if (duty === "APPROVE") {
       const own = await manager.query(
         "SELECT 1 FROM content_responsibilities WHERE legislation_id=? AND user_id=? AND duty IN ('IMPORT','EDIT')",
-        [id, userId],
+        [id, actor.id],
       );
-      if (own[0])
-        throw new ForbiddenException(
-          "لا يجوز لمن استورد أو حرر المحتوى أن يعتمد التشريع نفسه.",
-        );
+      return assertWorkflowPolicy(
+        manager,
+        "LEGISLATION_SELF_APPROVAL",
+        actor,
+        Boolean(own[0]),
+      );
     }
     if (duty === "PUBLISH") {
       const own = await manager.query(
         "SELECT 1 FROM content_responsibilities WHERE legislation_id=? AND user_id=? AND duty IN ('IMPORT','EDIT','REVIEW','APPROVE')",
-        [id, userId],
+        [id, actor.id],
       );
-      if (own[0])
-        throw new ForbiddenException(
-          "لا يجوز للمراجع أو المعتمد نشر التشريع نفسه.",
-        );
+      return assertWorkflowPolicy(
+        manager,
+        "LEGISLATION_SELF_PUBLICATION",
+        actor,
+        Boolean(own[0]),
+      );
     }
+    return "POLICY_ENFORCED";
   }
 
   private async ensureResponsibility(

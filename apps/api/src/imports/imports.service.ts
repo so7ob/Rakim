@@ -10,6 +10,7 @@ import { mkdir, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import type { DataSource } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
+import { assertWorkflowPolicy } from "../admin/workflow-policies.js";
 import { DATABASE } from "../database/database.module.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
 
@@ -192,10 +193,12 @@ export class ImportsService {
       );
       const item = rows[0];
       if (!item) throw new NotFoundException("عملية الاستيراد غير موجودة.");
-      if (item.uploaded_by === actor.id)
-        throw new ConflictException(
-          "لا يجوز للمستورد مراجعة المصدر الذي رفعه.",
-        );
+      const workflowPolicy = await assertWorkflowPolicy(
+        m,
+        "SOURCE_IMPORT_SELF_REVIEW",
+        actor,
+        item.uploaded_by === actor.id,
+      );
       if (!["READY_FOR_REVIEW", "OCR_REQUIRED"].includes(item.status))
         throw new ConflictException("المصدر لم يصل إلى حالة قابلة للمراجعة.");
       if (!item.extracted_text?.trim())
@@ -208,10 +211,10 @@ export class ImportsService {
         id,
       ]);
       await m.query(
-        `INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,before_json,after_json,reason) VALUES (?,?,'REVIEW_IMPORT','SOURCE_IMPORT',?,JSON_OBJECT('status',?),JSON_OBJECT('status','REVIEWED'),?)`,
-        [randomUUID(), actor.id, id, item.status, notes],
+        `INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,before_json,after_json,reason) VALUES (?,?,'REVIEW_IMPORT','SOURCE_IMPORT',?,JSON_OBJECT('status',?),JSON_OBJECT('status','REVIEWED','workflowPolicy',?),?)`,
+        [randomUUID(), actor.id, id, item.status, workflowPolicy, notes],
       );
-      return { id, status: "REVIEWED" };
+      return { id, status: "REVIEWED", workflowPolicy };
     });
   }
 
