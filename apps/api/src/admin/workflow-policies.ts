@@ -6,7 +6,7 @@ export const WORKFLOW_POLICIES = [
   {
     code: "SOURCE_IMPORT_SELF_REVIEW",
     settingKey: "workflow.enforce_import_review_separation",
-    permissionCode: "workflow:import-review-separation:override",
+    permissionCode: "workflow.source_import.self_review.override",
     labelAr: "لا يجوز للمستورد مراجعة المصدر الذي رفعه",
     descriptionAr:
       "يفصل بين رفع المصدر واعتماد النص المستخرج منه قبل إنشاء المسودة.",
@@ -15,7 +15,7 @@ export const WORKFLOW_POLICIES = [
   {
     code: "LEGISLATION_SELF_APPROVAL",
     settingKey: "workflow.enforce_approval_separation",
-    permissionCode: "workflow:approval-separation:override",
+    permissionCode: "workflow.legislation.self_approval.override",
     labelAr: "لا يجوز لمن استورد أو حرر المحتوى أن يعتمد التشريع نفسه",
     descriptionAr: "يفصل بين إعداد محتوى التشريع ونقله إلى حالة معتمد للنشر.",
     requiredRole: "LEGAL_REVIEWER",
@@ -23,7 +23,7 @@ export const WORKFLOW_POLICIES = [
   {
     code: "LEGISLATION_SELF_PUBLICATION",
     settingKey: "workflow.enforce_publication_separation",
-    permissionCode: "workflow:publication-separation:override",
+    permissionCode: "workflow.legislation.self_publication.override",
     labelAr: "لا يجوز لمن شارك في إعداد التشريع أو مراجعته أن ينشره",
     descriptionAr:
       "يفصل النشر النهائي عن الاستيراد والتحرير والمراجعة والاعتماد.",
@@ -32,7 +32,7 @@ export const WORKFLOW_POLICIES = [
   {
     code: "AMENDMENT_SELF_REVIEW",
     settingKey: "workflow.enforce_amendment_review_separation",
-    permissionCode: "workflow:amendment-review-separation:override",
+    permissionCode: "workflow.amendment.self_review.override",
     labelAr: "لا يجوز لمن أنشأ التعديل أن يراجعه",
     descriptionAr: "يفصل بين إنشاء مشروع التعديل ومراجعته القانونية.",
     requiredRole: "LEGAL_REVIEWER",
@@ -40,7 +40,7 @@ export const WORKFLOW_POLICIES = [
   {
     code: "AMENDMENT_SELF_PUBLICATION",
     settingKey: "workflow.enforce_amendment_publication_separation",
-    permissionCode: "workflow:amendment-publication-separation:override",
+    permissionCode: "workflow.amendment.self_publication.override",
     labelAr: "لا يجوز لمن أنشأ أو راجع التعديل أن ينشره",
     descriptionAr: "يفصل تطبيق التعديل زمنيًا عن إنشائه ومراجعته.",
     requiredRole: "CONTENT_MANAGER",
@@ -71,7 +71,7 @@ export async function assertWorkflowPolicy(
     : true;
   if (!enabled) return "POLICY_DISABLED";
   if (!violatesPolicy) return "POLICY_ENFORCED";
-  if (actor.permissions.includes(policy.permissionCode))
+  if (actor.policyCapabilities?.includes(policy.permissionCode))
     return "USER_PERMISSION_OVERRIDE";
   throw new ForbiddenException(policy.labelAr);
 }

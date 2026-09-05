@@ -40,17 +40,17 @@ const groups: NavigationGroup[] = [
       {
         to: "/ar/admin/reference-data/types",
         label: "أنواع التشريعات",
-        permission: "reference.manage",
+        permission: "reference.view",
       },
       {
         to: "/ar/admin/reference-data/subjects",
         label: "التصنيفات والموضوعات",
-        permission: "reference.manage",
+        permission: "reference.view",
       },
       {
         to: "/ar/admin/reference-data/authorities",
         label: "الجهات",
-        permission: "reference.manage",
+        permission: "reference.view",
       },
     ],
   },
@@ -108,7 +108,7 @@ const groups: NavigationGroup[] = [
       {
         to: "/ar/admin/settings/workflow",
         label: "سياسات سير العمل",
-        permission: "settings.workflow.manage",
+        permission: "workflow_policy.view",
       },
       {
         to: "/ar/admin/settings/pages",

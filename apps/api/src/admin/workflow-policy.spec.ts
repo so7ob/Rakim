@@ -20,7 +20,7 @@ function harness(
   });
   return {
     query,
-    run: (permissions: string[] = []) =>
+    run: (policyCapabilities: string[] = []) =>
       assertWorkflowPolicy(
         { query } as unknown as EntityManager,
         code,
@@ -29,7 +29,8 @@ function harness(
           username: "actor",
           displayName: "المستخدم",
           roles: ["LEGAL_REVIEWER", "CONTENT_MANAGER"],
-          permissions,
+          permissions: [],
+          policyCapabilities,
         } satisfies AuthUser,
         violatesPolicy,
       ),

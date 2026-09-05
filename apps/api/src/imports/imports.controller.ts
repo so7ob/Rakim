@@ -22,7 +22,6 @@ import { createReadStream } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { Response } from "express";
 import { SessionGuard } from "../auth/session.guard.js";
-import { RoleGuard, Roles } from "../common/role.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { ImportsService } from "./imports.service.js";
 
@@ -43,14 +42,13 @@ class DraftFromImportDto {
 
 @ApiTags("الاستيراد")
 @Controller("imports")
-@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard)
 export class ImportsController {
   constructor(
     @Inject(ImportsService) private readonly service: ImportsService,
   ) {}
   @Post()
   @Permissions("source.upload")
-  @Roles("DATA_ENTRY")
   @ApiConsumes("multipart/form-data")
   @UseInterceptors(
     FileInterceptor("file", {
@@ -70,19 +68,16 @@ export class ImportsController {
   }
   @Get()
   @Permissions("source.view")
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   list() {
     return this.service.list();
   }
   @Get(":id")
   @Permissions("source.view")
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   detail(@Param("id") id: string) {
     return this.service.detail(id);
   }
   @Get(":id/source")
   @Permissions("source.view")
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   async source(
     @Param("id") id: string,
     @Res({ passthrough: true }) response: Response,
@@ -104,7 +99,6 @@ export class ImportsController {
   @Post(":id/review")
   @HttpCode(200)
   @Permissions("source.review")
-  @Roles("LEGAL_REVIEWER")
   review(
     @Param("id") id: string,
     @Body() dto: ReviewImportDto,
@@ -113,8 +107,7 @@ export class ImportsController {
     return this.service.review(id, request.user!, dto.notes);
   }
   @Post(":id/draft")
-  @Permissions("source.create_draft")
-  @Roles("DATA_ENTRY")
+  @Permissions("source.draft.create")
   draft(
     @Param("id") id: string,
     @Body() dto: DraftFromImportDto,

@@ -10,27 +10,34 @@ import type { DataSource, EntityManager } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
 import { DATABASE } from "../database/database.module.js";
 import { PERMISSION_CATALOG } from "../common/permission-catalog.js";
-import { WORKFLOW_POLICIES } from "./workflow-policies.js";
+import { AuthorizationPolicyService } from "./authorization-policy.service.js";
 
 type Scope = "ALL" | "OWN" | "ASSIGNED";
 type Effect = "ALLOW" | "DENY";
 
 @Injectable()
 export class AccessControlService {
-  constructor(@Inject(DATABASE) private readonly db: DataSource) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: DataSource,
+    @Inject(AuthorizationPolicyService)
+    private readonly policy: AuthorizationPolicyService,
+  ) {}
 
   async permissionCatalog() {
     const [permissions, roles] = await Promise.all([
       this.db.query(`SELECT code,domain_code domain,resource_code resource,
         action_code action,label_ar labelAr,description_ar descriptionAr,
         sensitivity,supported_scopes_json supportedScopes,is_active isActive
-        FROM permission_definitions ORDER BY domain_code,resource_code,action_code`),
+        FROM permission_definitions WHERE is_active=TRUE AND is_legacy=FALSE
+        ORDER BY domain_code,resource_code,action_code`),
       this.db
         .query(`SELECT r.id,r.code,r.name_ar nameAr,r.description_ar descriptionAr,
-        r.is_system isSystem,r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
-        COUNT(DISTINCT rp.permission_code) permissionCount,r.updated_at updatedAt
+        r.is_system isSystem,r.is_protected isProtected,r.authority_level authorityLevel,
+        r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
+        COUNT(DISTINCT pd.code) permissionCount,r.updated_at updatedAt
         FROM roles r LEFT JOIN user_roles ur ON ur.role_id=r.id
         LEFT JOIN role_permissions rp ON rp.role_id=r.id
+        LEFT JOIN permission_definitions pd ON pd.code=rp.permission_code AND pd.is_legacy=FALSE
         GROUP BY r.id ORDER BY r.is_system DESC,r.name_ar`),
     ]);
     return {
@@ -45,47 +52,61 @@ export class AccessControlService {
   async roles() {
     return this.db
       .query(`SELECT r.id,r.code,r.name_ar nameAr,r.description_ar descriptionAr,
-      r.is_system isSystem,r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
-      COUNT(DISTINCT rp.permission_code) permissionCount,r.updated_at updatedAt
+      r.is_system isSystem,r.is_protected isProtected,r.authority_level authorityLevel,
+      r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
+      COUNT(DISTINCT pd.code) permissionCount,r.updated_at updatedAt
       FROM roles r LEFT JOIN user_roles ur ON ur.role_id=r.id
       LEFT JOIN role_permissions rp ON rp.role_id=r.id
+      LEFT JOIN permission_definitions pd ON pd.code=rp.permission_code AND pd.is_legacy=FALSE
       GROUP BY r.id ORDER BY r.is_system DESC,r.name_ar`);
   }
 
   async role(id: string) {
     const roles = await this.db.query(
       `SELECT id,code,name_ar nameAr,description_ar descriptionAr,is_system isSystem,
+      is_protected isProtected,authority_level authorityLevel,
       is_active isActive,updated_at updatedAt FROM roles WHERE id=?`,
       [id],
     );
     if (!roles[0]) throw new NotFoundException("الدور غير موجود.");
-    const [permissions, users, audit] = await Promise.all([
-      this.db.query(
-        `SELECT pd.code,pd.domain_code domain,pd.resource_code resource,
-        pd.action_code action,pd.label_ar labelAr,pd.description_ar descriptionAr,
-        pd.sensitivity,rp.scope_code scope
-        FROM role_permissions rp JOIN permission_definitions pd ON pd.code=rp.permission_code
-        WHERE rp.role_id=? ORDER BY pd.domain_code,pd.resource_code,pd.action_code`,
-        [id],
-      ),
-      this.db.query(
-        `SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,
-        ur.assigned_at assignedAt,assigner.display_name assignedBy
-        FROM user_roles ur JOIN users u ON u.id=ur.user_id
-        LEFT JOIN users assigner ON assigner.id=ur.assigned_by
-        WHERE ur.role_id=? ORDER BY u.display_name`,
-        [id],
-      ),
-      this.db.query(
-        `SELECT al.id,al.action,al.reason,al.before_json beforeValue,
-        al.after_json afterValue,al.occurred_at occurredAt,u.display_name actorName
-        FROM audit_logs al LEFT JOIN users u ON u.id=al.actor_id
-        WHERE al.entity_type='ROLE' AND al.entity_id=?
-        ORDER BY al.occurred_at DESC LIMIT 50`,
-        [id],
-      ),
-    ]);
-    return { ...roles[0], permissions, users, audit };
+    return roles[0];
+  }
+
+  async rolePermissions(id: string) {
+    await this.assertRoleExists(id);
+    return this.db.query(
+      `SELECT pd.code,pd.domain_code domain,pd.resource_code resource,
+      pd.action_code action,pd.label_ar labelAr,pd.description_ar descriptionAr,
+      pd.sensitivity,rp.scope_code scope
+      FROM role_permissions rp JOIN permission_definitions pd ON pd.code=rp.permission_code
+      WHERE rp.role_id=? AND pd.is_legacy=FALSE
+      ORDER BY pd.domain_code,pd.resource_code,pd.action_code`,
+      [id],
+    );
+  }
+
+  async roleUsers(id: string) {
+    await this.assertRoleExists(id);
+    return this.db.query(
+      `SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,
+      ur.assigned_at assignedAt,assigner.display_name assignedBy
+      FROM user_roles ur JOIN users u ON u.id=ur.user_id
+      LEFT JOIN users assigner ON assigner.id=ur.assigned_by
+      WHERE ur.role_id=? ORDER BY u.display_name`,
+      [id],
+    );
+  }
+
+  async roleAudit(id: string) {
+    await this.assertRoleExists(id);
+    return this.db.query(
+      `SELECT al.id,al.action,al.reason,al.before_json beforeValue,
+      al.after_json afterValue,al.occurred_at occurredAt,u.display_name actorName
+      FROM audit_logs al LEFT JOIN users u ON u.id=al.actor_id
+      WHERE al.entity_type='ROLE' AND al.entity_id=?
+      ORDER BY al.occurred_at DESC LIMIT 50`,
+      [id],
+    );
   }
 
   async createRole(
@@ -97,13 +118,21 @@ export class AccessControlService {
     if (!/^[A-Z][A-Z0-9_]{2,59}$/.test(code))
       throw new BadRequestException("رمز الدور غير صالح.");
     const id = randomUUID();
+    const authorityLevel = await this.policy.customRoleAuthority(actor);
     try {
       await this.db.transaction(async (manager) => {
         await manager.query(
           `INSERT INTO roles
-          (id,code,name_ar,description_ar,permissions_json,is_system,is_active)
-          VALUES (?,?,?,?,JSON_ARRAY(),FALSE,TRUE)`,
-          [id, code, input.nameAr.trim(), input.descriptionAr?.trim() || null],
+          (id,code,name_ar,description_ar,permissions_json,is_system,is_protected,
+           authority_level,permission_model_version,is_active)
+          VALUES (?,?,?,?,JSON_ARRAY(),FALSE,FALSE,?,2,TRUE)`,
+          [
+            id,
+            code,
+            input.nameAr.trim(),
+            input.descriptionAr?.trim() || null,
+            authorityLevel,
+          ],
         );
         await this.audit(
           manager,
@@ -137,6 +166,7 @@ export class AccessControlService {
       );
       const role = rows[0];
       if (!role) throw new NotFoundException("الدور غير موجود.");
+      await this.policy.assertCanManageRole(manager, actor, id);
       if (role.is_system && !input.isActive)
         throw new ConflictException("لا يمكن تعطيل دور نظامي.");
       await manager.query(
@@ -176,19 +206,14 @@ export class AccessControlService {
         [id],
       );
       if (!roles[0]) throw new NotFoundException("الدور غير موجود.");
-      if (
-        roles[0].code === "SYSTEM_ADMIN" &&
-        [
-          "permission.manage",
-          "role.manage_permissions",
-          "user.manage_roles",
-        ].some((code) => !normalized.some((item) => item.code === code))
-      )
-        throw new ConflictException(
-          "يجب أن يحتفظ دور مدير النظام بصلاحيات إدارة الوصول الحرجة.",
-        );
       await this.assertKnownPermissions(
         manager,
+        normalized.map((item) => item.code),
+      );
+      await this.policy.assertCanChangeRolePermissions(
+        manager,
+        actor,
+        id,
         normalized.map((item) => item.code),
       );
       const before = await manager.query(
@@ -230,6 +255,7 @@ export class AccessControlService {
       );
       const role = rows[0];
       if (!role) throw new NotFoundException("الدور غير موجود.");
+      await this.policy.assertCanManageRole(manager, actor, id);
       if (role.is_system) throw new ConflictException("لا يمكن حذف دور نظامي.");
       if (Number(role.userCount))
         throw new ConflictException("أزل الدور من المستخدمين قبل حذفه.");
@@ -256,57 +282,55 @@ export class AccessControlService {
       [id],
     );
     if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
-    const [roles, overrides, roleGrants, policies, sessions, activity] =
-      await Promise.all([
-        this.db.query(
-          `SELECT r.id,r.code,r.name_ar nameAr,r.description_ar descriptionAr,
-        r.is_system isSystem,r.is_active isActive,ur.assigned_at assignedAt,
-        assigner.display_name assignedBy
-        FROM user_roles ur JOIN roles r ON r.id=ur.role_id
-        LEFT JOIN users assigner ON assigner.id=ur.assigned_by
-        WHERE ur.user_id=? ORDER BY r.name_ar`,
-          [id],
-        ),
-        this.db.query(
-          `SELECT upo.permission_code code,upo.effect,upo.scope_code scope,
+    return users[0];
+  }
+
+  async userRoles(id: string, actor: AuthUser) {
+    await this.assertUserExists(id);
+    const [assigned, assignable] = await Promise.all([
+      this.db.query(
+        `SELECT r.id,r.code,r.name_ar nameAr,r.description_ar descriptionAr,
+      r.is_system isSystem,r.is_active isActive,ur.assigned_at assignedAt,
+      r.is_protected isProtected,r.authority_level authorityLevel,
+      assigner.display_name assignedBy
+      FROM user_roles ur JOIN roles r ON r.id=ur.role_id
+      LEFT JOIN users assigner ON assigner.id=ur.assigned_by
+      WHERE ur.user_id=? ORDER BY r.name_ar`,
+        [id],
+      ),
+      actor.permissions.includes("user.roles.manage")
+        ? this.policy.assignableRoles(actor)
+        : Promise.resolve([]),
+    ]);
+    return { assigned, assignable };
+  }
+
+  async userPermissions(id: string) {
+    await this.assertUserExists(id);
+    const [overrides, roleGrants] = await Promise.all([
+      this.db.query(
+        `SELECT upo.permission_code code,upo.effect,upo.scope_code scope,
         upo.reason,upo.granted_at grantedAt,g.display_name grantedBy
-        FROM user_permission_overrides upo LEFT JOIN users g ON g.id=upo.granted_by
-        WHERE upo.user_id=? ORDER BY upo.permission_code`,
-          [id],
-        ),
-        this.db.query(
-          `SELECT rp.permission_code code,rp.scope_code scope,r.code roleCode,r.name_ar roleName
+        FROM user_permission_overrides upo
+        JOIN permission_definitions pd ON pd.code=upo.permission_code
+        LEFT JOIN users g ON g.id=upo.granted_by
+        WHERE upo.user_id=? AND pd.is_legacy=FALSE
+        ORDER BY upo.permission_code`,
+        [id],
+      ),
+      this.db.query(
+        `SELECT rp.permission_code code,rp.scope_code scope,r.code roleCode,r.name_ar roleName
         FROM role_permissions rp JOIN user_roles ur ON ur.role_id=rp.role_id
         JOIN roles r ON r.id=rp.role_id
-        WHERE ur.user_id=? AND r.is_active=1 ORDER BY rp.permission_code,r.code`,
-          [id],
-        ),
-        this.db.query(
-          "SELECT permission_code code,grant_reason reason,granted_at grantedAt FROM user_permissions WHERE user_id=? ORDER BY permission_code",
-          [id],
-        ),
-        this.sessions(id),
-        this.activity(id, 1, 10),
-      ]);
-    const effective = this.effectivePermissions(roleGrants, overrides);
+        JOIN permission_definitions pd ON pd.code=rp.permission_code
+        WHERE ur.user_id=? AND r.is_active=1 AND pd.is_legacy=FALSE
+        AND rp.scope_code='ALL' ORDER BY rp.permission_code,r.code`,
+        [id],
+      ),
+    ]);
     return {
-      ...users[0],
-      roles,
       directOverrides: overrides,
-      effectivePermissions: effective,
-      policyOverrides: WORKFLOW_POLICIES.filter((policy) =>
-        policies.some(
-          (item: Record<string, unknown>) =>
-            item.code === policy.permissionCode,
-        ),
-      ).map((policy) => ({ code: policy.code, labelAr: policy.labelAr })),
-      sessionSummary: {
-        total: sessions.length,
-        active: sessions.filter(
-          (item: Record<string, unknown>) => !item.revokedAt && !item.expired,
-        ).length,
-      },
-      recentActivity: activity.items,
+      effectivePermissions: this.effectivePermissions(roleGrants, overrides),
     };
   }
 
@@ -317,21 +341,6 @@ export class AccessControlService {
     reason: string,
   ) {
     const normalized = this.normalizeOverrides(overrides);
-    if (
-      userId === actor.id &&
-      normalized.some(
-        (item) =>
-          item.effect === "DENY" &&
-          [
-            "user.manage_permissions",
-            "role.manage_permissions",
-            "permission.manage",
-          ].includes(item.code),
-      )
-    )
-      throw new ConflictException(
-        "لا يمكنك رفض صلاحيات إدارة الوصول لحسابك الحالي.",
-      );
     await this.db.transaction(async (manager) => {
       const users = await manager.query(
         "SELECT id FROM users WHERE id=? FOR UPDATE",
@@ -342,35 +351,12 @@ export class AccessControlService {
         manager,
         normalized.map((item) => item.code),
       );
-      const targetRoles = await manager.query(
-        `SELECT r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id
-        WHERE ur.user_id=?`,
-        [userId],
+      await this.policy.assertCanChangeUserPermissions(
+        manager,
+        actor,
+        userId,
+        normalized.map((item) => item.code),
       );
-      if (
-        targetRoles.some(
-          (item: { code: string }) => item.code === "SYSTEM_ADMIN",
-        ) &&
-        normalized.some(
-          (item) =>
-            item.effect === "DENY" &&
-            [
-              "permission.manage",
-              "role.manage_permissions",
-              "user.manage_roles",
-            ].includes(item.code),
-        )
-      ) {
-        const admins = await manager.query(
-          `SELECT COUNT(DISTINCT u.id) total FROM users u
-          JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
-          WHERE u.is_active=1 AND r.code='SYSTEM_ADMIN'`,
-        );
-        if (Number(admins[0]?.total) <= 1)
-          throw new ConflictException(
-            "لا يمكن رفض صلاحيات إدارة الوصول لآخر مدير نظام نشط.",
-          );
-      }
       const before = await manager.query(
         "SELECT permission_code code,effect,scope_code scope FROM user_permission_overrides WHERE user_id=? ORDER BY permission_code",
         [userId],
@@ -401,7 +387,7 @@ export class AccessControlService {
         reason,
       );
     });
-    return this.user(userId);
+    return this.userPermissions(userId);
   }
 
   async updateUserProfile(
@@ -416,6 +402,7 @@ export class AccessControlService {
         [userId],
       );
       if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
+      await this.policy.assertCanManageUser(manager, actor, userId);
       await manager.query("UPDATE users SET display_name=? WHERE id=?", [
         displayName.trim(),
         userId,
@@ -450,6 +437,7 @@ export class AccessControlService {
     reason: string,
   ) {
     await this.db.transaction(async (manager) => {
+      await this.policy.assertCanManageUser(manager, actor, userId);
       const sessions = await manager.query(
         "SELECT id,revoked_at revokedAt FROM user_sessions WHERE id=? AND user_id=? FOR UPDATE",
         [sessionId, userId],
@@ -506,8 +494,16 @@ export class AccessControlService {
         scope: grant.scope,
         source: "ROLE",
         roles: [],
+        sources: [],
+        overrides: [],
+        policyChecks: [],
       };
       item.roles.push({ code: grant.roleCode, nameAr: grant.roleName });
+      item.sources.push({
+        type: "ROLE",
+        code: grant.roleCode,
+        name: grant.roleName,
+      });
       map.set(grant.code, item);
     }
     for (const override of overrides)
@@ -517,6 +513,16 @@ export class AccessControlService {
         scope: override.scope,
         source: override.effect === "ALLOW" ? "DIRECT_ALLOW" : "DIRECT_DENY",
         roles: map.get(override.code)?.roles ?? [],
+        sources:
+          override.effect === "ALLOW"
+            ? [{ type: "DIRECT_ALLOW", code: "DIRECT" }]
+            : (map.get(override.code)?.sources ?? []),
+        overrides: [
+          {
+            type: override.effect === "ALLOW" ? "DIRECT_ALLOW" : "DIRECT_DENY",
+          },
+        ],
+        policyChecks: [],
       });
     return PERMISSION_CATALOG.map((definition) => ({
       ...definition,
@@ -525,6 +531,9 @@ export class AccessControlService {
         scope: null,
         source: "NONE",
         roles: [],
+        sources: [],
+        overrides: [],
+        policyChecks: [],
       }),
     }));
   }
@@ -570,13 +579,26 @@ export class AccessControlService {
   ) {
     if (!codes.length) return;
     const rows = await manager.query(
-      `SELECT code FROM permission_definitions WHERE is_active=1 AND code IN (${codes.map(() => "?").join(",")})`,
+      `SELECT code FROM permission_definitions
+       WHERE is_active=1 AND is_legacy=FALSE
+       AND JSON_CONTAINS(supported_scopes_json,JSON_QUOTE('ALL'))
+       AND code IN (${codes.map(() => "?").join(",")})`,
       codes,
     );
     if (rows.length !== codes.length)
       throw new BadRequestException(
         "تتضمن القائمة صلاحية غير معروفة أو معطلة.",
       );
+  }
+
+  private async assertRoleExists(id: string) {
+    const rows = await this.db.query("SELECT id FROM roles WHERE id=?", [id]);
+    if (!rows[0]) throw new NotFoundException("الدور غير موجود.");
+  }
+
+  private async assertUserExists(id: string) {
+    const rows = await this.db.query("SELECT id FROM users WHERE id=?", [id]);
+    if (!rows[0]) throw new NotFoundException("المستخدم غير موجود.");
   }
 
   private async revokeRoleSessions(manager: EntityManager, roleId: string) {

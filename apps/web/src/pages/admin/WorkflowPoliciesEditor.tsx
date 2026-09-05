@@ -3,6 +3,7 @@ import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { UnsavedChangesGuard } from "../../components/admin/UnsavedChangesGuard";
+import { useAuth } from "../../auth/AuthContext";
 
 interface WorkflowPolicy {
   code: string;
@@ -36,10 +37,16 @@ const roleLabels: Record<string, string> = {
 };
 
 export function WorkflowPoliciesEditor() {
+  const auth = useAuth();
+  const canUpdate = auth.hasPermission("workflow_policy.update");
+  const canManageOverrides = auth.hasPermission(
+    "workflow_policy.overrides.manage",
+  );
   const state = useApi<WorkflowPolicyState>("/admin/workflow-policies");
   const [selectedCode, setSelectedCode] = useState("");
   const [message, setMessage] = useState("");
-  const [dirty, setDirty] = useState(false);
+  const [policyDirty, setPolicyDirty] = useState(false);
+  const [overridesDirty, setOverridesDirty] = useState(false);
   const [saving, setSaving] = useState(false);
 
   if (state.loading) return <LoadingCards />;
@@ -55,7 +62,7 @@ export function WorkflowPoliciesEditor() {
   const policy = state.data.policies.find((item) => item.code === activeCode);
   if (!policy) return null;
 
-  const save = async (event: FormEvent<HTMLFormElement>) => {
+  const savePolicy = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     setSaving(true);
@@ -64,16 +71,41 @@ export function WorkflowPoliciesEditor() {
         method: "PATCH",
         body: {
           enabled: form.get("enabled") === "true",
-          userIds: form.getAll("userIds"),
           reason: form.get("reason"),
         },
       });
-      setMessage("حُفظت السياسة واستثناءات المستخدمين وسُجل سبب التغيير.");
-      setDirty(false);
+      setMessage("حُفظ إعداد السياسة وسُجل سبب التغيير.");
+      setPolicyDirty(false);
       state.retry();
     } catch (error) {
       setMessage(
         error instanceof Error ? error.message : "تعذر حفظ سياسة سير العمل.",
+      );
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const saveOverrides = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSaving(true);
+    try {
+      await apiRequest(`/admin/workflow-policies/${policy.code}/overrides`, {
+        method: "PATCH",
+        body: {
+          userIds: form.getAll("userIds"),
+          reason: form.get("reason"),
+        },
+      });
+      setMessage(
+        "حُفظ مستخدمو الاستثناء، وأُبطلت جلسات المتأثرين، وسُجل التغيير.",
+      );
+      setOverridesDirty(false);
+      state.retry();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "تعذر حفظ الاستثناءات.",
       );
     } finally {
       setSaving(false);
@@ -109,14 +141,15 @@ export function WorkflowPoliciesEditor() {
             tabIndex={item.code === policy.code ? 0 : -1}
             onClick={() => {
               if (
-                dirty &&
+                (policyDirty || overridesDirty) &&
                 !window.confirm(
                   "لديك تغييرات غير محفوظة. هل تريد الانتقال إلى سياسة أخرى؟",
                 )
               )
                 return;
               setSelectedCode(item.code);
-              setDirty(false);
+              setPolicyDirty(false);
+              setOverridesDirty(false);
               setMessage("");
             }}
           >
@@ -126,14 +159,12 @@ export function WorkflowPoliciesEditor() {
         ))}
       </div>
 
-      <form
+      <div
         key={`${policy.code}:${policy.enabled}:${policy.userIds.join(",")}`}
         id={`policy-panel-${policy.code}`}
         className="workflow-policy-form"
         role="tabpanel"
         aria-labelledby={`policy-tab-${policy.code}`}
-        onSubmit={save}
-        onInput={() => setDirty(true)}
       >
         <header>
           <div>
@@ -147,57 +178,86 @@ export function WorkflowPoliciesEditor() {
           </span>
         </header>
 
-        <label className="policy-state-field">
-          حالة السياسة
-          <select name="enabled" defaultValue={String(policy.enabled)}>
-            <option value="true">مفعلة على جميع المستخدمين</option>
-            <option value="false">معطلة بالكامل</option>
-          </select>
-        </label>
-
-        <fieldset className="policy-user-selector">
-          <legend>المستخدمون الممنوحون استثناء تجاوز هذه السياسة</legend>
-          <p>
-            الدور المطلوب للعملية:{" "}
-            {roleLabels[policy.requiredRole] ?? policy.requiredRole}
-          </p>
-          <div className="policy-user-options">
-            {state.data.users.map((user) => (
-              <label key={user.id}>
-                <input
-                  type="checkbox"
-                  name="userIds"
-                  value={user.id}
-                  defaultChecked={policy.userIds.includes(user.id)}
-                />
-                <span>
-                  <strong>{user.displayName}</strong>
-                  <small>
-                    {user.username} —{" "}
-                    {user.roles
-                      .map((role) => roleLabels[role] ?? role)
-                      .join("، ") || "دون دور"}
-                  </small>
-                </span>
+        <form onSubmit={savePolicy} onInput={() => setPolicyDirty(true)}>
+          <label className="policy-state-field">
+            حالة السياسة
+            <select
+              name="enabled"
+              defaultValue={String(policy.enabled)}
+              disabled={!canUpdate}
+            >
+              <option value="true">مفعلة على جميع المستخدمين</option>
+              <option value="false">معطلة بالكامل</option>
+            </select>
+          </label>
+          {canUpdate && (
+            <>
+              <label className="policy-reason-field">
+                سبب تغيير السياسة
+                <input name="reason" required minLength={3} />
               </label>
-            ))}
-          </div>
-        </fieldset>
+              <button
+                className="button"
+                type="submit"
+                disabled={!policyDirty || saving}
+              >
+                {saving ? "جار الحفظ…" : "حفظ إعداد السياسة"}
+              </button>
+            </>
+          )}
+        </form>
 
-        <label className="policy-reason-field">
-          سبب التغيير
-          <input
-            name="reason"
-            required
-            minLength={3}
-            placeholder="سبب يظهر في سجل التدقيق"
-          />
-        </label>
-        <button className="button" type="submit" disabled={!dirty || saving}>
-          {saving ? "جار الحفظ…" : "حفظ السياسة والاستثناءات"}
-        </button>
-      </form>
-      <UnsavedChangesGuard active={dirty && !saving} />
+        {canManageOverrides && (
+          <form
+            className="workflow-policy-overrides-form"
+            onSubmit={saveOverrides}
+            onInput={() => setOverridesDirty(true)}
+          >
+            <fieldset className="policy-user-selector">
+              <legend>المستخدمون الممنوحون استثناء تجاوز هذه السياسة</legend>
+              <p>
+                الدور المرتبط بالعملية:{" "}
+                {roleLabels[policy.requiredRole] ?? policy.requiredRole}
+              </p>
+              <div className="policy-user-options">
+                {state.data.users.map((user) => (
+                  <label key={user.id}>
+                    <input
+                      type="checkbox"
+                      name="userIds"
+                      value={user.id}
+                      defaultChecked={policy.userIds.includes(user.id)}
+                    />
+                    <span>
+                      <strong>{user.displayName}</strong>
+                      <small>
+                        {user.username} —{" "}
+                        {user.roles
+                          .map((role) => roleLabels[role] ?? role)
+                          .join("، ") || "دون دور"}
+                      </small>
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </fieldset>
+            <label className="policy-reason-field">
+              سبب تغيير الاستثناءات
+              <input name="reason" required minLength={3} />
+            </label>
+            <button
+              className="button"
+              type="submit"
+              disabled={!overridesDirty || saving}
+            >
+              {saving ? "جار الحفظ…" : "حفظ مستخدمي الاستثناء"}
+            </button>
+          </form>
+        )}
+      </div>
+      <UnsavedChangesGuard
+        active={(policyDirty || overridesDirty) && !saving}
+      />
       {message && (
         <p className="form-message" role="status">
           {message}

@@ -3,7 +3,8 @@ import { copyFileSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { resolve } from "node:path";
 import { createDataSource } from "./config.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
-import { LEGACY_ROLE_PERMISSION_MAP } from "../common/permission-catalog.js";
+import { ROLE_PERMISSION_MAP } from "../common/permission-catalog.js";
+import { ROLE_AUTHORITY_LEVELS } from "../common/canonical-permission-catalog.js";
 import { rebuildSearchIndex } from "./reindex.js";
 
 const types = [
@@ -540,22 +541,32 @@ async function seed() {
       }
 
       const roleDefinitions = [
-        ["READER", "قارئ/باحث"],
-        ["DATA_ENTRY", "مدخل بيانات"],
-        ["LEGAL_REVIEWER", "مراجع قانوني"],
-        ["CONTENT_MANAGER", "مدير محتوى"],
-        ["SYSTEM_ADMIN", "مدير نظام"],
+        ["READER", "قارئ/باحث", false],
+        ["DATA_ENTRY", "مدخل بيانات", false],
+        ["LEGAL_REVIEWER", "مراجع قانوني", false],
+        ["CONTENT_MANAGER", "مدير محتوى", false],
+        ["SYSTEM_ADMIN", "مدير نظام", false],
+        ["SUPER", "مدير الطوارئ الأعلى", true],
       ] as const;
       const devPassword = "DevOnly!ChangeMe2026";
       const userIds = new Map<string, string>();
-      for (const [roleCode, roleName] of roleDefinitions) {
+      for (const [roleCode, roleName, isProtected] of roleDefinitions) {
         const roleId = randomUUID();
         const userId = randomUUID();
-        const permissions = LEGACY_ROLE_PERMISSION_MAP[roleCode] ?? [];
+        const permissions = ROLE_PERMISSION_MAP[roleCode] ?? [];
         userIds.set(roleCode, userId);
         await m.query(
-          "INSERT INTO roles (id, code, name_ar, permissions_json) VALUES (?, ?, ?, ?)",
-          [roleId, roleCode, roleName, JSON.stringify(permissions)],
+          `INSERT INTO roles
+           (id,code,name_ar,permissions_json,is_system,is_protected,authority_level,permission_model_version)
+           VALUES (?,?,?,?,TRUE,?,?,2)`,
+          [
+            roleId,
+            roleCode,
+            roleName,
+            JSON.stringify(permissions),
+            isProtected,
+            ROLE_AUTHORITY_LEVELS[roleCode] ?? 100,
+          ],
         );
         for (const permissionCode of permissions)
           await m.query(
@@ -624,7 +635,7 @@ async function seed() {
       event: "seed.complete",
       publicLegislations: titles.length,
       indexed,
-      developmentUsers: 5,
+      developmentUsers: Object.keys(ROLE_AUTHORITY_LEVELS).length,
     }),
   );
   console.log(

@@ -159,7 +159,7 @@ export function AdminImportsPage() {
                     item.status === "READY_FOR_REVIEW" && (
                       <ReviewImport id={item.id} done={imports.retry} />
                     )}{" "}
-                  {auth.hasPermission("source.create_draft") &&
+                  {auth.hasPermission("source.draft.create") &&
                     !item.legislationId &&
                     ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
                     refs.data && (

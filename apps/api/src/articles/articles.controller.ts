@@ -34,6 +34,7 @@ export class ArticlesController {
       FROM articles a JOIN article_versions av ON av.article_id=a.id
       JOIN legislations l ON l.id=a.legislation_id
       WHERE a.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      AND av.status IN ('PUBLISHED','REPEALED')
       AND av.valid_from <= ? AND (av.valid_to IS NULL OR av.valid_to > ?) LIMIT 1`,
       [id, at, at],
     );
@@ -52,7 +53,12 @@ export class ArticlesController {
       DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom, DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,
       av.status, av.ending_reason endingReason, sd.original_name sourceName
       FROM article_versions av JOIN source_documents sd ON sd.id=av.source_document_id
-      WHERE av.article_id=? ORDER BY av.valid_from DESC`,
+      JOIN articles a ON a.id=av.article_id JOIN legislations l ON l.id=a.legislation_id
+      WHERE av.article_id=?
+        AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+        AND av.status IN ('PUBLISHED','REPEALED')
+        AND av.valid_from<=CURRENT_DATE()
+      ORDER BY av.valid_from DESC`,
       [id],
     );
   }
@@ -65,7 +71,11 @@ export class ArticlesController {
       DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom, DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,
       av.ending_reason endingReason, sd.original_name sourceName
       FROM article_versions av JOIN source_documents sd ON sd.id=av.source_document_id
-      WHERE av.article_id=? AND av.valid_to IS NOT NULL AND av.valid_to <= CURRENT_DATE()
+      JOIN articles a ON a.id=av.article_id JOIN legislations l ON l.id=a.legislation_id
+      WHERE av.article_id=?
+        AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+        AND av.status IN ('PUBLISHED','REPEALED')
+        AND av.valid_to IS NOT NULL AND av.valid_to <= CURRENT_DATE()
       ORDER BY av.valid_from DESC`,
       [id],
     );

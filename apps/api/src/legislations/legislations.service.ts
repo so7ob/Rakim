@@ -188,10 +188,23 @@ export class LegislationsService {
              DATE_FORMAT(l.last_reviewed_at,'%Y-%m-%d') lastReviewedAt, lt.name_ar typeName,
              au.name_ar authorityName, gi.issue_number gazetteIssue,
              (SELECT lv.preamble_text FROM legislation_versions lv WHERE lv.legislation_id=l.id AND lv.workflow_status='PUBLISHED' ORDER BY lv.version_no DESC LIMIT 1) preambleText,
-             (SELECT COUNT(*) FROM articles a WHERE a.legislation_id=l.id) articleCount,
+             (SELECT COUNT(*) FROM articles a WHERE a.legislation_id=l.id
+               AND EXISTS (SELECT 1 FROM article_versions public_av
+                 WHERE public_av.article_id=a.id
+                   AND public_av.status IN ('PUBLISHED','REPEALED')
+                   AND public_av.valid_from<=CURRENT_DATE())) articleCount,
              (SELECT COUNT(*) FROM amendments am WHERE am.amended_legislation_id=l.id AND am.status='PUBLISHED') amendmentCount,
-             (SELECT COUNT(*) FROM annexes ax WHERE ax.legislation_id=l.id AND ax.status='PUBLISHED') annexCount,
-             (SELECT COUNT(*) FROM legal_relations lr WHERE lr.source_legislation_id=l.id OR lr.target_legislation_id=l.id) relationCount
+             (SELECT COUNT(*) FROM annexes ax WHERE ax.legislation_id=l.id
+               AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+               AND EXISTS (SELECT 1 FROM annex_versions public_axv
+                 WHERE public_axv.annex_id=ax.id AND public_axv.valid_from<=CURRENT_DATE())) annexCount,
+             (SELECT COUNT(*) FROM legal_relations lr
+               JOIN legislations public_source ON public_source.id=lr.source_legislation_id
+               JOIN legislations public_target ON public_target.id=lr.target_legislation_id
+               WHERE (lr.source_legislation_id=l.id OR lr.target_legislation_id=l.id)
+                 AND lr.review_status='REVIEWED'
+                 AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+                 AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')) relationCount
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id
       LEFT JOIN gazette_issues gi ON gi.id=l.gazette_issue_id
       WHERE l.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
@@ -222,11 +235,15 @@ export class LegislationsService {
              a.sort_key sortKey, av.id versionId, av.version_no versionNo, av.text_original textOriginal,
              av.text_structured textStructured, DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,
              DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo, av.status,
-             (SELECT COUNT(*) FROM article_versions history WHERE history.article_id=a.id) versionCount,
-             (SELECT COUNT(*) FROM article_versions history WHERE history.article_id=a.id AND history.valid_to IS NOT NULL AND history.valid_to<=?) previousCount,
-             (SELECT COUNT(*) FROM article_versions future WHERE future.article_id=a.id AND future.valid_from>?) futureCount
+             (SELECT COUNT(*) FROM article_versions history WHERE history.article_id=a.id
+               AND history.status IN ('PUBLISHED','REPEALED') AND history.valid_from<=CURRENT_DATE()) versionCount,
+             (SELECT COUNT(*) FROM article_versions history WHERE history.article_id=a.id
+               AND history.status IN ('PUBLISHED','REPEALED') AND history.valid_to IS NOT NULL AND history.valid_to<=?) previousCount,
+             (SELECT COUNT(*) FROM article_versions future WHERE future.article_id=a.id
+               AND future.status IN ('PUBLISHED','REPEALED') AND future.valid_from>? AND future.valid_from<=CURRENT_DATE()) futureCount
       FROM articles a JOIN article_versions av ON av.article_id=a.id
-      WHERE a.legislation_id=? AND av.valid_from <= ? AND (av.valid_to IS NULL OR av.valid_to > ?)
+      WHERE a.legislation_id=? AND av.status IN ('PUBLISHED','REPEALED')
+      AND av.valid_from <= ? AND (av.valid_to IS NULL OR av.valid_to > ?)
       ORDER BY a.sort_key`,
       [effectiveDate, effectiveDate, id, effectiveDate, effectiveDate],
     );
@@ -304,7 +321,8 @@ export class LegislationsService {
     af.id fileId,af.original_name fileName,af.media_type mediaType,af.byte_size byteSize,af.page_count pageCount,af.ocr_status ocrStatus,
     av.structured_table_json structuredTable
     FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id LEFT JOIN annex_files af ON af.annex_version_id=av.id
-    WHERE ax.legislation_id=? AND ax.status IN ('PUBLISHED','REPLACED','REPEALED') ORDER BY av.valid_from DESC`,
+    WHERE ax.legislation_id=? AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+    AND av.valid_from<=CURRENT_DATE() ORDER BY av.valid_from DESC`,
       [id],
     );
   }
@@ -321,7 +339,11 @@ export class LegislationsService {
     CASE WHEN lr.source_legislation_id=? THEN target.year ELSE source.year END relatedYear,
     sd.original_name evidenceSource
     FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id
-    LEFT JOIN source_documents sd ON sd.id=lr.source_document_id WHERE lr.source_legislation_id=? OR lr.target_legislation_id=?
+    LEFT JOIN source_documents sd ON sd.id=lr.source_document_id
+    WHERE (lr.source_legislation_id=? OR lr.target_legislation_id=?)
+      AND lr.review_status='REVIEWED'
+      AND source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      AND target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
     ORDER BY lr.effective_from DESC`,
       [id, id, id, id, id, id, id],
     );

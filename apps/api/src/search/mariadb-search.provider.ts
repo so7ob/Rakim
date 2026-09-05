@@ -184,6 +184,30 @@ export class MariaDbSearchProvider implements SearchProvider {
   ): Promise<BuiltQuery> {
     const conditions = [
       `l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
+      `(sd.entity_type<>'ARTICLE_VERSION' OR EXISTS (
+        SELECT 1 FROM article_versions public_av
+        WHERE public_av.id=sd.version_id AND public_av.status IN ('PUBLISHED','REPEALED')
+          AND public_av.valid_from<=CURRENT_DATE()
+      ))`,
+      `(sd.entity_type<>'ANNEX_PAGE' OR EXISTS (
+        SELECT 1 FROM annex_files public_af
+        JOIN annex_versions public_axv ON public_axv.id=public_af.annex_version_id
+        JOIN annexes public_ax ON public_ax.id=public_axv.annex_id
+        WHERE public_af.id=sd.entity_id
+          AND public_ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+          AND public_axv.valid_from<=CURRENT_DATE()
+      ))`,
+      `(sd.entity_type<>'RELATION' OR EXISTS (
+        SELECT 1 FROM legal_relations public_lr
+        JOIN legislations public_source ON public_source.id=public_lr.source_legislation_id
+        JOIN legislations public_target ON public_target.id=public_lr.target_legislation_id
+        WHERE public_lr.id=sd.entity_id AND public_lr.review_status='REVIEWED'
+          AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+          AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      ))`,
+      `(sd.entity_type<>'AMENDMENT' OR EXISTS (
+        SELECT 1 FROM amendments public_am WHERE public_am.id=sd.entity_id AND public_am.status='PUBLISHED'
+      ))`,
     ];
     const values: Array<string | number> = [];
     const synonyms = await this.synonyms();

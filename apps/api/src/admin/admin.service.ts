@@ -18,6 +18,7 @@ import {
   workflowPolicy,
   WORKFLOW_POLICIES,
 } from "./workflow-policies.js";
+import { AuthorizationPolicyService } from "./authorization-policy.service.js";
 
 type WorkflowStatus =
   | "INBOX"
@@ -29,46 +30,51 @@ type WorkflowStatus =
 
 const transitions: Record<
   string,
-  { from: string[]; permission: string; action: string; duty: string }
+  { permission: string; action: string; duty: string }
 > = {
-  DRAFT: {
-    from: ["INBOX", "IN_REVIEW"],
-    permission: "legislation.submit",
-    action: "RETURN_OR_PREPARE_DRAFT",
+  "INBOX:DRAFT": {
+    permission: "legislation.prepare",
+    action: "PREPARE_DRAFT",
     duty: "EDIT",
   },
-  IN_REVIEW: {
-    from: ["DRAFT"],
+  "IN_REVIEW:DRAFT": {
+    permission: "legislation.return",
+    action: "RETURN_TO_DRAFT",
+    duty: "REVIEW",
+  },
+  "DRAFT:IN_REVIEW": {
     permission: "legislation.submit",
     action: "SUBMIT_FOR_REVIEW",
     duty: "EDIT",
   },
-  APPROVED_FOR_PUBLISHING: {
-    from: ["IN_REVIEW"],
+  "IN_REVIEW:APPROVED_FOR_PUBLISHING": {
     permission: "legislation.approve",
     action: "APPROVE_FOR_PUBLISHING",
     duty: "APPROVE",
   },
-  PUBLISHED: {
-    from: ["APPROVED_FOR_PUBLISHING"],
+  "APPROVED_FOR_PUBLISHING:PUBLISHED": {
     permission: "legislation.publish",
     action: "PUBLISH",
     duty: "PUBLISH",
   },
-  ARCHIVED: {
-    from: ["PUBLISHED", "AMENDED", "REPEALED", "SUSPENDED"],
+};
+for (const status of ["PUBLISHED", "AMENDED", "REPEALED", "SUSPENDED"])
+  transitions[`${status}:ARCHIVED`] = {
     permission: "legislation.archive",
     action: "ARCHIVE",
     duty: "PUBLISH",
-  },
-};
+  };
 
 @Injectable()
 export class AdminService {
-  constructor(@Inject(DATABASE) private readonly db: DataSource) {}
+  constructor(
+    @Inject(DATABASE) private readonly db: DataSource,
+    @Inject(AuthorizationPolicyService)
+    private readonly policy: AuthorizationPolicyService,
+  ) {}
 
   async dashboard() {
-    const [workflow, imports, quality, jobs, recent] = await Promise.all([
+    const [workflow, imports, quality, jobs] = await Promise.all([
       this.db.query(
         `SELECT status,COUNT(*) count FROM legislations GROUP BY status ORDER BY status`,
       ),
@@ -81,9 +87,8 @@ export class AdminService {
       this.db.query(
         `SELECT status,COUNT(*) count FROM job_queue GROUP BY status`,
       ),
-      this.audit({ page: 1, pageSize: 8 }),
     ]);
-    return { workflow, imports, quality, jobs, recentAudit: recent.items };
+    return { workflow, imports, quality, jobs };
   }
 
   async references() {
@@ -580,7 +585,7 @@ export class AdminService {
       if (!rows[0]) throw new NotFoundException("عنصر الهيكل غير موجود.");
       if (
         !["INBOX", "DRAFT", "IN_REVIEW"].includes(rows[0].lawStatus) &&
-        !actor.permissions.includes("legislation.update_published_metadata")
+        !actor.permissions.includes("legislation.published_metadata.update")
       )
         throw new ConflictException("يتطلب تصحيح هيكل منشور مدير محتوى.");
       if (input.parentId === id)
@@ -639,7 +644,7 @@ export class AdminService {
       if (!law[0]) throw new NotFoundException("التشريع غير موجود.");
       if (
         !["INBOX", "DRAFT", "IN_REVIEW"].includes(law[0].status) &&
-        !actor.permissions.includes("legislation.update_published_metadata")
+        !actor.permissions.includes("legislation.published_metadata.update")
       )
         throw new ConflictException("يتطلب إضافة هيكل إلى منشور مدير محتوى.");
       if (input.parentId) {
@@ -682,19 +687,18 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
-    if (
-      input.status !== "DRAFT" &&
-      !actor.permissions.includes("legislation.publish")
-    )
-      throw new ForbiddenException(
-        "نشر أو استبدال أو إلغاء الملحق من صلاحية مدير المحتوى.",
-      );
+    this.requirePermission(actor, "annex.update");
+    this.requireAnnexStatusPermission(actor, input.status);
     return this.db.transaction(async (manager) => {
       const rows = await manager.query(
         "SELECT * FROM annexes WHERE id=? FOR UPDATE",
         [id],
       );
       if (!rows[0]) throw new NotFoundException("الملحق غير موجود.");
+      if (rows[0].status !== "DRAFT" && input.status === "DRAFT")
+        throw new BadRequestException(
+          "لا يدعم نموذج الصلاحيات الحالي سحب نشر الملحق إلى مسودة.",
+        );
       await manager.query(
         "UPDATE annexes SET annex_type=?,title_ar=?,status=? WHERE id=?",
         [input.annexType, input.titleAr.trim(), input.status, id],
@@ -726,11 +730,8 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
-    if (
-      input.status !== "DRAFT" &&
-      !actor.permissions.includes("legislation.publish")
-    )
-      throw new ForbiddenException("نشر الملحق من صلاحية مدير المحتوى.");
+    this.requirePermission(actor, "annex.create");
+    this.requireAnnexStatusPermission(actor, input.status);
     let structured: unknown = null;
     if (input.structuredTableJson?.trim()) {
       try {
@@ -794,6 +795,7 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
+    this.requirePermission(actor, "relation.update");
     return this.db.transaction(async (manager) => {
       const rows = await manager.query(
         "SELECT * FROM legal_relations WHERE id=? FOR UPDATE",
@@ -817,14 +819,8 @@ export class AdminService {
         if (!sources.length)
           throw new BadRequestException("مصدر الإثبات غير موجود.");
       }
-      if (
-        input.reviewStatus === "REVIEWED" &&
-        rows[0].review_status !== "REVIEWED" &&
-        !actor.permissions.includes("legislation.approve")
-      )
-        throw new ForbiddenException(
-          "اعتماد العلاقة القانونية من صلاحية المراجع القانوني.",
-        );
+      if (input.reviewStatus !== "UNREVIEWED")
+        this.requirePermission(actor, "relation.review");
       if (
         input.reviewStatus === "REVIEWED" &&
         input.relationType !== "TOPICALLY_RELATED" &&
@@ -872,15 +868,11 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
+    this.requirePermission(actor, "relation.create");
     if (legislationId === input.targetLegislationId)
       throw new BadRequestException("لا يمكن ربط التشريع بنفسه.");
-    if (
-      input.reviewStatus === "REVIEWED" &&
-      !actor.permissions.includes("legislation.approve")
-    )
-      throw new ForbiddenException(
-        "اعتماد العلاقة القانونية من صلاحية المراجع القانوني.",
-      );
+    if (input.reviewStatus !== "UNREVIEWED")
+      this.requirePermission(actor, "relation.review");
     if (
       input.reviewStatus === "REVIEWED" &&
       input.relationType !== "TOPICALLY_RELATED" &&
@@ -942,9 +934,11 @@ export class AdminService {
     const isDraft = ["INBOX", "DRAFT", "IN_REVIEW"].includes(
       String(before.status),
     );
+    if (isDraft && !actor.permissions.includes("legislation.update"))
+      throw new ForbiddenException("تعديل المسودة يتطلب صلاحية تعديل التشريع.");
     if (
       !isDraft &&
-      !actor.permissions.includes("legislation.update_published_metadata")
+      !actor.permissions.includes("legislation.published_metadata.update")
     )
       throw new ConflictException(
         "لا يملك دورك صلاحية تصحيح بيانات وصفية منشورة.",
@@ -1076,9 +1070,6 @@ export class AdminService {
     reason: string,
   ) {
     if (!reason?.trim()) throw new BadRequestException("سبب الإجراء إلزامي.");
-    const rule = transitions[target];
-    if (!rule || !actor.permissions.includes(rule.permission))
-      throw new ForbiddenException("لا يسمح دورك بهذا الانتقال.");
     return this.db.transaction(async (manager) => {
       const rows = await manager.query(
         "SELECT * FROM legislations WHERE id=? FOR UPDATE",
@@ -1086,12 +1077,13 @@ export class AdminService {
       );
       const law = rows[0];
       if (!law) throw new NotFoundException("التشريع غير موجود.");
-      if (!rule.from.includes(String(law.status)))
+      const rule = transitions[`${String(law.status)}:${target}`];
+      if (!rule)
         throw new ConflictException(
           `لا يمكن الانتقال من ${law.status} إلى ${target}.`,
         );
-      const duty =
-        target === "DRAFT" && law.status === "IN_REVIEW" ? "REVIEW" : rule.duty;
+      this.requirePermission(actor, rule.permission);
+      const duty = rule.duty;
       const separationControl = await this.assertSeparation(
         manager,
         id,
@@ -1173,38 +1165,26 @@ export class AdminService {
     };
   }
 
-  async users() {
+  async users(actor: AuthUser) {
     const rows = await this.db
       .query(`SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,u.created_at createdAt,u.last_login_at lastLoginAt,
-      u.failed_login_count failedLoginCount,GROUP_CONCAT(r.code ORDER BY r.code) roles,
-      (SELECT GROUP_CONCAT(up.permission_code ORDER BY up.permission_code)
-       FROM user_permissions up WHERE up.user_id=u.id) directPermissions
+      u.failed_login_count failedLoginCount,GROUP_CONCAT(r.code ORDER BY r.code) roles
       FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id GROUP BY u.id ORDER BY u.username`);
-    return rows.map((user: Record<string, unknown>) => {
-      const permissions = String(user.directPermissions ?? "")
-        .split(",")
-        .filter(Boolean);
-      return {
-        ...user,
-        policyOverrides: WORKFLOW_POLICIES.filter((policy) =>
-          permissions.includes(policy.permissionCode),
-        ).map((policy) => ({
-          code: policy.code,
-          labelAr: policy.labelAr,
-          permissionCode: policy.permissionCode,
-        })),
-        directPermissions: undefined,
-      };
-    });
+    const canViewRoles = actor.permissions.includes("role.view");
+    return rows.map((user: Record<string, unknown>) => ({
+      ...user,
+      roles: canViewRoles ? user.roles : null,
+    }));
   }
 
-  async roles() {
-    return this.db.query(
-      "SELECT id,code,name_ar nameAr,description_ar descriptionAr,is_system isSystem,is_active isActive,permissions_json permissions FROM roles ORDER BY code",
+  async roles(actor: AuthUser) {
+    return this.policy.assignableRoles(actor);
+  }
+
+  async workflowPolicies(actor?: AuthUser) {
+    const canManageOverrides = Boolean(
+      actor?.permissions.includes("workflow_policy.overrides.manage"),
     );
-  }
-
-  async workflowPolicies() {
     const settingKeys = WORKFLOW_POLICIES.map((policy) => policy.settingKey);
     const permissionCodes = WORKFLOW_POLICIES.map(
       (policy) => policy.permissionCode,
@@ -1239,26 +1219,29 @@ export class AdminService {
       policies: WORKFLOW_POLICIES.map((policy) => ({
         ...policy,
         enabled: parsePolicyBoolean(values.get(policy.settingKey), true),
-        userIds: grants
-          .filter(
-            (grant: Record<string, unknown>) =>
-              grant.permissionCode === policy.permissionCode,
-          )
-          .map((grant: Record<string, unknown>) => String(grant.userId)),
+        userIds: canManageOverrides
+          ? grants
+              .filter(
+                (grant: Record<string, unknown>) =>
+                  grant.permissionCode === policy.permissionCode,
+              )
+              .map((grant: Record<string, unknown>) => String(grant.userId))
+          : [],
       })),
-      users: users.map((user: Record<string, unknown>) => ({
-        ...user,
-        roles: String(user.roles ?? "")
-          .split(",")
-          .filter(Boolean),
-      })),
+      users: canManageOverrides
+        ? users.map((user: Record<string, unknown>) => ({
+            ...user,
+            roles: String(user.roles ?? "")
+              .split(",")
+              .filter(Boolean),
+          }))
+        : [],
     };
   }
 
   async updateWorkflowPolicy(
     code: string,
     enabled: boolean,
-    userIds: string[],
     actor: AuthUser,
     reason: string,
   ) {
@@ -1266,9 +1249,6 @@ export class AdminService {
       throw new BadRequestException("سبب تعديل السياسة إلزامي.");
     const policy = workflowPolicy(code);
     if (!policy) throw new NotFoundException("سياسة سير العمل غير موجودة.");
-    if (new Set(userIds).size !== userIds.length)
-      throw new BadRequestException("لا يجوز تكرار المستخدم في الاستثناءات.");
-
     await this.db.transaction(async (manager) => {
       const settings = await manager.query(
         `SELECT value_json valueJson FROM platform_settings
@@ -1277,9 +1257,43 @@ export class AdminService {
       );
       if (!settings[0])
         throw new NotFoundException("إعداد سياسة سير العمل غير موجود.");
+      const before = parsePolicyBoolean(settings[0].valueJson, true);
+
+      await manager.query(
+        "UPDATE platform_settings SET value_json=?,updated_by=? WHERE setting_key=?",
+        [JSON.stringify(enabled), actor.id, policy.settingKey],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        "UPDATE_WORKFLOW_POLICY",
+        "WORKFLOW_POLICY",
+        policy.code,
+        { enabled: before },
+        { enabled },
+        reason.trim(),
+      );
+    });
+    return this.workflowPolicies(actor);
+  }
+
+  async updateWorkflowPolicyOverrides(
+    code: string,
+    userIds: string[],
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (!reason.trim())
+      throw new BadRequestException("سبب تعديل الاستثناءات إلزامي.");
+    const policy = workflowPolicy(code);
+    if (!policy) throw new NotFoundException("سياسة سير العمل غير موجودة.");
+    if (new Set(userIds).size !== userIds.length)
+      throw new BadRequestException("لا يجوز تكرار المستخدم في الاستثناءات.");
+    await this.db.transaction(async (manager) => {
       const selectedUsers = userIds.length
         ? await manager.query(
-            `SELECT id FROM users WHERE is_active=1 AND id IN (${userIds.map(() => "?").join(",")}) FOR UPDATE`,
+            `SELECT id FROM users WHERE is_active=1
+             AND id IN (${userIds.map(() => "?").join(",")}) FOR UPDATE`,
             userIds,
           )
         : [];
@@ -1289,20 +1303,11 @@ export class AdminService {
         );
       const previousGrants = await manager.query(
         `SELECT user_id userId FROM user_permissions
-        WHERE permission_code=? ORDER BY user_id FOR UPDATE`,
+         WHERE permission_code=? ORDER BY user_id FOR UPDATE`,
         [policy.permissionCode],
       );
       const previousUserIds = previousGrants.map(
         (grant: Record<string, unknown>) => String(grant.userId),
-      );
-      const before = {
-        enabled: parsePolicyBoolean(settings[0].valueJson, true),
-        userIds: previousUserIds,
-      };
-
-      await manager.query(
-        "UPDATE platform_settings SET value_json=?,updated_by=? WHERE setting_key=?",
-        [JSON.stringify(enabled), actor.id, policy.settingKey],
       );
       await manager.query(
         "DELETE FROM user_permissions WHERE permission_code=?",
@@ -1311,28 +1316,29 @@ export class AdminService {
       for (const userId of userIds)
         await manager.query(
           `INSERT INTO user_permissions
-          (user_id,permission_code,granted_by,grant_reason) VALUES (?,?,?,?)`,
+           (user_id,permission_code,granted_by,grant_reason) VALUES (?,?,?,?)`,
           [userId, policy.permissionCode, actor.id, reason.trim()],
         );
       const affectedUsers = [...new Set([...previousUserIds, ...userIds])];
       if (affectedUsers.length)
         await manager.query(
           `UPDATE user_sessions SET revoked_at=NOW(3)
-          WHERE user_id IN (${affectedUsers.map(() => "?").join(",")}) AND revoked_at IS NULL`,
+           WHERE user_id IN (${affectedUsers.map(() => "?").join(",")})
+           AND revoked_at IS NULL`,
           affectedUsers,
         );
       await this.auditWith(
         manager,
         actor.id,
-        "UPDATE_WORKFLOW_POLICY",
+        "UPDATE_WORKFLOW_POLICY_OVERRIDES",
         "WORKFLOW_POLICY",
         policy.code,
-        before,
-        { enabled, userIds },
+        { userIds: previousUserIds },
+        { userIds },
         reason.trim(),
       );
     });
-    return this.workflowPolicies();
+    return this.workflowPolicies(actor);
   }
 
   async createUser(
@@ -1355,6 +1361,7 @@ export class AdminService {
     const passwordHash = await hashPassword(input.password);
     try {
       await this.db.transaction(async (manager) => {
+        await this.policy.assertCanCreateWithRoles(manager, actor, input.roles);
         const roles = await manager.query(
           `SELECT id,code FROM roles WHERE is_active=1 AND code IN (${input.roles.map(() => "?").join(",") || "''"})`,
           input.roles,
@@ -1407,28 +1414,7 @@ export class AdminService {
         "SELECT r.code FROM user_roles ur JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=?",
         [id],
       );
-      if (
-        id === actor.id &&
-        previous.some((r: { code: string }) => r.code === "SYSTEM_ADMIN") &&
-        !roleCodes.includes("SYSTEM_ADMIN")
-      )
-        throw new ConflictException(
-          "لا يمكنك إزالة دور مدير النظام من حسابك الحالي.",
-        );
-      if (
-        previous.some((r: { code: string }) => r.code === "SYSTEM_ADMIN") &&
-        !roleCodes.includes("SYSTEM_ADMIN")
-      ) {
-        const admins = await manager.query(
-          `SELECT COUNT(DISTINCT u.id) total FROM users u
-          JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
-          WHERE u.is_active=1 AND r.code='SYSTEM_ADMIN'`,
-        );
-        if (Number(admins[0]?.total) <= 1)
-          throw new ConflictException(
-            "لا يمكن إزالة دور مدير النظام من آخر مدير نشط.",
-          );
-      }
+      await this.policy.assertCanChangeUserRoles(manager, actor, id, roleCodes);
       const roles = await manager.query(
         `SELECT id,code FROM roles WHERE is_active=1 AND code IN (${roleCodes.map(() => "?").join(",") || "''"})`,
         roleCodes,
@@ -1469,6 +1455,7 @@ export class AdminService {
       throw new BadRequestException("كلمة المرور يجب ألا تقل عن 12 محرفًا.");
     const hash = await hashPassword(password);
     return this.db.transaction(async (manager) => {
+      await this.policy.assertCanManageUser(manager, actor, id);
       const result = await manager.query(
         "UPDATE users SET password_hash=?,password_changed_at=NOW(3),failed_login_count=0,locked_until=NULL WHERE id=?",
         [hash, id],
@@ -1499,28 +1486,14 @@ export class AdminService {
     actor: AuthUser,
     reason: string,
   ) {
-    if (id === actor.id && !active)
-      throw new ConflictException("لا يمكنك تعطيل حسابك الحالي.");
+    this.requirePermission(actor, active ? "user.enable" : "user.disable");
     await this.db.transaction(async (manager) => {
       const rows = await manager.query(
-        `SELECT u.is_active isActive,
-        EXISTS(
-          SELECT 1 FROM user_roles ur JOIN roles r ON r.id=ur.role_id
-          WHERE ur.user_id=u.id AND r.code='SYSTEM_ADMIN'
-        ) isSystemAdmin
-        FROM users u WHERE u.id=? FOR UPDATE`,
+        "SELECT u.is_active isActive FROM users u WHERE u.id=? FOR UPDATE",
         [id],
       );
       if (!rows[0]) throw new NotFoundException("المستخدم غير موجود.");
-      if (!active && Number(rows[0].isSystemAdmin) === 1) {
-        const admins = await manager.query(
-          `SELECT COUNT(DISTINCT u.id) total FROM users u
-          JOIN user_roles ur ON ur.user_id=u.id JOIN roles r ON r.id=ur.role_id
-          WHERE u.is_active=1 AND r.code='SYSTEM_ADMIN'`,
-        );
-        if (Number(admins[0]?.total) <= 1)
-          throw new ConflictException("لا يمكن تعطيل آخر مدير نظام نشط.");
-      }
+      await this.policy.assertCanChangeUserState(manager, actor, id, active);
       await manager.query("UPDATE users SET is_active=? WHERE id=?", [
         active,
         id,
@@ -1549,6 +1522,25 @@ export class AdminService {
       .query(`SELECT ss.id setId,ss.version_no versionNo,ss.status,ss.published_at publishedAt,
       sy.id,sy.term_ar termAr,sy.synonym_ar synonymAr FROM search_synonym_sets ss
       LEFT JOIN search_synonyms sy ON sy.set_id=ss.id ORDER BY ss.version_no DESC,sy.term_ar`);
+  }
+
+  private requirePermission(actor: AuthUser, permission: string) {
+    if (!actor.permissions.includes(permission))
+      throw new ForbiddenException(
+        "ليست لديك الصلاحية الدقيقة المطلوبة لتنفيذ هذه العملية.",
+      );
+  }
+
+  private requireAnnexStatusPermission(actor: AuthUser, status: string) {
+    const permission: Record<string, string | undefined> = {
+      DRAFT: undefined,
+      PUBLISHED: "annex.publish",
+      REPLACED: "annex.replace",
+      REPEALED: "annex.repeal",
+    };
+    if (!(status in permission))
+      throw new BadRequestException("حالة الملحق غير معروفة.");
+    if (permission[status]) this.requirePermission(actor, permission[status]!);
   }
 
   async addSynonym(term: string, synonym: string, actor: AuthUser) {

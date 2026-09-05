@@ -1,6 +1,5 @@
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module.js";
-import { RoleGuard } from "../common/role.guard.js";
 import {
   AdminController,
   PublicationsController,
@@ -10,6 +9,7 @@ import { AdminService } from "./admin.service.js";
 import { AccessControlController } from "./access-control.controller.js";
 import { AccessControlService } from "./access-control.service.js";
 import { PermissionGuard } from "../common/permission.guard.js";
+import { AuthorizationPolicyService } from "./authorization-policy.service.js";
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -18,6 +18,11 @@ import { PermissionGuard } from "../common/permission.guard.js";
     PublicationsController,
     ReindexController,
   ],
-  providers: [RoleGuard, PermissionGuard, AdminService, AccessControlService],
+  providers: [
+    PermissionGuard,
+    AuthorizationPolicyService,
+    AdminService,
+    AccessControlService,
+  ],
 })
 export class AdminModule {}

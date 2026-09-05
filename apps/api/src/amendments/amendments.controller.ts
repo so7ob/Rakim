@@ -12,7 +12,6 @@ import { ApiOperation, ApiTags } from "@nestjs/swagger";
 import { IsIn, IsOptional, IsString, Length, Matches } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
-import { RoleGuard, Roles } from "../common/role.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { AmendmentsService } from "./amendments.service.js";
 
@@ -37,26 +36,23 @@ class ReasonDto {
 
 @ApiTags("التعديلات الإدارية")
 @Controller("admin/amendments")
-@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard)
 export class AmendmentsController {
   constructor(
     @Inject(AmendmentsService) private readonly service: AmendmentsService,
   ) {}
   @Get("candidates")
   @Permissions("amendment.create")
-  @Roles("DATA_ENTRY")
   candidates() {
     return this.service.candidates();
   }
   @Get()
   @Permissions("amendment.view")
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER")
   list() {
     return this.service.list();
   }
   @Post()
   @Permissions("amendment.create")
-  @Roles("DATA_ENTRY")
   @ApiOperation({ summary: "إنشاء مسودة عملية تعديل بمصدر صريح" })
   create(
     @Body() dto: CreateAmendmentDto,
@@ -66,7 +62,6 @@ export class AmendmentsController {
   }
   @Post(":id/review")
   @Permissions("amendment.review")
-  @Roles("LEGAL_REVIEWER")
   review(
     @Param("id") id: string,
     @Body() dto: ReasonDto,
@@ -76,7 +71,6 @@ export class AmendmentsController {
   }
   @Post(":id/publish")
   @Permissions("amendment.publish")
-  @Roles("CONTENT_MANAGER")
   publish(
     @Param("id") id: string,
     @Body() dto: ReasonDto,

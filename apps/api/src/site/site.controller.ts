@@ -26,7 +26,6 @@ import {
 import { Type } from "class-transformer";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
-import { RoleGuard, Roles } from "../common/role.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { SiteService } from "./site.service.js";
 
@@ -77,12 +76,11 @@ export class SiteController {
 
 @ApiTags("إدارة إعدادات المنصة")
 @Controller("admin/site")
-@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard)
 export class AdminSiteController {
   constructor(@Inject(SiteService) private readonly service: SiteService) {}
   @Get()
   @Permissions("settings.view")
-  @Roles("SYSTEM_ADMIN", "CONTENT_MANAGER")
   state() {
     return this.service.adminState();
   }
@@ -90,16 +88,15 @@ export class AdminSiteController {
   @Permissions(
     "settings.general.update",
     "settings.appearance.update",
-    "settings.navigation.update",
-    "settings.content.update",
+    "settings.header.update",
+    "settings.footer.update",
+    "settings.legislation_page.update",
   )
-  @Roles("SYSTEM_ADMIN")
   settings(@Body() dto: SettingsDto, @Req() req: AuthenticatedRequest) {
     return this.service.updateSettings(dto.values, req.user!, dto.reason);
   }
   @Post("navigation")
-  @Permissions("settings.navigation.update")
-  @Roles("SYSTEM_ADMIN")
+  @Permissions("navigation.create")
   createNavigation(
     @Body() dto: NavigationDto,
     @Req() req: AuthenticatedRequest,
@@ -108,8 +105,7 @@ export class AdminSiteController {
     return this.service.createNavigation(input, req.user!, reason);
   }
   @Patch("navigation/:id")
-  @Permissions("settings.navigation.update")
-  @Roles("SYSTEM_ADMIN")
+  @Permissions("navigation.update")
   navigation(
     @Param("id") id: string,
     @Body() dto: NavigationDto,
@@ -119,8 +115,11 @@ export class AdminSiteController {
     return this.service.updateNavigation(id, input, req.user!, reason);
   }
   @Patch("pages/:id")
-  @Permissions("settings.content.update")
-  @Roles("SYSTEM_ADMIN", "CONTENT_MANAGER")
+  @Permissions(
+    "public_page.update",
+    "public_page.publish",
+    "public_page.archive",
+  )
   page(
     @Param("id") id: string,
     @Body() dto: PageDto,

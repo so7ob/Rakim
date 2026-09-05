@@ -12,7 +12,6 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { RoleGuard, Roles } from "../common/role.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { CreateLegislationDto } from "./create-legislation.dto.js";
 import { LegislationsService } from "./legislations.service.js";
@@ -69,9 +68,8 @@ export class LegislationsController {
   }
 
   @Post()
-  @UseGuards(SessionGuard, PermissionGuard, RoleGuard)
+  @UseGuards(SessionGuard, PermissionGuard)
   @Permissions("legislation.create")
-  @Roles("DATA_ENTRY")
   @ApiOperation({ summary: "إنشاء مسودة تشريع وتسجيلها في التدقيق" })
   create(
     @Body() dto: CreateLegislationDto,

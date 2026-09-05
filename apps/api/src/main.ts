@@ -64,7 +64,7 @@ async function bootstrap() {
       transform: true,
     }),
   );
-  app.useGlobalFilters(new ApiExceptionFilter());
+  app.useGlobalFilters(app.get(ApiExceptionFilter));
   const swagger = new DocumentBuilder()
     .setTitle("واجهة منصة التشريعات اليمنية")
     .setDescription("REST/JSON API محلية. البيانات التجريبية غير رسمية.")

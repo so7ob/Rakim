@@ -9,6 +9,10 @@ import type { DataSource } from "typeorm";
 import { DATABASE } from "../database/database.module.js";
 import type { AuthUser } from "./auth.types.js";
 import { hashPassword, verifyPassword } from "./password.js";
+import {
+  CANONICAL_PERMISSION_CODES,
+  LEGACY_PERMISSION_ALIASES,
+} from "../common/canonical-permission-catalog.js";
 
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -117,23 +121,37 @@ export class AuthService {
           [id],
         ) as Promise<Array<{ code: string; nameAr: string }>>,
         this.db.query(
-          `SELECT rp.permission_code permissionCode,rp.scope_code scopeCode,r.code roleCode
+          `SELECT rp.permission_code permissionCode,rp.scope_code scopeCode,
+          r.code roleCode,r.name_ar roleName,r.permission_model_version modelVersion,
+          pd.is_legacy isLegacy
         FROM role_permissions rp JOIN user_roles ur ON ur.role_id=rp.role_id
         JOIN roles r ON r.id=rp.role_id
+        JOIN permission_definitions pd ON pd.code=rp.permission_code
         WHERE ur.user_id=? AND r.is_active=1 ORDER BY rp.permission_code,r.code`,
           [id],
         ) as Promise<
-          Array<{ permissionCode: string; scopeCode: "ALL"; roleCode: string }>
+          Array<{
+            permissionCode: string;
+            scopeCode: "ALL" | "OWN" | "ASSIGNED";
+            roleCode: string;
+            roleName: string;
+            modelVersion: number;
+            isLegacy: boolean | number;
+          }>
         >,
         this.db.query(
-          `SELECT permission_code permissionCode,effect,scope_code scopeCode
-        FROM user_permission_overrides WHERE user_id=? ORDER BY permission_code`,
+          `SELECT upo.permission_code permissionCode,upo.effect,upo.scope_code scopeCode,
+          pd.is_legacy isLegacy
+        FROM user_permission_overrides upo
+        JOIN permission_definitions pd ON pd.code=upo.permission_code
+        WHERE upo.user_id=? ORDER BY upo.permission_code`,
           [id],
         ) as Promise<
           Array<{
             permissionCode: string;
             effect: "ALLOW" | "DENY";
             scopeCode: "ALL" | "OWN" | "ASSIGNED";
+            isLegacy: boolean | number;
           }>
         >,
         this.db.query(
@@ -146,45 +164,90 @@ export class AuthService {
       string,
       {
         code: string;
-        scope: "ALL" | "OWN" | "ASSIGNED";
-        source: "ROLE" | "DIRECT" | "POLICY_OVERRIDE";
-        sourceCodes: string[];
+        allowed: boolean;
+        scope: "ALL";
+        sources: Array<{
+          type: "ROLE" | "DIRECT_ALLOW";
+          code: string;
+          name?: string;
+        }>;
+        overrides: Array<{ type: "DIRECT_ALLOW" | "DIRECT_DENY" }>;
+        policyChecks: Array<{ code: string; result: "PASSED" | "FAILED" }>;
       }
     >();
     for (const grant of roleGrants) {
-      const existing = effective.get(grant.permissionCode);
-      if (existing) existing.sourceCodes.push(grant.roleCode);
-      else
-        effective.set(grant.permissionCode, {
-          code: grant.permissionCode,
-          scope: grant.scopeCode,
-          source: "ROLE",
-          sourceCodes: [grant.roleCode],
+      if (grant.scopeCode !== "ALL") continue;
+      for (const code of this.canonicalTargets(
+        grant.permissionCode,
+        Boolean(grant.isLegacy) && Number(grant.modelVersion) < 2,
+      )) {
+        const existing = effective.get(code) ?? {
+          code,
+          allowed: true as const,
+          scope: "ALL" as const,
+          sources: [],
+          overrides: [],
+          policyChecks: [],
+        };
+        existing.sources.push({
+          type: "ROLE",
+          code: grant.roleCode,
+          name: grant.roleName,
         });
+        effective.set(code, existing);
+      }
     }
+    const denied = new Set<string>();
     for (const override of directOverrides) {
-      if (override.effect === "DENY") effective.delete(override.permissionCode);
-      else
-        effective.set(override.permissionCode, {
-          code: override.permissionCode,
-          scope: override.scopeCode,
-          source: "DIRECT",
-          sourceCodes: ["DIRECT_ALLOW"],
-        });
+      const targets = this.canonicalTargets(
+        override.permissionCode,
+        Boolean(override.isLegacy),
+      );
+      if (override.effect === "DENY") {
+        for (const code of targets) denied.add(code);
+      } else if (override.scopeCode === "ALL") {
+        for (const code of targets) {
+          const existing = effective.get(code) ?? {
+            code,
+            allowed: true as const,
+            scope: "ALL" as const,
+            sources: [],
+            overrides: [],
+            policyChecks: [],
+          };
+          existing.sources.push({ type: "DIRECT_ALLOW", code: "DIRECT" });
+          existing.overrides.push({ type: "DIRECT_ALLOW" });
+          effective.set(code, existing);
+        }
+      }
     }
-    for (const override of policyOverrides)
-      effective.set(override.permissionCode, {
-        code: override.permissionCode,
-        scope: "ALL",
-        source: "POLICY_OVERRIDE",
-        sourceCodes: ["WORKFLOW_POLICY"],
-      });
+    for (const code of denied) {
+      const existing = effective.get(code) ?? {
+        code,
+        allowed: false,
+        scope: "ALL" as const,
+        sources: [],
+        overrides: [],
+        policyChecks: [],
+      };
+      existing.allowed = false;
+      existing.overrides = [{ type: "DIRECT_DENY" }];
+      effective.set(code, existing);
+    }
     return {
       ...users[0],
       roles,
-      permissions: [...effective.keys()],
+      permissions: [...effective.values()]
+        .filter((item) => item.allowed)
+        .map((item) => item.code),
       permissionDetails: [...effective.values()],
+      policyCapabilities: policyOverrides.map((item) => item.permissionCode),
     } as AuthUser;
+  }
+
+  private canonicalTargets(code: string, legacy: boolean): string[] {
+    if (!legacy && CANONICAL_PERMISSION_CODES.has(code)) return [code];
+    return LEGACY_PERMISSION_ALIASES[code] ?? [];
   }
 
   async logout(sessionId: string, actorId: string): Promise<void> {

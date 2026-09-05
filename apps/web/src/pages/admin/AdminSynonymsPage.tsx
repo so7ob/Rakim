@@ -16,7 +16,9 @@ interface Synonym {
 }
 export function AdminSynonymsPage() {
   const { hasPermission } = useAuth();
-  const canManage = hasPermission("search.synonym.manage");
+  const canCreate = hasPermission("search.synonym.create");
+  const canDelete = hasPermission("search.synonym.delete");
+  const canActivate = hasPermission("search.synonym_set.activate");
   const data = useApi<Synonym[]>("/admin/synonyms");
   const [msg, setMsg] = useState("");
   const sets = useMemo(
@@ -73,7 +75,7 @@ export function AdminSynonymsPage() {
           { label: "قاموس المرادفات" },
         ]}
       />
-      {canManage && (
+      {canCreate && (
         <form className="admin-card inline-form" onSubmit={submit}>
           <label>
             المصطلح
@@ -100,7 +102,7 @@ export function AdminSynonymsPage() {
             {set.publishedAt && (
               <p>نشر في {new Date(set.publishedAt).toLocaleString("ar-YE")}</p>
             )}
-            {canManage && set.status === "DRAFT" && (
+            {canActivate && set.status === "DRAFT" && (
               <button className="button" onClick={() => activate(set.setId)}>
                 اعتماد هذا الإصدار ونشره
               </button>
@@ -134,7 +136,7 @@ export function AdminSynonymsPage() {
                   <td>{item.termAr ?? "—"}</td>
                   <td>{item.synonymAr ?? "—"}</td>
                   <td>
-                    {canManage && item.id && item.status === "DRAFT" && (
+                    {canDelete && item.id && item.status === "DRAFT" && (
                       <button
                         className="link-button danger"
                         onClick={() => remove(item.id!)}
