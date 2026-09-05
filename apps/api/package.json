@@ -10,7 +10,7 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "test": "vitest run",
     "test:unit": "vitest run src/search/arabic-normalizer.spec.ts",
-    "test:integration": "vitest run src/database/temporal.integration.spec.ts",
+    "test:integration": "vitest run src/**/*.integration.spec.ts",
     "db:migrate": "tsx src/database/cli.ts migrate",
     "db:revert": "tsx src/database/cli.ts revert",
     "seed": "tsx src/database/seed.ts",

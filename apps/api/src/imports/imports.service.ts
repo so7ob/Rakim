@@ -27,6 +27,98 @@ const formats: Record<string, string> = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
+const structureNodeTypes = new Set(["TITLE", "CHAPTER", "SECTION"]);
+
+function parseExtractionJson(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "string") {
+    try {
+      return JSON.parse(value) as Record<string, unknown>;
+    } catch {
+      return {};
+    }
+  }
+  return typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function analysisPreview(parsed: Record<string, unknown>) {
+  const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+  const articles = Array.isArray(parsed.articles) ? parsed.articles : [];
+  if (parsed.schemaVersion === 2)
+    return {
+      schemaVersion: 2,
+      parser: parsed.parser,
+      nodes,
+      articles: articles.map((article) => {
+        const item = article as Record<string, unknown>;
+        return {
+          key: item.key,
+          label: item.label,
+          number: item.number,
+          headingLabel: item.headingLabel,
+          title: item.title,
+          structureNodeKey: item.structureNodeKey,
+          sortKey: item.sortKey,
+          documentOrder: item.documentOrder,
+          sourceLine: item.sourceLine,
+          status: item.status,
+          confidence: item.confidence,
+          textExcerpt: String(item.text ?? "").slice(0, 140),
+        };
+      }),
+      issues: Array.isArray(parsed.issues) ? parsed.issues : [],
+      summary: parsed.summary,
+    };
+  return {
+    schemaVersion: 1,
+    parser: "legacy-article-splitter",
+    nodes: [
+      {
+        key: "legacy-extracted-node",
+        kind: "FASL",
+        nodeType: "CHAPTER",
+        label: "النص المستخرج",
+        title: "مواد قيد المراجعة",
+        parentKey: null,
+        sortKey: "000001",
+        documentOrder: 1,
+        status: "REVIEW_REQUIRED",
+        confidence: 0.5,
+      },
+    ],
+    articles: articles.map((article, index) => {
+      const item = article as Record<string, unknown>;
+      return {
+        key: `legacy-article-${index + 1}`,
+        label: String(item.label ?? index + 1),
+        number: String(item.label ?? index + 1),
+        headingLabel: `المادة ${String(item.label ?? index + 1)}`,
+        structureNodeKey: "legacy-extracted-node",
+        sortKey: item.sortKey,
+        documentOrder: index + 2,
+        status: "REVIEW_REQUIRED",
+        confidence: 0.5,
+        textExcerpt: String(item.text ?? "").slice(0, 140),
+      };
+    }),
+    issues: [
+      {
+        code: "LEGACY_EXTRACTION",
+        message:
+          "هذه نتيجة تحليل قديمة؛ ستستخدم عقدة «مواد قيد المراجعة» عند إنشاء المسودة.",
+      },
+    ],
+    summary: {
+      babs: 0,
+      fasls: 1,
+      qisms: 0,
+      articles: articles.length,
+      rootArticles: 0,
+      reviewRequired: 1,
+    },
+  };
+}
+
 function validSignature(extension: string, buffer: Buffer): boolean {
   if (extension === ".pdf") return buffer.subarray(0, 5).toString() === "%PDF-";
   if (extension === ".png")
@@ -169,7 +261,16 @@ export class ImportsService {
       [id],
     );
     if (!rows[0]) throw new NotFoundException("عملية الاستيراد غير موجودة.");
-    return rows[0];
+    const { extraction_json: extractionJson, ...item } = rows[0] as Record<
+      string,
+      unknown
+    >;
+    return {
+      ...item,
+      analysis: extractionJson
+        ? analysisPreview(parseExtractionJson(extractionJson))
+        : null,
+    };
   }
 
   async source(id: string) {
@@ -232,13 +333,19 @@ export class ImportsService {
   ) {
     return this.db.transaction(async (m) => {
       const rows = await m.query(
-        `SELECT si.*,sd.extraction_status FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE si.id=? FOR UPDATE`,
+        `SELECT si.*,sd.extraction_status,l.status legislation_status
+         FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
+         LEFT JOIN legislations l ON l.id=si.legislation_id WHERE si.id=? FOR UPDATE`,
         [id],
       );
       const item = rows[0];
       if (!item) throw new NotFoundException("عملية الاستيراد غير موجودة.");
       if (item.legislation_id)
-        throw new ConflictException("أنشئت مسودة من هذا الاستيراد سابقًا.");
+        return {
+          id: item.legislation_id as string,
+          status: String(item.legislation_status ?? "DRAFT"),
+          idempotentReplay: true,
+        };
       if (!["READY_FOR_REVIEW", "REVIEWED"].includes(item.status))
         throw new ConflictException(
           "انتظر اكتمال استخراج الملف قبل إنشاء المسودة.",
@@ -256,42 +363,111 @@ export class ImportsService {
           input.effectiveFrom || null,
         ],
       );
-      const parsed =
-        typeof item.extraction_json === "string"
-          ? JSON.parse(item.extraction_json)
-          : item.extraction_json;
+      const parsed = parseExtractionJson(item.extraction_json);
       await m.query(
         `INSERT INTO legislation_versions (id,legislation_id,version_no,workflow_status,content_kind,preamble_text,source_document_id,valid_from) VALUES (?, ?,1,'DRAFT','EXTRACTED',?,?,?)`,
         [
           randomUUID(),
           lawId,
-          String(parsed?.preamble || "") || null,
+          String(parsed.preamble || "") || null,
           item.source_document_id,
           input.effectiveFrom || `${input.year}-01-01`,
         ],
       );
-      const nodeId = randomUUID();
-      await m.query(
-        `INSERT INTO structure_nodes (id,legislation_id,node_type,label_ar,title_ar,sort_key) VALUES (?,?,'CHAPTER','النص المستخرج','مواد قيد المراجعة','001')`,
-        [nodeId, lawId],
-      );
+      const isStructuredV2 = parsed.schemaVersion === 2;
+      const nodeIds = new Map<string, { id: string; nodeType: string }>();
+      if (isStructuredV2) {
+        const nodes = Array.isArray(parsed.nodes) ? parsed.nodes : [];
+        for (const rawNode of nodes) {
+          const node = rawNode as Record<string, unknown>;
+          const key = String(node.key ?? "");
+          const nodeType = String(node.nodeType ?? "");
+          const parentKey = node.parentKey ? String(node.parentKey) : null;
+          if (!key || nodeIds.has(key) || !structureNodeTypes.has(nodeType))
+            throw new BadRequestException(
+              "نتيجة تحليل البنية غير صالحة أو تحتوي عقدة مكررة.",
+            );
+          const parent = parentKey ? nodeIds.get(parentKey) : undefined;
+          if (parentKey && !parent)
+            throw new BadRequestException(
+              "نتيجة تحليل البنية تشير إلى أب غير موجود أو متأخر.",
+            );
+          const legalParent =
+            (nodeType === "TITLE" && !parent) ||
+            (nodeType === "CHAPTER" &&
+              (!parent || parent.nodeType === "TITLE")) ||
+            (nodeType === "SECTION" &&
+              (!parent ||
+                parent.nodeType === "TITLE" ||
+                parent.nodeType === "CHAPTER"));
+          if (!legalParent)
+            throw new BadRequestException(
+              "نتيجة تحليل البنية تحتوي علاقة أب/ابن غير قانونية.",
+            );
+          const nodeId = randomUUID();
+          await m.query(
+            `INSERT INTO structure_nodes
+            (id,legislation_id,parent_id,node_type,label_ar,title_ar,sort_key)
+            VALUES (?,?,?,?,?,?,?)`,
+            [
+              nodeId,
+              lawId,
+              parent?.id ?? null,
+              nodeType,
+              String(node.label ?? "").slice(0, 120) || null,
+              String(node.title ?? node.label ?? "عنصر مستخرج").slice(0, 500),
+              String(node.sortKey ?? node.documentOrder ?? nodeIds.size + 1)
+                .slice(0, 120)
+                .padStart(6, "0"),
+            ],
+          );
+          nodeIds.set(key, { id: nodeId, nodeType });
+        }
+      } else {
+        const nodeId = randomUUID();
+        await m.query(
+          `INSERT INTO structure_nodes (id,legislation_id,node_type,label_ar,title_ar,sort_key) VALUES (?,?,'CHAPTER','النص المستخرج','مواد قيد المراجعة','000001')`,
+          [nodeId, lawId],
+        );
+        nodeIds.set("legacy-extracted-node", {
+          id: nodeId,
+          nodeType: "CHAPTER",
+        });
+      }
       const articles =
-        Array.isArray(parsed?.articles) && parsed.articles.length
+        Array.isArray(parsed.articles) && parsed.articles.length
           ? parsed.articles
-          : [{ label: "1", text: item.extracted_text, sortKey: "00001" }];
+          : [{ label: "1", number: "1", text: item.extracted_text }];
       for (const [index, article] of articles.entries()) {
+        const parsedArticle = article as Record<string, unknown>;
         const articleId = randomUUID();
-        const label = String(article.label || index + 1);
-        const text = String(article.text || "");
+        const label = String(
+          parsedArticle.number || parsedArticle.label || index + 1,
+        ).slice(0, 120);
+        const text = String(parsedArticle.text || "");
+        const structureNodeKey = isStructuredV2
+          ? parsedArticle.structureNodeKey
+            ? String(parsedArticle.structureNodeKey)
+            : null
+          : "legacy-extracted-node";
+        const structureNode = structureNodeKey
+          ? nodeIds.get(structureNodeKey)
+          : undefined;
+        if (structureNodeKey && !structureNode)
+          throw new BadRequestException(
+            "نتيجة تحليل المادة تشير إلى عقدة بنية غير موجودة.",
+          );
         await m.query(
           `INSERT INTO articles (id,legislation_id,structure_node_id,published_label,current_label,sort_key) VALUES (?,?,?,?,?,?)`,
           [
             articleId,
             lawId,
-            nodeId,
+            structureNode?.id ?? null,
             label,
             label,
-            String(article.sortKey || index + 1).padStart(5, "0"),
+            String(parsedArticle.sortKey || index + 1)
+              .slice(0, 120)
+              .padStart(6, "0"),
           ],
         );
         await m.query(
@@ -317,7 +493,20 @@ export class ImportsService {
       );
       await m.query(
         `INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,after_json,reason) VALUES (?,?,'CREATE_DRAFT_FROM_IMPORT','LEGISLATION',?,?,'تحويل النص المستخرج إلى مسودة قابلة للمراجعة')`,
-        [randomUUID(), actor.id, lawId, JSON.stringify(input)],
+        [
+          randomUUID(),
+          actor.id,
+          lawId,
+          JSON.stringify({
+            ...input,
+            sourceImportId: id,
+            parser: parsed.parser ?? "legacy-article-splitter",
+            summary: parsed.summary ?? {
+              nodes: nodeIds.size,
+              articles: articles.length,
+            },
+          }),
+        ],
       );
       return { id: lawId, status: "DRAFT" };
     });

@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -25,6 +25,45 @@ interface ImportItem {
 interface Refs {
   types: Array<{ id: string; name: string }>;
   authorities: Array<{ id: string; name: string }>;
+}
+interface AnalysisNode {
+  key: string;
+  kind: "BAB" | "FASL" | "QISM";
+  label: string;
+  title: string;
+  parentKey: string | null;
+  documentOrder: number;
+  status: "CONFIRMED" | "REVIEW_REQUIRED";
+}
+interface AnalysisArticle {
+  key: string;
+  label: string;
+  number: string;
+  headingLabel: string;
+  structureNodeKey: string | null;
+  documentOrder: number;
+  status: "CONFIRMED" | "REVIEW_REQUIRED";
+  textExcerpt: string;
+}
+interface ImportAnalysis {
+  schemaVersion: number;
+  parser: string;
+  nodes: AnalysisNode[];
+  articles: AnalysisArticle[];
+  issues: Array<{
+    code: string;
+    message: string;
+    sourceLine?: number;
+    excerpt?: string;
+  }>;
+  summary: {
+    babs: number;
+    fasls: number;
+    qisms: number;
+    articles: number;
+    rootArticles: number;
+    reviewRequired: number;
+  };
 }
 export function AdminImportsPage() {
   const { tab = "queue" } = useParams();
@@ -170,7 +209,14 @@ export function AdminImportsPage() {
                       />
                     )}{" "}
                   {item.legislationTitle && (
-                    <p>المسودة المرتبطة: {item.legislationTitle}</p>
+                    <p>
+                      المسودة المرتبطة:{" "}
+                      <Link
+                        to={`/ar/admin/content/${item.legislationId}/structure`}
+                      >
+                        {item.legislationTitle}
+                      </Link>
+                    </p>
                   )}
                   <ImportPreview
                     id={item.id}
@@ -197,6 +243,7 @@ function ImportPreview({
   const { data, error, loading, retry } = useApi<{
     extracted_text: string;
     error_details: string | null;
+    analysis: ImportAnalysis | null;
   }>(`/imports/${id}`);
   if (loading) return <p>جار تحميل المعاينة…</p>;
   if (error)
@@ -209,6 +256,7 @@ function ImportPreview({
     mediaType === "application/pdf" || mediaType.startsWith("image/");
   return (
     <>
+      <StructureAnalysisPreview analysis={data?.analysis ?? null} />
       <h3>المقارنة مع المصدر</h3>
       <div className="source-compare">
         <section>
@@ -236,6 +284,119 @@ function ImportPreview({
         </section>
       </div>
     </>
+  );
+}
+
+export function StructureAnalysisPreview({
+  analysis,
+}: {
+  analysis: ImportAnalysis | null;
+}) {
+  if (!analysis) return <p>لم تكتمل نتيجة التحليل الهيكلي بعد.</p>;
+  const children = new Map<string | null, AnalysisNode[]>();
+  for (const node of analysis.nodes) {
+    const items = children.get(node.parentKey) ?? [];
+    items.push(node);
+    children.set(node.parentKey, items);
+  }
+  const articles = new Map<string | null, AnalysisArticle[]>();
+  for (const article of analysis.articles) {
+    const items = articles.get(article.structureNodeKey) ?? [];
+    items.push(article);
+    articles.set(article.structureNodeKey, items);
+  }
+  const renderArticle = (article: AnalysisArticle) => (
+    <li key={article.key} role="treeitem" className="import-article">
+      {article.headingLabel || `المادة ${article.number}`}
+      {article.status === "REVIEW_REQUIRED" && (
+        <span className="review-flag">يحتاج مراجعة</span>
+      )}
+    </li>
+  );
+  const renderNode = (node: AnalysisNode) => {
+    const descendants = [
+      ...(children.get(node.key) ?? []).map((item) => ({
+        type: "node" as const,
+        item,
+      })),
+      ...(articles.get(node.key) ?? []).map((item) => ({
+        type: "article" as const,
+        item,
+      })),
+    ].sort((a, b) => a.item.documentOrder - b.item.documentOrder);
+    return (
+      <li key={node.key} role="treeitem">
+        <details open>
+          <summary>
+            <strong>{node.label}</strong>
+            {node.title !== node.label && <span> — {node.title}</span>}
+            {node.status === "REVIEW_REQUIRED" && (
+              <span className="review-flag">يحتاج مراجعة</span>
+            )}
+          </summary>
+          {descendants.length > 0 && (
+            <ul role="group">
+              {descendants.map(({ type, item }) =>
+                type === "node" ? renderNode(item) : renderArticle(item),
+              )}
+            </ul>
+          )}
+        </details>
+      </li>
+    );
+  };
+  const roots = [
+    ...(children.get(null) ?? []).map((item) => ({
+      type: "node" as const,
+      item,
+    })),
+    ...(articles.get(null) ?? []).map((item) => ({
+      type: "article" as const,
+      item,
+    })),
+  ].sort((a, b) => a.item.documentOrder - b.item.documentOrder);
+  return (
+    <section className="structure-analysis" aria-labelledby="analysis-title">
+      <h3 id="analysis-title">معاينة البنية القانونية</h3>
+      <dl className="import-summary" aria-label="ملخص نتيجة التحليل">
+        {[
+          ["الأبواب", analysis.summary.babs],
+          ["الفصول", analysis.summary.fasls],
+          ["الأقسام", analysis.summary.qisms],
+          ["المواد", analysis.summary.articles],
+          ["مواد دون بنية", analysis.summary.rootArticles],
+          ["تحتاج مراجعة", analysis.summary.reviewRequired],
+        ].map(([label, value]) => (
+          <div key={String(label)}>
+            <dt>{label}</dt>
+            <dd>{value}</dd>
+          </div>
+        ))}
+      </dl>
+      {analysis.issues.length > 0 && (
+        <div className="analysis-issues" role="status">
+          <h4>ملاحظات التحليل</h4>
+          <ul>
+            {analysis.issues.map((issue, index) => (
+              <li key={`${issue.code}-${index}`}>
+                {issue.message}
+                {issue.sourceLine ? ` (السطر ${issue.sourceLine})` : ""}
+                {issue.excerpt ? <small>{issue.excerpt}</small> : null}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      <ul
+        className="import-structure-tree"
+        role="tree"
+        aria-label="بنية التشريع المستخرجة"
+      >
+        {roots.map(({ type, item }) =>
+          type === "node" ? renderNode(item) : renderArticle(item),
+        )}
+      </ul>
+    </section>
   );
 }
 function ReviewImport({ id, done }: { id: string; done: () => void }) {

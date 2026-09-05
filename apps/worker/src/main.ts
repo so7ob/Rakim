@@ -9,6 +9,7 @@ import { config } from "dotenv";
 import mammoth from "mammoth";
 import readXlsxFile from "read-excel-file/node";
 import { DataSource, type EntityManager } from "typeorm";
+import { parseLegalStructure } from "./legal-structure-parser.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -71,25 +72,7 @@ function targetPath(storageKey: string): string {
 }
 
 export function parseStructure(text: string) {
-  const pattern =
-    /(?:^|\n)\s*(?:المادة|مادة)\s*[\(（]?\s*([0-9٠-٩]+(?:\s*مكرر(?:\s*[أابتثجحخدذرزسشصضطظعغفقكلمنهوي])?)?)[\)）]?\s*[:：\-–]?/gmu;
-  const matches = [...text.matchAll(pattern)];
-  if (!matches.length)
-    return {
-      preamble: "",
-      articles: [{ label: "1", sortKey: "00001", text: text.trim() }],
-    };
-  const articles = matches.map((match, index) => ({
-    label: match[1]!.trim(),
-    sortKey: String(index + 1).padStart(5, "0"),
-    text: text
-      .slice(
-        match.index! + match[0].length,
-        matches[index + 1]?.index ?? text.length,
-      )
-      .trim(),
-  }));
-  return { preamble: text.slice(0, matches[0]!.index).trim(), articles };
+  return parseLegalStructure(text);
 }
 
 async function pdfText(
@@ -479,6 +462,11 @@ async function main() {
   await db.query(
     "UPDATE job_queue SET status='READY',locked_by=NULL,locked_at=NULL WHERE status='RUNNING' AND locked_at<DATE_SUB(NOW(3),INTERVAL 15 MINUTE)",
   );
+  if (process.argv.includes("--once")) {
+    await tick();
+    await db.destroy();
+    return;
+  }
   console.log(JSON.stringify({ event: "worker.started", workerId }));
   const timer = setInterval(() => void tick(), 1000);
   const stop = async () => {

@@ -19,6 +19,7 @@ const pages = [
   ["settings-general", "/ar/admin/settings/general"],
   ["workflow-policies", "/ar/admin/settings/workflow"],
   ["legislations", "/ar/admin/content"],
+  ["imports", "/ar/admin/imports/queue"],
 ];
 const manifest = {
   capturedAt: new Date().toISOString(),
@@ -62,6 +63,11 @@ try {
 
     for (const [name, path] of pages) {
       await page.goto(`${baseUrl}${path}`, { waitUntil: "networkidle" });
+      if (name === "imports") {
+        const firstImport = page.locator("details.import-row").first();
+        if (await firstImport.count())
+          await firstImport.locator(":scope > summary").click();
+      }
       if (viewport.width < 900 && name === "dashboard") {
         await page.getByRole("button", { name: "فتح قائمة الإدارة" }).click();
         await page.screenshot({

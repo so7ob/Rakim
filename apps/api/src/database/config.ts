@@ -15,6 +15,7 @@ import { WorkflowPolicyCatalog1700000000009 } from "./migrations/1700000000009-w
 import { GranularAccessControl1700000000010 } from "./migrations/1700000000010-granular-access-control.js";
 import { ReferenceThemeDefaults1700000000011 } from "./migrations/1700000000011-reference-theme-defaults.js";
 import { CanonicalRbacSecurity1700000000012 } from "./migrations/1700000000012-canonical-rbac-security.js";
+import { ArticleLabelOrdering1700000000013 } from "./migrations/1700000000013-article-label-ordering.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -50,6 +51,7 @@ export const createDataSource = () =>
       GranularAccessControl1700000000010,
       ReferenceThemeDefaults1700000000011,
       CanonicalRbacSecurity1700000000012,
+      ArticleLabelOrdering1700000000013,
     ],
     migrationsTableName: "schema_migrations",
   });
