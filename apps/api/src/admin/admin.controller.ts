@@ -28,6 +28,7 @@ import {
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { RoleGuard, Roles } from "../common/role.guard.js";
+import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { rebuildSearchIndex } from "../database/reindex.js";
 import { AdminService } from "./admin.service.js";
 
@@ -126,6 +127,14 @@ class UserRolesDto {
     { each: true },
   )
   roles!: string[];
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class WorkflowPolicyDto {
+  @IsBoolean() enabled!: boolean;
+  @IsArray()
+  @ArrayUnique()
+  @IsString({ each: true })
+  userIds!: string[];
   @IsString() @Length(3, 1000) reason!: string;
 }
 class ResetPasswordDto {
@@ -413,6 +422,30 @@ export class AdminController {
   }
   @Get("roles") @Roles("SYSTEM_ADMIN") roles() {
     return this.service.roles();
+  }
+  @Get("workflow-policies")
+  @Permissions("settings.workflow.manage")
+  @Roles("SYSTEM_ADMIN")
+  @UseGuards(PermissionGuard)
+  workflowPolicies() {
+    return this.service.workflowPolicies();
+  }
+  @Patch("workflow-policies/:code")
+  @Permissions("settings.workflow.manage")
+  @Roles("SYSTEM_ADMIN")
+  @UseGuards(PermissionGuard)
+  workflowPolicy(
+    @Param("code") code: string,
+    @Body() dto: WorkflowPolicyDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.service.updateWorkflowPolicy(
+      code,
+      dto.enabled,
+      dto.userIds,
+      request.user!,
+      dto.reason,
+    );
   }
   @Post("users") @Roles("SYSTEM_ADMIN") createUser(
     @Body() dto: CreateUserDto,

@@ -1,7 +1,6 @@
 import {
   BadRequestException,
   ConflictException,
-  ForbiddenException,
   Inject,
   Injectable,
   NotFoundException,
@@ -9,6 +8,7 @@ import {
 import { randomUUID } from "node:crypto";
 import type { DataSource, EntityManager } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
+import { assertWorkflowPolicy } from "../admin/workflow-policies.js";
 import { DATABASE } from "../database/database.module.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
 
@@ -128,8 +128,12 @@ export class AmendmentsService {
       if (!rows[0]) throw new NotFoundException("التعديل غير موجود.");
       if (rows[0].status !== "DRAFT")
         throw new ConflictException("لا تراجع إلا مسودة تعديل.");
-      if (rows[0].createdBy === actor.id)
-        throw new ForbiddenException("لا يجوز لمن أنشأ التعديل أن يراجعه.");
+      const workflowPolicy = await assertWorkflowPolicy(
+        manager,
+        "AMENDMENT_SELF_REVIEW",
+        actor,
+        rows[0].createdBy === actor.id,
+      );
       await manager.query(
         "UPDATE amendments SET status='REVIEWED',reviewed_by=?,reviewed_at=NOW(3) WHERE id=?",
         [actor.id, id],
@@ -141,10 +145,10 @@ export class AmendmentsService {
         "AMENDMENT",
         id,
         { status: "DRAFT" },
-        { status: "REVIEWED" },
+        { status: "REVIEWED", workflowPolicy },
         reason,
       );
-      return { id, status: "REVIEWED" };
+      return { id, status: "REVIEWED", workflowPolicy };
     });
   }
   async publish(id: string, actor: AuthUser, reason: string) {
@@ -157,10 +161,12 @@ export class AmendmentsService {
       if (!item) throw new NotFoundException("التعديل غير موجود.");
       if (item.status !== "REVIEWED")
         throw new ConflictException("يجب مراجعة التعديل قبل تطبيقه.");
-      if (item.created_by === actor.id || item.reviewed_by === actor.id)
-        throw new ForbiddenException(
-          "لا يجوز لمن أنشأ أو راجع التعديل أن ينشره.",
-        );
+      const workflowPolicy = await assertWorkflowPolicy(
+        manager,
+        "AMENDMENT_SELF_PUBLICATION",
+        actor,
+        item.created_by === actor.id || item.reviewed_by === actor.id,
+      );
       const effectiveDate = isoDate(item.effective_from);
       const article = (
         await manager.query(
@@ -285,7 +291,7 @@ export class AmendmentsService {
         "AMENDMENT",
         id,
         { status: "REVIEWED", beforeVersionId: before.id },
-        { status: "PUBLISHED", afterVersionId: afterId },
+        { status: "PUBLISHED", afterVersionId: afterId, workflowPolicy },
         reason,
       );
       return {
@@ -293,6 +299,7 @@ export class AmendmentsService {
         status: "PUBLISHED",
         beforeVersionId: before.id,
         afterVersionId: afterId,
+        workflowPolicy,
       };
     });
   }

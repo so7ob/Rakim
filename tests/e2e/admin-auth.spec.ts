@@ -33,6 +33,13 @@ test("admin endpoints require an authenticated role and CSRF for changes", async
       })
     ).status(),
   ).toBe(403);
+  expect(
+    (
+      await request.get("/api/v1/admin/workflow-policies", {
+        headers: { cookie: reader.cookie },
+      })
+    ).status(),
+  ).toBe(403);
   const system = await login(request, "system_admin");
   expect(
     (
@@ -41,6 +48,24 @@ test("admin endpoints require an authenticated role and CSRF for changes", async
       })
     ).status(),
   ).toBe(200);
+  expect(
+    (
+      await request.get("/api/v1/admin/workflow-policies", {
+        headers: { cookie: system.cookie },
+      })
+    ).status(),
+  ).toBe(200);
+  expect(
+    (
+      await request.patch(
+        "/api/v1/admin/workflow-policies/LEGISLATION_SELF_APPROVAL",
+        {
+          headers: { cookie: system.cookie },
+          data: { enabled: true, userIds: [], reason: "اختبار CSRF" },
+        },
+      )
+    ).status(),
+  ).toBe(403);
   expect(
     (
       await request.patch("/api/v1/admin/users/not-a-user/state", {
@@ -190,9 +215,16 @@ test("system administrator can open the platform settings editor", async ({
   await expect(
     page.getByRole("heading", { name: "الهوية والشعار" }),
   ).toBeVisible();
+  await page.getByRole("link", { name: "الهوية والمظهر" }).click();
   await expect(
     page.getByRole("heading", { name: "الألوان والتدرجات" }),
   ).toBeVisible();
+  await page.getByRole("link", { name: "سياسات سير العمل" }).click();
+  await expect(page.getByRole("tab")).toHaveCount(5);
+  await expect(
+    page.getByRole("heading", { name: "سياسات وضوابط سير العمل" }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /الصفحات العامة/ }).click();
   await expect(
     page.getByRole("heading", { name: "الصفحات العامة" }),
   ).toBeVisible();
