@@ -1,4 +1,4 @@
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -7,6 +7,12 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
+import {
+  StructureTree,
+  structureNodeName,
+  type StructureNodeItem,
+} from "../../components/admin/StructureTree";
+import { ArticleAssignmentDialog } from "../../components/admin/ArticleAssignmentDialog";
 interface Detail {
   id: string;
   display_code: string | null;
@@ -49,14 +55,7 @@ interface Detail {
     sha256: string;
     byteSize: number;
   }>;
-  structures: Array<{
-    id: string;
-    parentId: string | null;
-    nodeType: string;
-    labelAr: string | null;
-    titleAr: string;
-    sortKey: string;
-  }>;
+  structures: StructureNodeItem[];
   annexes: Array<{
     id: string;
     annexType: string;
@@ -81,7 +80,8 @@ interface Detail {
     sortKey: string;
     structureNodeId: string | null;
     versionNo: number;
-    textOriginal: string;
+    textOriginal?: string;
+    textPreview?: string;
     status: string;
     validFrom: string;
   }>;
@@ -99,8 +99,27 @@ interface Detail {
 export function AdminContentDetailPage() {
   const { id, tab = "general" } = useParams();
   const auth = useAuth();
-  const item = useApi<Detail>(id ? `/admin/legislations/${id}` : null);
+  const item = useApi<Detail>(
+    id
+      ? `/admin/legislations/${id}${
+          tab === "articles" ? "?articleContent=full" : ""
+        }`
+      : null,
+  );
   const [msg, setMsg] = useState("");
+  const [selectedStructureId, setSelectedStructureId] = useState<string | null>(
+    null,
+  );
+  const [assignmentNodeId, setAssignmentNodeId] = useState<string | null>(null);
+  useEffect(() => {
+    const structures = item.data?.structures ?? [];
+    if (
+      tab === "structure" &&
+      structures.length &&
+      !structures.some((node) => node.id === selectedStructureId)
+    )
+      setSelectedStructureId(structures[0]!.id);
+  }, [item.data, selectedStructureId, tab]);
   if (item.loading) return <LoadingCards />;
   if (item.error || !item.data)
     return (
@@ -200,6 +219,11 @@ export function AdminContentDetailPage() {
           },
         ]}
       />
+      {msg && (
+        <p role="status" className="form-message admin-content-message">
+          {msg}
+        </p>
+      )}
       {tab === "general" && canEditMetadata && (
         <form className="admin-card edit-form" onSubmit={save}>
           <h2>كل بيانات التشريع المعروضة</h2>
@@ -450,25 +474,23 @@ export function AdminContentDetailPage() {
         />
       )}
       {tab === "structure" && (
-        <section className="admin-card">
-          <h2>الأبواب والفصول والأقسام</h2>
-          <div className="draft-articles">
-            {law.structures.length === 0 &&
-              !auth.hasPermission("structure.update") && (
-                <p>لا توجد بنية هرمية مسجلة لهذا التشريع.</p>
-              )}
-            {law.structures.map((node) => (
-              <StructureEditor
-                key={node.id}
-                node={node}
+        <div className="structure-management-layout">
+          <section className="admin-card structure-tree-panel">
+            <header>
+              <div>
+                <h2>البنية القانونية</h2>
+                <p>الأعداد المعروضة للمواد التابعة مباشرة لكل عنصر فقط.</p>
+              </div>
+            </header>
+            {law.structures.length ? (
+              <StructureTree
                 nodes={law.structures}
-                editable={auth.hasPermission("structure.update")}
-                done={(message) => {
-                  setMsg(message);
-                  item.retry();
-                }}
+                selectedId={selectedStructureId}
+                onSelect={setSelectedStructureId}
               />
-            ))}
+            ) : (
+              <p>لا توجد بنية هرمية مسجلة لهذا التشريع.</p>
+            )}
             {auth.hasPermission("structure.create") && (
               <NewStructureEditor
                 id={law.id}
@@ -479,9 +501,89 @@ export function AdminContentDetailPage() {
                 }}
               />
             )}
-          </div>
-        </section>
+          </section>
+          {selectedStructureId &&
+            (() => {
+              const node = law.structures.find(
+                (candidate) => candidate.id === selectedStructureId,
+              );
+              if (!node) return null;
+              const directArticles = law.articles.filter(
+                (article) => article.structureNodeId === node.id,
+              );
+              return (
+                <section className="admin-card structure-node-details">
+                  <header>
+                    <div>
+                      <span className="eyebrow dark">العنصر المحدد</span>
+                      <h2>{structureNodeName(node)}</h2>
+                      <p>{directArticles.length} مادة تابعة مباشرة.</p>
+                    </div>
+                    {auth.hasPermission("article.update") && isDraft && (
+                      <button
+                        type="button"
+                        className="button"
+                        onClick={() => setAssignmentNodeId(node.id)}
+                      >
+                        ربط المواد
+                      </button>
+                    )}
+                  </header>
+                  {auth.hasPermission("structure.update") && (
+                    <StructureEditor
+                      node={node}
+                      nodes={law.structures}
+                      editable
+                      done={(message) => {
+                        setMsg(message);
+                        item.retry();
+                      }}
+                    />
+                  )}
+                  <div className="direct-article-list">
+                    <h3>المواد التابعة مباشرة</h3>
+                    {directArticles.length ? (
+                      <ul>
+                        {directArticles.map((article) => (
+                          <li key={article.id}>
+                            <strong>المادة {article.currentLabel}</strong>
+                            <span>
+                              {article.textPreview ?? "دون معاينة نصية"}
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="empty-state">
+                        لا توجد مواد مرتبطة مباشرة بهذا العنصر.
+                      </p>
+                    )}
+                  </div>
+                </section>
+              );
+            })()}
+        </div>
       )}
+      {assignmentNodeId &&
+        (() => {
+          const node = law.structures.find(
+            (candidate) => candidate.id === assignmentNodeId,
+          );
+          return node ? (
+            <ArticleAssignmentDialog
+              legislationId={law.id}
+              node={node}
+              onClose={() => setAssignmentNodeId(null)}
+              onSuccess={(result) => {
+                setAssignmentNodeId(null);
+                setMsg(
+                  `حُفظت ${result.summary.changedCount} تغييرات: ${result.summary.assignedCount} ربط، ${result.summary.movedCount} نقل، ${result.summary.unassignedCount} فك ربط.`,
+                );
+                item.retry();
+              }}
+            />
+          ) : null;
+        })()}
       {tab === "annexes" && (
         <section className="admin-card">
           <h2>اللوائح والجداول والملاحق</h2>
@@ -585,11 +687,6 @@ export function AdminContentDetailPage() {
             }}
             setMessage={setMsg}
           />
-          {msg && (
-            <p role="status" className="form-message">
-              {msg}
-            </p>
-          )}
         </section>
       )}
       {tab === "sources" && (
@@ -751,7 +848,7 @@ function ArticleEditor({
             النص
             <textarea
               name="text"
-              defaultValue={article.textOriginal}
+              defaultValue={article.textOriginal ?? ""}
               required
               rows={7}
             />
@@ -763,7 +860,9 @@ function ArticleEditor({
           <button className="button secondary">حفظ المادة</button>
         </form>
       ) : (
-        <p className="legal-text compact">{article.textOriginal}</p>
+        <p className="legal-text compact">
+          {article.textOriginal ?? article.textPreview}
+        </p>
       )}
     </details>
   );
