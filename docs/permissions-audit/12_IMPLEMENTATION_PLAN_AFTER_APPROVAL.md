@@ -1,20 +1,20 @@
 # خطة التنفيذ بعد الموافقة
 
-هذه الخطة غير منفذة. لا تبدأ أي مرحلة قبل اعتماد المصفوفة وقرارات الأدوار والحماية العليا.
+تحولت هذه الوثيقة بعد الموافقة إلى سجل خطة التنفيذ. نُفذت المراحل 1–6 على الفرع المرتبط بالـIssue، وتبقى إزالة legacy keys ضمن إصدار لاحق مستقل بعد نافذة التوافق.
 
-## بوابة القرار صفر
+## بوابة القرار صفر — مكتملة
 
-يلزم اعتماد:
+اعتمد مالك النظام:
 
 1. Naming convention الهرمية.
-2. خريطة 56→74 ومفاتيح Workflow الخمسة المنفصلة.
+2. خريطة 56→75 ومفاتيح Workflow الخمسة المنفصلة.
 3. mapping كل system role، خصوصًا submit/return وannex/relation.
 4. مصير role `SUPER` وحماية آخر مدير.
 5. authority ceiling/no-self-escalation.
 6. public visibility fixes كأولوية أمنية.
 7. عدم تفعيل scopes في الإصدار الأول.
 
-## المرحلة 1: Security containment
+## المرحلة 1: Security containment — مكتملة
 
 - Issue/branch مستقل لكل حزمة وفق `GIT_WORKFLOW.md`.
 - إصلاح public article/annex/relation/search visibility مع اختبارات تسريب negative.
@@ -26,7 +26,7 @@
 
 هذه المرحلة تسبق إعادة التسمية لأنها تسد مخاطر قابلة للاستغلال بالمفاتيح الحالية.
 
-## المرحلة 2: Catalog additive migration
+## المرحلة 2: Catalog additive migration — مكتملة
 
 - migration تضيف proposed keys ولا تحذف القديمة.
 - metadata كاملة: domain/resource/action/Arabic label/description/risk/supported scopes/system flag إن اعتمد.
@@ -34,7 +34,7 @@
 - إبقاء `ALL` وحدها مفعلة.
 - جعل policy exception namespace/system control منفصلًا عن role grants.
 
-## المرحلة 3: Grants migration
+## المرحلة 3: Grants migration — مكتملة
 
 - snapshot مجهول الهوية لـeffective permissions قبل الترحيل.
 - role-by-role mapping مع approvals الموثقة في تقرير 11.
@@ -43,7 +43,7 @@
 - validate user-by-user effective before/after؛ أي توسع غير معتمد يفشل migration.
 - session revocation مدروس ورسالة UX واضحة.
 
-## المرحلة 4: Backend enforcement
+## المرحلة 4: Backend enforcement — مكتملة
 
 - endpoint واحد/سياسة واحدة لكل عملية متكررة (publication/reindex).
 - decorators تستخدم canonical keys.
@@ -52,7 +52,7 @@
 - منع تحديث WORKFLOW من settings endpoint العام.
 - permission explanation service يعيد sources/denies/scope/policy checks.
 
-## المرحلة 5: React administration
+## المرحلة 5: React administration — مكتملة
 
 - تحديث `RequirePermission`, sidebar, tabs, actions بالمفاتيح canonical.
 - ربط pages المشتركة بـ`AdminLayout`, `AdminPageHeader`, `AdminTabs` حسب قواعد المشروع.
@@ -61,7 +61,7 @@
 - إظهار سبب فقد الجلسة بعد self-affecting access change.
 - إصلاح DownloadPage method ضمن Issue منفصل لأنه خلل وظيفي لا جزء RBAC.
 
-## المرحلة 6: Verification
+## المرحلة 6: Verification — مكتملة بنتائج موثقة
 
 ### Unit/integration
 
@@ -89,7 +89,7 @@
 - migration rehearsal على نسخة development مع backup وrollback validation.
 - secret scan وعدم إدخال `.env` أو dumps.
 
-## المرحلة 7: Rollout/deprecation
+## المرحلة 7: Rollout/deprecation — مؤجلة عمدًا لإصدار لاحق
 
 - Backend dual-read أولًا، ثم data mapping، ثم frontend canonical keys.
 - telemetry للمفاتيح القديمة دون تسجيل بيانات شخصية زائدة.
