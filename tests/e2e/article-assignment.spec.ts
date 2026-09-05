@@ -184,9 +184,52 @@ test("bulk assigns, moves, persists, and enforces article.update", async ({
     .getByRole("button")
     .filter({ hasText: "الفصل الأول" });
   await firstChapter.click();
+  let structureEditor = page
+    .locator(".structure-node-details")
+    .locator("details.draft-article");
+  await structureEditor.locator("summary").click();
+  await expect(structureEditor.locator('input[name="titleAr"]')).toHaveValue(
+    "أحكام البداية",
+  );
+
+  const secondChapter = page
+    .getByRole("tree", { name: "شجرة البنية القانونية" })
+    .getByRole("button")
+    .filter({ hasText: "الفصل الثاني" });
+  await secondChapter.click();
+  structureEditor = page
+    .locator(".structure-node-details")
+    .locator("details.draft-article");
+  await structureEditor.locator("summary").click();
+  await expect(structureEditor.locator('input[name="titleAr"]')).toHaveValue(
+    "أحكام النهاية",
+  );
+  await structureEditor
+    .locator('input[name="titleAr"]')
+    .fill("أحكام النهاية المعدلة");
+  await structureEditor
+    .getByLabel("سبب التعديل")
+    .fill("التحقق من تعديل العقدة المحددة");
+  await structureEditor.getByRole("button", { name: "حفظ الهيكل" }).click();
+  await expect(
+    page.getByRole("heading", {
+      name: "الفصل الثاني — أحكام النهاية المعدلة",
+    }),
+  ).toBeVisible();
+  await firstChapter.click();
   await page.getByRole("button", { name: "ربط المواد" }).click();
   let dialog = page.getByRole("dialog", { name: /ربط المواد بـ/ });
   await expect(dialog).toBeVisible();
+  const pickerList = dialog.getByRole("list", { name: "مواد التشريع" });
+  const pickerDimensions = await pickerList.evaluate((element) => ({
+    height: element.getBoundingClientRect().height,
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(pickerDimensions.height).toBeGreaterThanOrEqual(240);
+  expect(pickerDimensions.scrollHeight).toBeGreaterThan(
+    pickerDimensions.clientHeight,
+  );
   await dialog.getByRole("button", { name: "مرتبطة هنا" }).click();
   await dialog.getByLabel(/^المادة 1/).uncheck();
   await dialog
@@ -208,10 +251,6 @@ test("bulk assigns, moves, persists, and enforces article.update", async ({
   await firstChapter.click();
   await expect(page.locator(".direct-article-list")).toContainText("المادة 1");
 
-  const secondChapter = page
-    .getByRole("tree", { name: "شجرة البنية القانونية" })
-    .getByRole("button")
-    .filter({ hasText: "الفصل الثاني" });
   await secondChapter.click();
   await page.getByRole("button", { name: "ربط المواد" }).click();
   dialog = page.getByRole("dialog", { name: /ربط المواد بـ/ });
@@ -227,6 +266,11 @@ test("bulk assigns, moves, persists, and enforces article.update", async ({
   });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(dialog).toBeVisible();
+  expect(
+    await dialog
+      .getByRole("list", { name: "مواد التشريع" })
+      .evaluate((element) => element.getBoundingClientRect().height),
+  ).toBeGreaterThanOrEqual(200);
   const mobileOverflow = await page.evaluate(
     () =>
       document.documentElement.scrollWidth -

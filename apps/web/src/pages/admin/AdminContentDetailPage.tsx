@@ -531,6 +531,7 @@ export function AdminContentDetailPage() {
                   </header>
                   {auth.hasPermission("structure.update") && (
                     <StructureEditor
+                      key={node.id}
                       node={node}
                       nodes={law.structures}
                       editable

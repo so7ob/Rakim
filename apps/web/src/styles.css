@@ -2376,8 +2376,10 @@ button:disabled {
   text-overflow: ellipsis; white-space: nowrap;
 }
 .assignment-backdrop { z-index: 1200; }
-.assignment-dialog { width: min(100%, 1120px); max-height: min(94vh, 980px); }
-.assignment-body { display: grid; gap: 14px; }
+.assignment-dialog {
+  width: min(100%, 1120px); height: min(94vh, 980px); max-height: min(94vh, 980px);
+}
+.assignment-body { display: grid; gap: 14px; flex: 1 1 auto; min-height: 0; align-content: start; }
 .assignment-search, .assignment-reason { display: grid; gap: 6px; font-weight: 700; }
 .assignment-search input, .assignment-reason input, .range-selector input { width: 100%; }
 .assignment-filters, .assignment-tools {
@@ -2399,7 +2401,8 @@ button:disabled {
 .range-selector label { display: grid; gap: 5px; }
 .article-picker-list {
   list-style: none; padding: 8px 0; margin: 0; display: grid; gap: 7px;
-  max-height: 42vh; overflow: auto; border-block: 1px solid #e1e5e8;
+  height: clamp(240px, 42vh, 440px); min-height: 240px; max-height: 440px;
+  align-content: start; overflow: auto; border-block: 1px solid #e1e5e8;
 }
 .article-picker-list li label {
   display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 11px;
@@ -2426,11 +2429,11 @@ button:disabled {
   .structure-tree-panel > header, .structure-node-details > header { flex-direction: column; }
   .assignment-backdrop { padding: 0; }
   .assignment-dialog {
-    width: 100%; max-height: 100dvh; min-height: 100dvh; border-radius: 0;
+    width: 100%; height: 100dvh; max-height: 100dvh; min-height: 100dvh; border-radius: 0;
   }
   .assignment-dialog > header, .assignment-dialog > footer, .assignment-body { padding: 14px 16px; }
   .range-selector { grid-template-columns: 1fr; }
-  .article-picker-list { max-height: none; }
+  .article-picker-list { height: clamp(220px, 36dvh, 320px); min-height: 220px; max-height: 320px; }
   .assignment-dialog > footer .button { flex: 1; }
 }
 .legal-text.compact {
