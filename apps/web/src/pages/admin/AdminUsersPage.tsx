@@ -1,5 +1,8 @@
-import { useState, type FormEvent } from "react";
+import { useMemo, useState, type FormEvent } from "react";
+import { Link } from "react-router-dom";
 import { apiRequest } from "../../api";
+import { useAuth } from "../../auth/AuthContext";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 
@@ -8,8 +11,8 @@ interface User {
   username: string;
   displayName: string;
   isActive: boolean | number;
+  createdAt: string;
   lastLoginAt: string | null;
-  failedLoginCount: number;
   roles: string;
   policyOverrides: Array<{ code: string; labelAr: string }>;
 }
@@ -18,36 +21,35 @@ interface Role {
   code: string;
   nameAr: string;
 }
-const roleLabels: Record<string, string> = {
-  READER: "قارئ/باحث",
-  DATA_ENTRY: "مدخل بيانات",
-  LEGAL_REVIEWER: "مراجع قانوني",
-  CONTENT_MANAGER: "مدير محتوى",
-  SYSTEM_ADMIN: "مدير نظام",
-};
+const pageSize = 10;
 
 export function AdminUsersPage() {
+  const auth = useAuth();
   const users = useApi<User[]>("/admin/users");
   const roles = useApi<Role[]>("/admin/roles");
-  const [msg, setMsg] = useState("");
+  const [message, setMessage] = useState("");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState("");
+  const [role, setRole] = useState("");
+  const [page, setPage] = useState(1);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const filtered = useMemo(
+    () =>
+      (users.data ?? []).filter((user) => {
+        const matchesText = `${user.displayName} ${user.username}`
+          .toLowerCase()
+          .includes(query.toLowerCase());
+        const matchesStatus =
+          !status || String(Boolean(user.isActive)) === status;
+        const matchesRole = !role || user.roles?.split(",").includes(role);
+        return matchesText && matchesStatus && matchesRole;
+      }),
+    [users.data, query, status, role],
+  );
+  const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
   const refresh = () => {
     users.retry();
     roles.retry();
-  };
-  const toggle = async (user: User) => {
-    try {
-      await apiRequest(`/admin/users/${user.id}/state`, {
-        method: "PATCH",
-        body: {
-          active: !Boolean(user.isActive),
-          reason: "تغيير حالة الحساب من لوحة إدارة المستخدمين",
-        },
-      });
-      setMsg("حُدثت حالة الحساب وأبطلت جلساته عند التعطيل.");
-      refresh();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "تعذر التحديث.");
-    }
   };
   const create = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -62,63 +64,164 @@ export function AdminUsersPage() {
           roles: form.getAll("roles"),
         },
       });
-      setMsg("أُنشئ الحساب. يجب تغيير كلمة مروره الأولية بأسرع وقت.");
+      setMessage("أُنشئ الحساب وأُسندت أدواره.");
       formElement.reset();
       refresh();
-    } catch (e) {
-      setMsg(e instanceof Error ? e.message : "تعذر إنشاء الحساب.");
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "تعذر إنشاء الحساب.");
+    }
+  };
+  const bulkState = async (active: boolean) => {
+    if (
+      !selected.size ||
+      !window.confirm(`${active ? "تفعيل" : "تعطيل"} ${selected.size} حساب؟`)
+    )
+      return;
+    try {
+      await Promise.all(
+        [...selected].map((id) =>
+          apiRequest(`/admin/users/${id}/state`, {
+            method: "PATCH",
+            body: {
+              active,
+              reason: `إجراء جماعي: ${active ? "تفعيل" : "تعطيل"} حسابات محددة`,
+            },
+          }),
+        ),
+      );
+      setMessage(`تم ${active ? "تفعيل" : "تعطيل"} الحسابات المحددة.`);
+      setSelected(new Set());
+      users.retry();
+    } catch (error) {
+      setMessage(
+        error instanceof Error ? error.message : "تعذر الإجراء الجماعي.",
+      );
     }
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">أقل صلاحية ممكنة</span>
-          <h1>المستخدمون والأدوار</h1>
-        </div>
-      </header>
-      <form className="admin-card edit-form" onSubmit={create}>
-        <h2>إنشاء حساب</h2>
-        <div className="form-columns">
-          <label>
-            اسم المستخدم
-            <input
-              name="username"
-              pattern="[a-z0-9._-]{3,120}"
-              required
-              dir="ltr"
-            />
-          </label>
-          <label>
-            الاسم الظاهر
-            <input name="displayName" required />
-          </label>
-          <label>
-            كلمة مرور أولية
-            <input
-              name="password"
-              type="password"
-              minLength={12}
-              required
-              autoComplete="new-password"
-            />
-          </label>
-        </div>
-        <fieldset className="role-options">
-          <legend>الأدوار</legend>
-          {roles.data?.map((role) => (
-            <label key={role.id}>
-              <input type="checkbox" name="roles" value={role.code} />
-              {role.nameAr}
-            </label>
-          ))}
-        </fieldset>
-        <button className="button">إنشاء الحساب</button>
-      </form>
-      {msg && (
+      <AdminPageHeader
+        eyebrow="وصول وفق أقل صلاحية"
+        title="المستخدمون"
+        description="ابحث وصفّ الحسابات، ثم افتح ملف المستخدم لإدارة أدواره وصلاحياته ونشاطه وجلساته."
+        breadcrumbs={[
+          { label: "لوحة الإدارة", to: "/ar/admin" },
+          { label: "المستخدمون والوصول" },
+          { label: "المستخدمون" },
+        ]}
+      />
+      {message && (
         <p role="status" className="form-message">
-          {msg}
+          {message}
         </p>
+      )}
+      {auth.hasPermission("user.create") && (
+        <details className="admin-card admin-create-panel">
+          <summary>إنشاء حساب جديد</summary>
+          <form className="edit-form" onSubmit={create}>
+            <div className="form-columns">
+              <label>
+                اسم المستخدم
+                <input
+                  name="username"
+                  pattern="[a-z0-9._-]{3,120}"
+                  required
+                  dir="ltr"
+                />
+              </label>
+              <label>
+                الاسم الظاهر
+                <input name="displayName" required />
+              </label>
+              <label>
+                كلمة مرور أولية
+                <input
+                  name="password"
+                  type="password"
+                  minLength={12}
+                  required
+                  autoComplete="new-password"
+                />
+              </label>
+            </div>
+            <fieldset className="role-options">
+              <legend>الأدوار</legend>
+              {roles.data?.map((item) => (
+                <label key={item.id}>
+                  <input type="checkbox" name="roles" value={item.code} />
+                  {item.nameAr}
+                </label>
+              ))}
+            </fieldset>
+            <button className="button">إنشاء الحساب</button>
+          </form>
+        </details>
+      )}
+      <div className="admin-filterbar user-filterbar">
+        <label>
+          <span className="sr-only">البحث في المستخدمين</span>
+          <input
+            type="search"
+            value={query}
+            onChange={(event) => {
+              setQuery(event.target.value);
+              setPage(1);
+            }}
+            placeholder="الاسم أو اسم المستخدم…"
+          />
+        </label>
+        <label>
+          <span className="sr-only">فلترة الحالة</span>
+          <select
+            value={status}
+            onChange={(event) => {
+              setStatus(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">كل الحالات</option>
+            <option value="true">نشط</option>
+            <option value="false">معطل</option>
+          </select>
+        </label>
+        <label>
+          <span className="sr-only">فلترة الدور</span>
+          <select
+            value={role}
+            onChange={(event) => {
+              setRole(event.target.value);
+              setPage(1);
+            }}
+          >
+            <option value="">كل الأدوار</option>
+            {roles.data?.map((item) => (
+              <option key={item.id} value={item.code}>
+                {item.nameAr}
+              </option>
+            ))}
+          </select>
+        </label>
+        <span>{filtered.length} مستخدم</span>
+      </div>
+      {selected.size > 0 && auth.hasPermission("user.disable") && (
+        <div className="admin-bulkbar">
+          <strong>{selected.size} محدد</strong>
+          <button className="button secondary" onClick={() => bulkState(true)}>
+            تفعيل
+          </button>
+          <button
+            className="button secondary danger"
+            onClick={() => bulkState(false)}
+          >
+            تعطيل
+          </button>
+          <button
+            className="link-button"
+            onClick={() => setSelected(new Set())}
+          >
+            إلغاء التحديد
+          </button>
+        </div>
       )}
       {users.loading || roles.loading ? (
         <LoadingCards />
@@ -127,176 +230,134 @@ export function AdminUsersPage() {
           message={(users.error ?? roles.error)!.message}
           retry={refresh}
         />
-      ) : (
-        <div className="admin-table-wrap">
-          <table>
-            <thead>
-              <tr>
-                <th>المستخدم</th>
-                <th>الأدوار</th>
-                <th>استثناءات السياسات</th>
-                <th>آخر دخول</th>
-                <th>الحالة</th>
-                <th>الإجراءات</th>
-              </tr>
-            </thead>
-            <tbody>
-              {users.data?.map((user) => (
-                <tr key={user.id}>
-                  <td>
-                    <strong>{user.displayName}</strong>
-                    <small>{user.username}</small>
-                  </td>
-                  <td>
-                    <RoleEditor
-                      user={user}
-                      allRoles={roles.data ?? []}
-                      done={(message) => {
-                        setMsg(message);
-                        refresh();
-                      }}
-                    />
-                  </td>
-                  <td>
-                    {user.policyOverrides.length
-                      ? user.policyOverrides.map((override) => (
-                          <span className="tag" key={override.code}>
-                            {override.labelAr}
-                          </span>
-                        ))
-                      : "لا توجد"}
-                  </td>
-                  <td>
-                    {user.lastLoginAt
-                      ? new Date(user.lastLoginAt).toLocaleString("ar-YE")
-                      : "لم يسجل"}
-                  </td>
-                  <td>{user.isActive ? "نشط" : "معطل"}</td>
-                  <td>
-                    <div className="row-actions">
-                      <button
-                        className="button secondary"
-                        onClick={() => toggle(user)}
-                      >
-                        {user.isActive ? "تعطيل" : "تفعيل"}
-                      </button>
-                      <PasswordReset user={user} done={setMsg} />
-                    </div>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      ) : !visible.length ? (
+        <div className="admin-card empty-state">
+          <h2>لا توجد نتائج</h2>
+          <p>لم نجد مستخدمين يطابقون الفلاتر الحالية.</p>
         </div>
+      ) : (
+        <>
+          <div className="admin-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>
+                    <input
+                      type="checkbox"
+                      aria-label="تحديد الصفحة"
+                      checked={visible.every((user) => selected.has(user.id))}
+                      onChange={(event) =>
+                        setSelected((current) => {
+                          const next = new Set(current);
+                          visible.forEach((user) =>
+                            event.target.checked
+                              ? next.add(user.id)
+                              : next.delete(user.id),
+                          );
+                          return next;
+                        })
+                      }
+                    />
+                  </th>
+                  <th>المستخدم</th>
+                  <th>الأدوار</th>
+                  <th>استثناءات السياسات</th>
+                  <th>تاريخ الإنشاء</th>
+                  <th>آخر دخول</th>
+                  <th>الحالة</th>
+                  <th></th>
+                </tr>
+              </thead>
+              <tbody>
+                {visible.map((user) => (
+                  <tr key={user.id}>
+                    <td>
+                      <input
+                        type="checkbox"
+                        aria-label={`تحديد ${user.displayName}`}
+                        checked={selected.has(user.id)}
+                        onChange={(event) =>
+                          setSelected((current) => {
+                            const next = new Set(current);
+                            if (event.target.checked) next.add(user.id);
+                            else next.delete(user.id);
+                            return next;
+                          })
+                        }
+                      />
+                    </td>
+                    <td>
+                      <strong>{user.displayName}</strong>
+                      <small>{user.username}</small>
+                    </td>
+                    <td>{user.roles?.split(",").join("، ") || "دون دور"}</td>
+                    <td>
+                      <PolicyOverrideBadges overrides={user.policyOverrides} />
+                    </td>
+                    <td>
+                      {new Date(user.createdAt).toLocaleDateString("ar-YE")}
+                    </td>
+                    <td>
+                      {user.lastLoginAt
+                        ? new Date(user.lastLoginAt).toLocaleString("ar-YE")
+                        : "لم يسجل"}
+                    </td>
+                    <td>
+                      <span
+                        className={`status-badge ${user.isActive ? "published" : "archived"}`}
+                      >
+                        {user.isActive ? "نشط" : "معطل"}
+                      </span>
+                    </td>
+                    <td>
+                      <Link
+                        className="button secondary"
+                        to={`/ar/admin/users/${user.id}/profile`}
+                      >
+                        فتح
+                      </Link>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <nav className="admin-pagination" aria-label="صفحات المستخدمين">
+            <button
+              disabled={page === 1}
+              onClick={() => setPage((value) => value - 1)}
+            >
+              السابق
+            </button>
+            <span>
+              صفحة {page} من{" "}
+              {Math.max(1, Math.ceil(filtered.length / pageSize))}
+            </span>
+            <button
+              disabled={page >= Math.ceil(filtered.length / pageSize)}
+              onClick={() => setPage((value) => value + 1)}
+            >
+              التالي
+            </button>
+          </nav>
+        </>
       )}
     </section>
   );
 }
 
-function RoleEditor({
-  user,
-  allRoles,
-  done,
+function PolicyOverrideBadges({
+  overrides,
 }: {
-  user: User;
-  allRoles: Role[];
-  done: (message: string) => void;
+  overrides: User["policyOverrides"];
 }) {
-  const [current, setCurrent] = useState(
-    user.roles ? user.roles.split(",") : [],
-  );
-  const save = async () => {
-    try {
-      await apiRequest(`/admin/users/${user.id}/roles`, {
-        method: "PATCH",
-        body: { roles: current, reason: "تحديث الأدوار وفق مبدأ أقل صلاحية" },
-      });
-      done("حُدثت الأدوار وأبطلت الجلسات القديمة.");
-    } catch (e) {
-      done(e instanceof Error ? e.message : "تعذر تحديث الأدوار.");
-    }
-  };
+  if (!overrides.length)
+    return <span className="policy-overrides-empty">لا توجد</span>;
   return (
-    <details className="role-editor">
-      <summary>
-        {current.map((code) => roleLabels[code] ?? code).join("، ") ||
-          "دون دور"}
-      </summary>
-      {allRoles.map((role) => (
-        <label key={role.id}>
-          <input
-            type="checkbox"
-            checked={current.includes(role.code)}
-            onChange={(event) =>
-              setCurrent((value) =>
-                event.target.checked
-                  ? [...value, role.code]
-                  : value.filter((code) => code !== role.code),
-              )
-            }
-          />
-          {role.nameAr}
-        </label>
+    <ul className="policy-override-badges" aria-label="استثناءات السياسات">
+      {overrides.map((override) => (
+        <li key={override.code}>{override.labelAr}</li>
       ))}
-      <button className="button secondary" onClick={save}>
-        حفظ الأدوار
-      </button>
-    </details>
-  );
-}
-
-function PasswordReset({
-  user,
-  done,
-}: {
-  user: User;
-  done: (message: string) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <button
-        className="link-button"
-        onClick={() => setOpen((value) => !value)}
-      >
-        كلمة المرور
-      </button>
-      {open && (
-        <form
-          className="password-reset"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            try {
-              await apiRequest(`/admin/users/${user.id}/reset-password`, {
-                body: {
-                  password: form.get("password"),
-                  reason: "إعادة تعيين كلمة المرور بطلب إداري",
-                },
-              });
-              done("أعيد تعيين كلمة المرور وأبطلت جلسات الحساب.");
-              setOpen(false);
-            } catch (e) {
-              done(e instanceof Error ? e.message : "تعذر إعادة التعيين.");
-            }
-          }}
-        >
-          <label>
-            <span className="sr-only">
-              كلمة المرور الجديدة لـ {user.username}
-            </span>
-            <input
-              name="password"
-              type="password"
-              minLength={12}
-              required
-              placeholder="كلمة مرور جديدة"
-              autoComplete="new-password"
-            />
-          </label>
-          <button className="button secondary">حفظ</button>
-        </form>
-      )}
-    </>
+    </ul>
   );
 }

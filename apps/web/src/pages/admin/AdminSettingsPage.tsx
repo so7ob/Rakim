@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { Navigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -65,12 +65,11 @@ export function AdminSettingsPage() {
         retry={state.retry}
       />
     );
-  const isSystemAdmin = auth.hasRole("SYSTEM_ADMIN");
-  const canGeneral = isSystemAdmin;
-  const canAppearance = isSystemAdmin;
-  const canNavigation = isSystemAdmin;
-  const canContent = isSystemAdmin;
-  const canWorkflow = isSystemAdmin;
+  const canGeneral = auth.hasPermission("settings.general.update");
+  const canAppearance = auth.hasPermission("settings.appearance.update");
+  const canNavigation = auth.hasPermission("settings.navigation.update");
+  const canContent = auth.hasPermission("settings.content.update");
+  const canWorkflow = auth.hasPermission("settings.workflow.manage");
   const knownTabs = [
     "general",
     "appearance",
@@ -79,7 +78,8 @@ export function AdminSettingsPage() {
     "workflow",
     "pages",
   ];
-  const activeTab = knownTabs.includes(tab) ? tab : "general";
+  if (!knownTabs.includes(tab) || (tab === "workflow" && !canWorkflow))
+    return <Navigate to="/ar/admin/no-permission" replace />;
   const groups = state.data.settings.reduce<Record<string, Setting[]>>(
     (result, setting) => {
       if (setting.groupCode === "WORKFLOW") return result;
@@ -102,7 +102,7 @@ export function AdminSettingsPage() {
         : ["HEADER", "FOOTER"].includes(group)
           ? canNavigation
           : canContent;
-  const currentGroups = tabGroups[activeTab] ?? [];
+  const currentGroups = tabGroups[tab] ?? [];
   return (
     <section>
       <AdminPageHeader
@@ -136,7 +136,7 @@ export function AdminSettingsPage() {
           {message}
         </p>
       )}
-      {activeTab === "workflow" && canWorkflow && <WorkflowPoliciesEditor />}
+      {tab === "workflow" && canWorkflow && <WorkflowPoliciesEditor />}
       {currentGroups.map((group) => {
         const settings = groups[group] ?? [];
         const editable = editableForGroup(group);
@@ -157,7 +157,7 @@ export function AdminSettingsPage() {
           />
         );
       })}
-      {activeTab === "navigation" && (
+      {tab === "navigation" && (
         <section className="admin-card">
           <h2>التبويبات وروابط الترويسة والتذييل</h2>
           <div className="draft-articles">
@@ -185,7 +185,7 @@ export function AdminSettingsPage() {
           )}
         </section>
       )}
-      {activeTab === "pages" && (
+      {tab === "pages" && (
         <section className="admin-card">
           <h2>الصفحات العامة</h2>
           <p>

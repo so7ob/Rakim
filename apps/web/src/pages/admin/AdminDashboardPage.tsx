@@ -1,6 +1,7 @@
 import { useApi } from "../../hooks/use-api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 interface Dashboard {
   workflow: Array<{ status: string; count: number }>;
   imports: Array<{ status: string; count: number }>;
@@ -18,15 +19,17 @@ export function AdminDashboardPage() {
   const { data, error, loading, retry } = useApi<Dashboard>("/admin/dashboard");
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">نظرة تشغيلية</span>
-          <h1>لوحة الإدارة</h1>
-        </div>
-        <button className="button secondary" onClick={retry}>
-          تحديث
-        </button>
-      </header>
+      <AdminPageHeader
+        title="لوحة الإدارة"
+        eyebrow="نظرة تشغيلية"
+        description="ملخص دورة المحتوى والاستيراد والمهام وآخر أحداث التدقيق."
+        breadcrumbs={[{ label: "لوحة الإدارة" }]}
+        actions={
+          <button className="button secondary" onClick={retry}>
+            تحديث
+          </button>
+        }
+      />
       {loading ? (
         <LoadingCards />
       ) : error ? (

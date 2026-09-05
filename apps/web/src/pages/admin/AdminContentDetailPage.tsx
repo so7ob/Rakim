@@ -1,10 +1,12 @@
 import { useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminTabs } from "../../components/admin/AdminTabs";
 interface Detail {
   id: string;
   display_code: string | null;
@@ -19,6 +21,7 @@ interface Detail {
   repeal_date: string | null;
   legal_status: string;
   verification_level: string;
+  typeName?: string;
   versions: Array<{ preambleText: string | null }>;
   type_id: string;
   authority_id: string;
@@ -94,7 +97,7 @@ interface Detail {
   responsibilities: Array<{ duty: string; userName: string }>;
 }
 export function AdminContentDetailPage() {
-  const { id } = useParams();
+  const { id, tab = "general" } = useParams();
   const auth = useAuth();
   const item = useApi<Detail>(id ? `/admin/legislations/${id}` : null);
   const [msg, setMsg] = useState("");
@@ -109,7 +112,8 @@ export function AdminContentDetailPage() {
   const law = item.data;
   const isDraft = ["INBOX", "DRAFT", "IN_REVIEW"].includes(law.status);
   const canEditMetadata =
-    (auth.hasRole("DATA_ENTRY") && isDraft) || auth.hasRole("CONTENT_MANAGER");
+    (isDraft && auth.hasPermission("legislation.update")) ||
+    (!isDraft && auth.hasPermission("legislation.update_published_metadata"));
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
@@ -147,16 +151,56 @@ export function AdminContentDetailPage() {
   };
   return (
     <section>
-      <Link className="back-dark" to="/ar/admin/content">
-        ← العودة للمحتوى
-      </Link>
-      <header className="admin-title">
-        <div>
-          <StatusBadge status={law.status} />
-          <h1>{law.title_ar}</h1>
-        </div>
-      </header>
-      {canEditMetadata && (
+      <AdminPageHeader
+        eyebrow={`${law.typeName ?? "تشريع"} · ${law.year}`}
+        title={law.title_ar}
+        description={
+          law.summary_ar ?? "إدارة بيانات التشريع ونصه ومصادره ودورة اعتماده."
+        }
+        breadcrumbs={[
+          { label: "لوحة الإدارة", to: "/ar/admin" },
+          { label: "التشريعات", to: "/ar/admin/content" },
+          { label: law.title_ar },
+        ]}
+        status={<StatusBadge status={law.status} />}
+      />
+      <AdminTabs
+        label="أقسام التشريع"
+        items={[
+          { label: "البيانات العامة", to: `/ar/admin/content/${id}/general` },
+          {
+            label: "النص والمواد",
+            to: `/ar/admin/content/${id}/articles`,
+            count: law.articles.length,
+          },
+          {
+            label: "البنية",
+            to: `/ar/admin/content/${id}/structure`,
+            count: law.structures.length,
+          },
+          {
+            label: "الملاحق والجداول",
+            to: `/ar/admin/content/${id}/annexes`,
+            count: law.annexes.length,
+          },
+          {
+            label: "العلاقات",
+            to: `/ar/admin/content/${id}/relations`,
+            count: law.relations.length,
+          },
+          {
+            label: "المصادر",
+            to: `/ar/admin/content/${id}/sources`,
+            count: law.sources.length,
+          },
+          {
+            label: "سير العمل",
+            to: `/ar/admin/content/${id}/workflow`,
+            count: law.events.length,
+          },
+        ]}
+      />
+      {tab === "general" && canEditMetadata && (
         <form className="admin-card edit-form" onSubmit={save}>
           <h2>كل بيانات التشريع المعروضة</h2>
           {!isDraft && (
@@ -337,7 +381,43 @@ export function AdminContentDetailPage() {
           <button className="button">حفظ</button>
         </form>
       )}
-      {law.articles.length > 0 && (
+      {tab === "general" && !canEditMetadata && (
+        <section className="admin-card">
+          <h2>البيانات العامة</h2>
+          <p className="form-warning">
+            هذه البيانات متاحة للعرض فقط وفق صلاحيات حسابك وحالة التشريع.
+          </p>
+          <dl className="admin-summary-list">
+            <div>
+              <dt>رمز العرض</dt>
+              <dd>{law.display_code ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>الرقم والسنة</dt>
+              <dd>
+                {law.official_number ?? "—"} / {law.year}
+              </dd>
+            </div>
+            <div>
+              <dt>الحالة القانونية</dt>
+              <dd>{law.legal_status}</dd>
+            </div>
+            <div>
+              <dt>درجة التحقق</dt>
+              <dd>{law.verification_level}</dd>
+            </div>
+            <div>
+              <dt>تاريخ الإصدار</dt>
+              <dd>{law.issue_date?.slice(0, 10) ?? "—"}</dd>
+            </div>
+            <div>
+              <dt>تاريخ النفاذ</dt>
+              <dd>{law.effective_from?.slice(0, 10) ?? "—"}</dd>
+            </div>
+          </dl>
+        </section>
+      )}
+      {tab === "articles" && law.articles.length > 0 && (
         <section className="admin-card">
           <h2>مواد النسخة الحالية</h2>
           <p>
@@ -351,7 +431,8 @@ export function AdminContentDetailPage() {
                 article={article}
                 nodes={law.structures}
                 editable={
-                  auth.hasRole("DATA_ENTRY") && article.status === "DRAFT"
+                  auth.hasPermission("article.update") &&
+                  article.status === "DRAFT"
                 }
                 done={(message) => {
                   setMsg(message);
@@ -362,147 +443,202 @@ export function AdminContentDetailPage() {
           </div>
         </section>
       )}
-      {auth.hasRole("DATA_ENTRY", "CONTENT_MANAGER") && (
+      {tab === "articles" && law.articles.length === 0 && (
+        <AdminEmptyState
+          title="لا توجد مواد"
+          description="لم تُضف مواد قانونية إلى النسخة الحالية بعد."
+        />
+      )}
+      {tab === "structure" && (
         <section className="admin-card">
           <h2>الأبواب والفصول والأقسام</h2>
           <div className="draft-articles">
+            {law.structures.length === 0 &&
+              !auth.hasPermission("structure.manage") && (
+                <p>لا توجد بنية هرمية مسجلة لهذا التشريع.</p>
+              )}
             {law.structures.map((node) => (
               <StructureEditor
                 key={node.id}
                 node={node}
                 nodes={law.structures}
-                editable={auth.hasRole("DATA_ENTRY", "CONTENT_MANAGER")}
+                editable={auth.hasPermission("structure.manage")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
                 }}
               />
             ))}
-            <NewStructureEditor
-              id={law.id}
-              nodes={law.structures}
-              done={(message) => {
-                setMsg(message);
-                item.retry();
-              }}
-            />
+            {auth.hasPermission("structure.manage") && (
+              <NewStructureEditor
+                id={law.id}
+                nodes={law.structures}
+                done={(message) => {
+                  setMsg(message);
+                  item.retry();
+                }}
+              />
+            )}
           </div>
         </section>
       )}
-      {auth.hasRole("DATA_ENTRY", "CONTENT_MANAGER") && (
+      {tab === "annexes" && (
         <section className="admin-card">
           <h2>اللوائح والجداول والملاحق</h2>
           <p>
             تعديل النوع والعنوان والحالة؛ تبقى إصدارات الملفات التاريخية محفوظة.
           </p>
           <div className="draft-articles">
+            {law.annexes.length === 0 &&
+              !auth.hasPermission("annex.manage") && (
+                <p>لا توجد ملاحق أو جداول مسجلة.</p>
+              )}
             {law.annexes.map((annex) => (
               <AnnexEditor
                 key={annex.id}
                 annex={annex}
-                editable={auth.hasRole("DATA_ENTRY", "CONTENT_MANAGER")}
+                editable={auth.hasPermission("annex.manage")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
                 }}
               />
             ))}
-            <NewAnnexEditor
-              id={law.id}
-              sources={law.sources}
-              done={(message) => {
-                setMsg(message);
-                item.retry();
-              }}
-            />
+            {auth.hasPermission("annex.manage") && (
+              <NewAnnexEditor
+                id={law.id}
+                sources={law.sources}
+                done={(message) => {
+                  setMsg(message);
+                  item.retry();
+                }}
+              />
+            )}
           </div>
         </section>
       )}
-      {auth.hasRole("LEGAL_REVIEWER", "CONTENT_MANAGER") && (
+      {tab === "relations" && (
         <section className="admin-card">
           <h2>العلاقات القانونية</h2>
           <div className="draft-articles">
+            {law.relations.length === 0 &&
+              !auth.hasPermission("relation.manage") && (
+                <p>لا توجد علاقات قانونية مسجلة.</p>
+              )}
             {law.relations.map((relation) => (
               <RelationEditor
                 key={relation.id}
                 relation={relation}
                 options={law.references.legislationOptions}
                 sources={law.sources}
-                editable={auth.hasRole("LEGAL_REVIEWER", "CONTENT_MANAGER")}
+                editable={auth.hasPermission("relation.manage")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
                 }}
               />
             ))}
-            <NewRelationEditor
-              id={law.id}
-              options={law.references.legislationOptions}
-              sources={law.sources}
-              done={(message) => {
-                setMsg(message);
-                item.retry();
-              }}
-            />
+            {auth.hasPermission("relation.manage") && (
+              <NewRelationEditor
+                id={law.id}
+                options={law.references.legislationOptions}
+                sources={law.sources}
+                done={(message) => {
+                  setMsg(message);
+                  item.retry();
+                }}
+              />
+            )}
           </div>
         </section>
       )}
-      <section className="admin-card">
-        <h2>الإجراء التالي</h2>
-        <WorkflowActions
-          status={law.status}
-          roles={auth.user?.roles ?? []}
-          id={law.id}
-          done={() => {
-            item.retry();
-            setMsg("تم انتقال الحالة بنجاح.");
-          }}
-          setMessage={setMsg}
-        />
-        {msg && (
-          <p role="status" className="form-message">
-            {msg}
-          </p>
-        )}
-      </section>
-      <div className="admin-grid">
+      {tab === "workflow" && (
         <section className="admin-card">
-          <h2>المصادر</h2>
-          {law.sources.map((source) => (
-            <SourceEditor
-              key={source.id}
-              source={source}
-              editable={auth.hasRole("DATA_ENTRY", "LEGAL_REVIEWER")}
-              done={(message) => {
-                setMsg(message);
-                item.retry();
-              }}
-            />
-          ))}
-        </section>
-        <section className="admin-card">
-          <h2>فصل المسؤوليات</h2>
-          {law.responsibilities.map((r, i) => (
-            <p key={`${r.duty}-${i}`}>
-              {r.duty}: {r.userName}
+          <h2>الإجراء التالي</h2>
+          <WorkflowActions
+            status={law.status}
+            permissions={auth.user?.permissions ?? []}
+            id={law.id}
+            done={() => {
+              item.retry();
+              setMsg("تم انتقال الحالة بنجاح.");
+            }}
+            setMessage={setMsg}
+          />
+          {msg && (
+            <p role="status" className="form-message">
+              {msg}
             </p>
-          ))}
+          )}
         </section>
-        <section className="admin-card wide">
-          <h2>سجل سير العمل</h2>
-          {law.events.map((event) => (
-            <article className="timeline-row" key={event.id}>
-              <StatusBadge status={event.to_status} />
-              <div>
-                <strong>{event.actorName}</strong>
-                <p>{event.reason}</p>
-              </div>
-              <time>{new Date(event.created_at).toLocaleString("ar-YE")}</time>
-            </article>
-          ))}
-        </section>
-      </div>
+      )}
+      {tab === "sources" && (
+        <div className="admin-grid">
+          <section className="admin-card">
+            <h2>المصادر</h2>
+            {law.sources.length === 0 && (
+              <p>لا توجد وثائق مصدر مرتبطة بهذا التشريع.</p>
+            )}
+            {law.sources.map((source) => (
+              <SourceEditor
+                key={source.id}
+                source={source}
+                editable={auth.hasPermission("source.update")}
+                done={(message) => {
+                  setMsg(message);
+                  item.retry();
+                }}
+              />
+            ))}
+          </section>
+        </div>
+      )}
+      {tab === "workflow" && (
+        <div className="admin-grid">
+          <section className="admin-card">
+            <h2>فصل المسؤوليات</h2>
+            {law.responsibilities.length === 0 && (
+              <p>لا توجد مسؤوليات مسجلة على هذا التشريع.</p>
+            )}
+            {law.responsibilities.map((r, i) => (
+              <p key={`${r.duty}-${i}`}>
+                {r.duty}: {r.userName}
+              </p>
+            ))}
+          </section>
+          <section className="admin-card wide">
+            <h2>سجل سير العمل</h2>
+            {law.events.length === 0 && <p>لم تسجل انتقالات لسير العمل بعد.</p>}
+            {law.events.map((event) => (
+              <article className="timeline-row" key={event.id}>
+                <StatusBadge status={event.to_status} />
+                <div>
+                  <strong>{event.actorName}</strong>
+                  <p>{event.reason}</p>
+                </div>
+                <time>
+                  {new Date(event.created_at).toLocaleString("ar-YE")}
+                </time>
+              </article>
+            ))}
+          </section>
+        </div>
+      )}
     </section>
+  );
+}
+function AdminEmptyState({
+  title,
+  description,
+}: {
+  title: string;
+  description: string;
+}) {
+  return (
+    <div className="state-panel">
+      <h2>{title}</h2>
+      <p>{description}</p>
+    </div>
   );
 }
 function ArticleEditor({
@@ -1289,30 +1425,33 @@ function SourceEditor({
 
 function WorkflowActions({
   status,
-  roles,
+  permissions,
   id,
   done,
   setMessage,
 }: {
   status: string;
-  roles: string[];
+  permissions: string[];
   id: string;
   done: () => void;
   setMessage: (x: string) => void;
 }) {
   const actions = [] as Array<{ target: string; label: string }>;
-  if (status === "DRAFT" && roles.includes("DATA_ENTRY"))
+  if (status === "DRAFT" && permissions.includes("legislation.submit"))
     actions.push({ target: "IN_REVIEW", label: "إرسال للمراجعة" });
-  if (status === "IN_REVIEW" && roles.includes("LEGAL_REVIEWER"))
+  if (status === "IN_REVIEW" && permissions.includes("legislation.approve"))
     actions.push(
       { target: "DRAFT", label: "إعادة للمسودة" },
       { target: "APPROVED_FOR_PUBLISHING", label: "اعتماد للنشر" },
     );
-  if (status === "APPROVED_FOR_PUBLISHING" && roles.includes("CONTENT_MANAGER"))
+  if (
+    status === "APPROVED_FOR_PUBLISHING" &&
+    permissions.includes("legislation.publish")
+  )
     actions.push({ target: "PUBLISHED", label: "نشر" });
   if (
     ["PUBLISHED", "AMENDED", "REPEALED", "SUSPENDED"].includes(status) &&
-    roles.includes("CONTENT_MANAGER")
+    permissions.includes("legislation.archive")
   )
     actions.push({ target: "ARCHIVED", label: "أرشفة" });
   if (!actions.length)

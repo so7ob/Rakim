@@ -1,9 +1,12 @@
 import { useState, type FormEvent } from "react";
+import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminTabs } from "../../components/admin/AdminTabs";
 
 interface Amendment {
   id: string;
@@ -42,10 +45,13 @@ const labels: Record<string, string> = {
 };
 
 export function AdminAmendmentsPage() {
+  const { tab = "list" } = useParams();
   const auth = useAuth();
   const data = useApi<Amendment[]>("/admin/amendments");
   const candidates = useApi<Candidates>(
-    auth.hasRole("DATA_ENTRY") ? "/admin/amendments/candidates" : null,
+    auth.hasPermission("amendment.create")
+      ? "/admin/amendments/candidates"
+      : null,
   );
   const [msg, setMsg] = useState("");
   const act = async (item: Amendment, action: "review" | "publish") => {
@@ -83,13 +89,30 @@ export function AdminAmendmentsPage() {
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">إنشاء ← مراجعة مستقلة ← نشر</span>
-          <h1>عمليات التعديل</h1>
-        </div>
-      </header>
-      {auth.hasRole("DATA_ENTRY") && (
+      <AdminPageHeader
+        eyebrow="إنشاء ← مراجعة مستقلة ← نشر"
+        title="عمليات التعديل"
+        description="قائمة مستقلة لمسار التعديل ونموذج منفصل لإنشاء المسودة."
+        breadcrumbs={[
+          { label: "لوحة الإدارة", to: "/ar/admin" },
+          { label: "إدارة المحتوى" },
+          { label: "التعديلات" },
+        ]}
+      />
+      <AdminTabs
+        label="إدارة التعديلات"
+        items={[
+          {
+            label: "قائمة التعديلات",
+            to: "/ar/admin/amendments/list",
+            count: data.data?.length,
+          },
+          ...(auth.hasPermission("amendment.create")
+            ? [{ label: "إنشاء تعديل", to: "/ar/admin/amendments/create" }]
+            : []),
+        ]}
+      />
+      {tab === "create" && auth.hasPermission("amendment.create") && (
         <form className="admin-card edit-form" onSubmit={create}>
           <h2>تسجيل مسودة تعديل</h2>
           <div className="form-columns">
@@ -170,77 +193,79 @@ export function AdminAmendmentsPage() {
           {msg}
         </p>
       )}
-      {data.loading ? (
-        <LoadingCards />
-      ) : data.error ? (
-        <ErrorPanel message={data.error.message} retry={data.retry} />
-      ) : (
-        <div className="admin-list">
-          {data.data?.map((item) => (
-            <article
-              className="admin-card amendment-workflow"
-              key={item.operationId}
-            >
-              <header>
-                <div>
-                  <StatusBadge status={item.status} />
-                  <h2>{item.titleAr}</h2>
-                  <p>
-                    {item.legislationTitle} — المادة {item.articleLabel}
-                  </p>
-                </div>
-                <span className="tag">
-                  {labels[item.operationType] ?? item.operationType}
-                </span>
-              </header>
-              <dl className="inline-meta">
-                <div>
-                  <dt>بدء الأثر</dt>
-                  <dd>{item.effectiveFrom}</dd>
-                </div>
-                <div>
-                  <dt>المصدر</dt>
-                  <dd>{item.sourceName}</dd>
-                </div>
-                <div>
-                  <dt>المنشئ</dt>
-                  <dd>{item.createdBy ?? "بيانات سابقة"}</dd>
-                </div>
-                <div>
-                  <dt>المراجع</dt>
-                  <dd>{item.reviewedBy ?? "لم يراجع"}</dd>
-                </div>
-              </dl>
-              <p>{item.citationText}</p>
-              {item.proposedText && (
-                <details>
-                  <summary>النص المقترح</summary>
-                  <p className="legal-text compact">{item.proposedText}</p>
-                </details>
-              )}
-              <div className="row-actions">
-                {item.status === "DRAFT" && auth.hasRole("LEGAL_REVIEWER") && (
-                  <button
-                    className="button"
-                    onClick={() => act(item, "review")}
-                  >
-                    اعتماد المراجعة
-                  </button>
+      {tab === "list" &&
+        (data.loading ? (
+          <LoadingCards />
+        ) : data.error ? (
+          <ErrorPanel message={data.error.message} retry={data.retry} />
+        ) : (
+          <div className="admin-list">
+            {data.data?.map((item) => (
+              <article
+                className="admin-card amendment-workflow"
+                key={item.operationId}
+              >
+                <header>
+                  <div>
+                    <StatusBadge status={item.status} />
+                    <h2>{item.titleAr}</h2>
+                    <p>
+                      {item.legislationTitle} — المادة {item.articleLabel}
+                    </p>
+                  </div>
+                  <span className="tag">
+                    {labels[item.operationType] ?? item.operationType}
+                  </span>
+                </header>
+                <dl className="inline-meta">
+                  <div>
+                    <dt>بدء الأثر</dt>
+                    <dd>{item.effectiveFrom}</dd>
+                  </div>
+                  <div>
+                    <dt>المصدر</dt>
+                    <dd>{item.sourceName}</dd>
+                  </div>
+                  <div>
+                    <dt>المنشئ</dt>
+                    <dd>{item.createdBy ?? "بيانات سابقة"}</dd>
+                  </div>
+                  <div>
+                    <dt>المراجع</dt>
+                    <dd>{item.reviewedBy ?? "لم يراجع"}</dd>
+                  </div>
+                </dl>
+                <p>{item.citationText}</p>
+                {item.proposedText && (
+                  <details>
+                    <summary>النص المقترح</summary>
+                    <p className="legal-text compact">{item.proposedText}</p>
+                  </details>
                 )}
-                {item.status === "REVIEWED" &&
-                  auth.hasRole("CONTENT_MANAGER") && (
-                    <button
-                      className="button"
-                      onClick={() => act(item, "publish")}
-                    >
-                      نشر وتطبيق التعديل
-                    </button>
-                  )}
-              </div>
-            </article>
-          ))}
-        </div>
-      )}
+                <div className="row-actions">
+                  {item.status === "DRAFT" &&
+                    auth.hasPermission("amendment.review") && (
+                      <button
+                        className="button"
+                        onClick={() => act(item, "review")}
+                      >
+                        اعتماد المراجعة
+                      </button>
+                    )}
+                  {item.status === "REVIEWED" &&
+                    auth.hasPermission("amendment.publish") && (
+                      <button
+                        className="button"
+                        onClick={() => act(item, "publish")}
+                      >
+                        نشر وتطبيق التعديل
+                      </button>
+                    )}
+                </div>
+              </article>
+            ))}
+          </div>
+        ))}
     </section>
   );
 }

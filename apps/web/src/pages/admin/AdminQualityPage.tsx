@@ -3,6 +3,8 @@ import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { useAuth } from "../../auth/AuthContext";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 interface Issue {
   id?: string;
   issue_code?: string;
@@ -14,6 +16,8 @@ interface Issue {
   sourceName?: string;
 }
 export function AdminQualityPage() {
+  const { hasPermission } = useAuth();
+  const canManage = hasPermission("quality.manage");
   const { data, error, loading, retry } = useApi<{
     stored: Issue[];
     live: Issue[];
@@ -41,15 +45,21 @@ export function AdminQualityPage() {
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">بوابة ما قبل النشر</span>
-          <h1>جودة البيانات</h1>
-        </div>
-        <button className="button secondary" onClick={retry}>
-          إعادة الفحص
-        </button>
-      </header>
+      <AdminPageHeader
+        title="جودة البيانات"
+        eyebrow="بوابة ما قبل النشر"
+        description="مراجعة مشكلات الاكتمال والاتساق قبل النشر."
+        breadcrumbs={[
+          { label: "لوحة التحكم", to: "/admin" },
+          { label: "الحوكمة" },
+          { label: "جودة البيانات" },
+        ]}
+        actions={
+          <button className="button secondary" onClick={retry}>
+            إعادة الفحص
+          </button>
+        }
+      />
       {msg && (
         <p role="status" className="form-message">
           {msg}
@@ -73,7 +83,7 @@ export function AdminQualityPage() {
                 <h2>{issue.message_ar ?? issue.messageAr}</h2>
                 <p>{issue.legislationTitle ?? issue.sourceName ?? "فحص عام"}</p>
                 <code>{issue.issue_code ?? issue.issueCode}</code>
-                {issue.id && (
+                {canManage && issue.id && (
                   <div className="row-actions">
                     <button
                       className="button secondary"

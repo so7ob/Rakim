@@ -21,6 +21,7 @@ interface AuthValue {
   login: (username: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
   hasRole: (...roles: string[]) => boolean;
+  hasPermission: (...permissions: string[]) => boolean;
 }
 const AuthContext = createContext<AuthValue | undefined>(undefined);
 
@@ -66,6 +67,12 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       },
       hasRole: (...roles) =>
         Boolean(user?.roles.some((role) => roles.includes(role))),
+      hasPermission: (...permissions) =>
+        Boolean(
+          user?.permissions.some((permission) =>
+            permissions.includes(permission),
+          ),
+        ),
     }),
     [user, loading],
   );
