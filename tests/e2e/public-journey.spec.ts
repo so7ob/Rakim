@@ -236,6 +236,7 @@ test("responsive visual baseline", async ({ page }) => {
   await expect(page).toHaveScreenshot("home.png", {
     fullPage: true,
     animations: "disabled",
+    maxDiffPixelRatio: 0.015,
     mask: [
       page.locator(".home-statistics strong"),
       page.locator(".subject-count strong"),

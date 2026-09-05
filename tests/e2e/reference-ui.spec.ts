@@ -38,6 +38,7 @@ test("reference viewports have no overflow, missing assets, or UAE requests", as
         .locator('[aria-busy="true"]')
         .waitFor({ state: "detached" })
         .catch(() => undefined);
+      await page.waitForLoadState("networkidle");
       expect(
         await page.evaluate(
           () => document.documentElement.scrollWidth > innerWidth + 1,
