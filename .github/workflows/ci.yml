@@ -1,0 +1,120 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [develop]
+  push:
+    branches: [develop, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Lint, unit tests, build, and infrastructure
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: yemen_legislation_verify
+          MARIADB_USER: legislation_verify
+          MARIADB_PASSWORD: local-ci-password
+          MARIADB_ROOT_PASSWORD: local-ci-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      NODE_ENV: test
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: 3306
+      DATABASE_NAME: yemen_legislation_verify
+      DATABASE_USER: legislation_verify
+      DATABASE_PASSWORD: local-ci-password
+      DATABASE_LOGGING: "false"
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - name: Install infrastructure and extraction dependencies
+        run: >-
+          sudo apt-get update && sudo apt-get install --yes
+          mariadb-server nginx nodejs poppler-utils
+          tesseract-ocr tesseract-ocr-ara
+      - run: npm run db:migrate
+      - run: npm run seed
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+      - name: Validate Nginx and systemd configuration
+        run: sudo bash scripts/test/infra-config.sh
+
+  e2e:
+    name: MariaDB migrations, seed, and Playwright
+    runs-on: ubuntu-24.04
+    timeout-minutes: 25
+    services:
+      mariadb:
+        image: mariadb:11.4
+        env:
+          MARIADB_DATABASE: yemen_legislation_ci
+          MARIADB_USER: legislation_ci
+          MARIADB_PASSWORD: local-ci-password
+          MARIADB_ROOT_PASSWORD: local-ci-root-password
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s
+          --health-timeout=5s
+          --health-retries=20
+    env:
+      NODE_ENV: test
+      PORT: 4000
+      WEB_ORIGIN: http://127.0.0.1:4173
+      DATABASE_HOST: 127.0.0.1
+      DATABASE_PORT: 3306
+      DATABASE_NAME: yemen_legislation_ci
+      DATABASE_USER: legislation_ci
+      DATABASE_PASSWORD: local-ci-password
+      DATABASE_LOGGING: "false"
+      DATA_ROOT: /tmp/yemen-legislation-ci-data
+      RATE_LIMIT_TTL_MS: 60000
+      RATE_LIMIT_LIMIT: 1000
+      TRUST_PROXY_HOPS: 1
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 24
+          cache: npm
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm run db:migrate
+      - name: Verify repeatable development seed
+        run: npm run seed && npm run seed
+      - run: npm run build
+      - run: npm run test:e2e -- --workers=1
+      - name: Upload Playwright report on failure
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: playwright-report-${{ github.run_id }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 7

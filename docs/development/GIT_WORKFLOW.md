@@ -59,6 +59,8 @@
 
 تغييرات UI تتطلب Playwright لسطح المكتب والهاتف وRTL وفحص console/network/overflow، وتشغيل مسار `visual:*` المناسب. تغييرات الصلاحيات تختبر 401/403 وCSRF والحماية في الخادم والوصول المباشر والثبات بعد refresh وإعادة الدخول وإبطال الجلسات عند تغيير المنح.
 
+تشغّل GitHub Actions فحصين على كل PR إلى `develop`: `Lint, unit tests, build, and infrastructure`، و`MariaDB migrations, seed, and Playwright`. تستخدم CI قاعدة MariaDB وبيانات اصطناعية مؤقتة فقط، وتعيد تشغيل seed مرتين لكشف مشكلات التكرار. لا يُدمج PR إذا فشل أي فحص. تفعيل Required Checks على مستوى إعدادات GitHub يبقى مطلوبًا متى سمحت خطة المستودع بذلك.
+
 ## Merge Policy
 
 لا يدمج PR قبل تحقق Acceptance Criteria والاختبارات والبناء والمراجعة وRequired Checks وحل التعارضات. استخدم استراتيجية المستودع؛ وعند غيابها استخدم Squash and Merge للأعمال المناسبة للحفاظ على تتبع واضح. بعد الدمج تحقق من حالة PR وإغلاق Issue ووجود النتيجة على `origin/develop`.
