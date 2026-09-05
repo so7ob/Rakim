@@ -23,6 +23,7 @@ import { resolve, sep } from "node:path";
 import type { Response } from "express";
 import { SessionGuard } from "../auth/session.guard.js";
 import { RoleGuard, Roles } from "../common/role.guard.js";
+import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { ImportsService } from "./imports.service.js";
 
 class UploadMetaDto {
@@ -42,12 +43,13 @@ class DraftFromImportDto {
 
 @ApiTags("الاستيراد")
 @Controller("imports")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
 export class ImportsController {
   constructor(
     @Inject(ImportsService) private readonly service: ImportsService,
   ) {}
   @Post()
+  @Permissions("source.upload")
   @Roles("DATA_ENTRY")
   @ApiConsumes("multipart/form-data")
   @UseInterceptors(
@@ -67,16 +69,19 @@ export class ImportsController {
     return this.service.upload(file, dto.obtainedFrom, request.user!);
   }
   @Get()
+  @Permissions("source.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   list() {
     return this.service.list();
   }
   @Get(":id")
+  @Permissions("source.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   detail(@Param("id") id: string) {
     return this.service.detail(id);
   }
   @Get(":id/source")
+  @Permissions("source.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   async source(
     @Param("id") id: string,
@@ -96,14 +101,21 @@ export class ImportsController {
     );
     return new StreamableFile(createReadStream(target));
   }
-  @Post(":id/review") @HttpCode(200) @Roles("LEGAL_REVIEWER") review(
+  @Post(":id/review")
+  @HttpCode(200)
+  @Permissions("source.review")
+  @Roles("LEGAL_REVIEWER")
+  review(
     @Param("id") id: string,
     @Body() dto: ReviewImportDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.review(id, request.user!, dto.notes);
   }
-  @Post(":id/draft") @Roles("DATA_ENTRY") draft(
+  @Post(":id/draft")
+  @Permissions("source.create_draft")
+  @Roles("DATA_ENTRY")
+  draft(
     @Param("id") id: string,
     @Body() dto: DraftFromImportDto,
     @Req() request: AuthenticatedRequest,

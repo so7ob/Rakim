@@ -13,6 +13,7 @@ import { IsIn, IsOptional, IsString, Length, Matches } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { RoleGuard, Roles } from "../common/role.guard.js";
+import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { AmendmentsService } from "./amendments.service.js";
 
 class CreateAmendmentDto {
@@ -36,18 +37,25 @@ class ReasonDto {
 
 @ApiTags("التعديلات الإدارية")
 @Controller("admin/amendments")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
 export class AmendmentsController {
   constructor(
     @Inject(AmendmentsService) private readonly service: AmendmentsService,
   ) {}
-  @Get("candidates") @Roles("DATA_ENTRY") candidates() {
+  @Get("candidates")
+  @Permissions("amendment.create")
+  @Roles("DATA_ENTRY")
+  candidates() {
     return this.service.candidates();
   }
-  @Get() @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER") list() {
+  @Get()
+  @Permissions("amendment.view")
+  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER")
+  list() {
     return this.service.list();
   }
   @Post()
+  @Permissions("amendment.create")
   @Roles("DATA_ENTRY")
   @ApiOperation({ summary: "إنشاء مسودة عملية تعديل بمصدر صريح" })
   create(
@@ -56,14 +64,20 @@ export class AmendmentsController {
   ) {
     return this.service.create(dto, request.user!);
   }
-  @Post(":id/review") @Roles("LEGAL_REVIEWER") review(
+  @Post(":id/review")
+  @Permissions("amendment.review")
+  @Roles("LEGAL_REVIEWER")
+  review(
     @Param("id") id: string,
     @Body() dto: ReasonDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.review(id, request.user!, dto.reason);
   }
-  @Post(":id/publish") @Roles("CONTENT_MANAGER") publish(
+  @Post(":id/publish")
+  @Permissions("amendment.publish")
+  @Roles("CONTENT_MANAGER")
+  publish(
     @Param("id") id: string,
     @Body() dto: ReasonDto,
     @Req() request: AuthenticatedRequest,

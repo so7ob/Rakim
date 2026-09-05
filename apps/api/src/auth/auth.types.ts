@@ -6,6 +6,12 @@ export interface AuthUser {
   displayName: string;
   roles: string[];
   permissions: string[];
+  permissionDetails?: Array<{
+    code: string;
+    scope: "ALL" | "OWN" | "ASSIGNED";
+    source: "ROLE" | "DIRECT" | "POLICY_OVERRIDE";
+    sourceCodes: string[];
+  }>;
 }
 
 export interface AuthenticatedRequest extends Request {

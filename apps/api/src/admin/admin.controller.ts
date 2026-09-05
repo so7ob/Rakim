@@ -101,31 +101,13 @@ class CreateUserDto {
   @IsString() @Length(12, 200) password!: string;
   @IsArray()
   @ArrayUnique()
-  @IsIn(
-    [
-      "READER",
-      "DATA_ENTRY",
-      "LEGAL_REVIEWER",
-      "CONTENT_MANAGER",
-      "SYSTEM_ADMIN",
-    ],
-    { each: true },
-  )
+  @IsString({ each: true })
   roles!: string[];
 }
 class UserRolesDto {
   @IsArray()
   @ArrayUnique()
-  @IsIn(
-    [
-      "READER",
-      "DATA_ENTRY",
-      "LEGAL_REVIEWER",
-      "CONTENT_MANAGER",
-      "SYSTEM_ADMIN",
-    ],
-    { each: true },
-  )
+  @IsString({ each: true })
   roles!: string[];
   @IsString() @Length(3, 1000) reason!: string;
 }
@@ -246,27 +228,31 @@ class ReferenceItemDto {
 
 @ApiTags("الإدارة")
 @Controller("admin")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
 export class AdminController {
   constructor(@Inject(AdminService) private readonly service: AdminService) {}
 
   @Get("dashboard")
+  @Permissions("dashboard.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   @ApiOperation({ summary: "مؤشرات لوحة الإدارة" })
   dashboard() {
     return this.service.dashboard();
   }
   @Get("references")
+  @Permissions("reference.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   references() {
     return this.service.references();
   }
   @Get("reference-data")
+  @Permissions("reference.manage")
   @Roles("CONTENT_MANAGER")
   referenceData() {
     return this.service.referenceData();
   }
   @Post("reference-data/:kind")
+  @Permissions("reference.manage")
   @Roles("CONTENT_MANAGER")
   createReference(
     @Param("kind") kind: string,
@@ -277,6 +263,7 @@ export class AdminController {
     return this.service.createReference(kind, input, request.user!, reason);
   }
   @Patch("reference-data/:kind/:id")
+  @Permissions("reference.manage")
   @Roles("CONTENT_MANAGER")
   updateReference(
     @Param("kind") kind: string,
@@ -288,6 +275,7 @@ export class AdminController {
     return this.service.updateReference(kind, id, input, request.user!, reason);
   }
   @Get("legislations")
+  @Permissions("legislation.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER")
   legislations(
     @Query("status") status?: string,
@@ -297,11 +285,13 @@ export class AdminController {
     return this.service.legislations({ status, q, page: Number(page || 1) });
   }
   @Get("legislations/:id")
+  @Permissions("legislation.view")
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER")
   legislation(@Param("id") id: string) {
     return this.service.legislation(id);
   }
   @Patch("legislations/:id")
+  @Permissions("legislation.update", "legislation.update_published_metadata")
   @Roles("DATA_ENTRY", "CONTENT_MANAGER")
   update(
     @Param("id") id: string,
@@ -312,6 +302,12 @@ export class AdminController {
     return this.service.update(id, input, request.user!, reason);
   }
   @Post("legislations/:id/workflow")
+  @Permissions(
+    "legislation.submit",
+    "legislation.approve",
+    "legislation.publish",
+    "legislation.archive",
+  )
   @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER")
   workflow(
     @Param("id") id: string,
@@ -320,7 +316,10 @@ export class AdminController {
   ) {
     return this.service.transition(id, dto.target, request.user!, dto.reason);
   }
-  @Patch("articles/:id") @Roles("DATA_ENTRY") updateArticle(
+  @Patch("articles/:id")
+  @Permissions("article.update")
+  @Roles("DATA_ENTRY")
+  updateArticle(
     @Param("id") id: string,
     @Body() dto: UpdateArticleDto,
     @Req() request: AuthenticatedRequest,
@@ -332,7 +331,10 @@ export class AdminController {
       dto.reason,
     );
   }
-  @Patch("articles/:id/metadata") @Roles("DATA_ENTRY") updateArticleMetadata(
+  @Patch("articles/:id/metadata")
+  @Permissions("article.update")
+  @Roles("DATA_ENTRY")
+  updateArticleMetadata(
     @Param("id") id: string,
     @Body() dto: UpdateArticleMetadataDto,
     @Req() request: AuthenticatedRequest,
@@ -345,7 +347,10 @@ export class AdminController {
       reason,
     );
   }
-  @Patch("sources/:id") @Roles("DATA_ENTRY", "LEGAL_REVIEWER") updateSource(
+  @Patch("sources/:id")
+  @Permissions("source.update")
+  @Roles("DATA_ENTRY", "LEGAL_REVIEWER")
+  updateSource(
     @Param("id") id: string,
     @Body() dto: UpdateSourceDto,
     @Req() request: AuthenticatedRequest,
@@ -354,6 +359,7 @@ export class AdminController {
     return this.service.updateSource(id, input, request.user!, reason);
   }
   @Patch("structure/:id")
+  @Permissions("structure.manage")
   @Roles("DATA_ENTRY", "CONTENT_MANAGER")
   updateStructure(
     @Param("id") id: string,
@@ -364,6 +370,7 @@ export class AdminController {
     return this.service.updateStructure(id, input, request.user!, reason);
   }
   @Post("legislations/:id/structure")
+  @Permissions("structure.manage")
   @Roles("DATA_ENTRY", "CONTENT_MANAGER")
   createStructure(
     @Param("id") id: string,
@@ -373,7 +380,10 @@ export class AdminController {
     const { reason, ...input } = dto;
     return this.service.createStructure(id, input, request.user!, reason);
   }
-  @Patch("annexes/:id") @Roles("DATA_ENTRY", "CONTENT_MANAGER") updateAnnex(
+  @Patch("annexes/:id")
+  @Permissions("annex.manage")
+  @Roles("DATA_ENTRY", "CONTENT_MANAGER")
+  updateAnnex(
     @Param("id") id: string,
     @Body() dto: UpdateAnnexDto,
     @Req() request: AuthenticatedRequest,
@@ -382,6 +392,7 @@ export class AdminController {
     return this.service.updateAnnex(id, input, request.user!, reason);
   }
   @Post("legislations/:id/annexes")
+  @Permissions("annex.manage")
   @Roles("DATA_ENTRY", "CONTENT_MANAGER")
   createAnnex(
     @Param("id") id: string,
@@ -392,6 +403,7 @@ export class AdminController {
     return this.service.createAnnex(id, input, request.user!, reason);
   }
   @Patch("relations/:id")
+  @Permissions("relation.manage")
   @Roles("LEGAL_REVIEWER", "CONTENT_MANAGER")
   updateRelation(
     @Param("id") id: string,
@@ -402,6 +414,7 @@ export class AdminController {
     return this.service.updateRelation(id, input, request.user!, reason);
   }
   @Post("legislations/:id/relations")
+  @Permissions("relation.manage")
   @Roles("LEGAL_REVIEWER", "CONTENT_MANAGER")
   createRelation(
     @Param("id") id: string,
@@ -411,29 +424,27 @@ export class AdminController {
     const { reason, ...input } = dto;
     return this.service.createRelation(id, input, request.user!, reason);
   }
-  @Get("audit") @Roles("CONTENT_MANAGER", "SYSTEM_ADMIN") audit(
-    @Query("page") page?: string,
-    @Query("action") action?: string,
-  ) {
+  @Get("audit")
+  @Permissions("audit.view")
+  @Roles("CONTENT_MANAGER", "SYSTEM_ADMIN")
+  audit(@Query("page") page?: string, @Query("action") action?: string) {
     return this.service.audit({ page: Number(page || 1), action });
   }
-  @Get("users") @Roles("SYSTEM_ADMIN") users() {
+  @Get("users") @Permissions("user.view") @Roles("SYSTEM_ADMIN") users() {
     return this.service.users();
   }
-  @Get("roles") @Roles("SYSTEM_ADMIN") roles() {
+  @Get("roles") @Permissions("role.view") @Roles("SYSTEM_ADMIN") roles() {
     return this.service.roles();
   }
   @Get("workflow-policies")
   @Permissions("settings.workflow.manage")
   @Roles("SYSTEM_ADMIN")
-  @UseGuards(PermissionGuard)
   workflowPolicies() {
     return this.service.workflowPolicies();
   }
   @Patch("workflow-policies/:code")
   @Permissions("settings.workflow.manage")
   @Roles("SYSTEM_ADMIN")
-  @UseGuards(PermissionGuard)
   workflowPolicy(
     @Param("code") code: string,
     @Body() dto: WorkflowPolicyDto,
@@ -447,13 +458,14 @@ export class AdminController {
       dto.reason,
     );
   }
-  @Post("users") @Roles("SYSTEM_ADMIN") createUser(
+  @Post("users") @Permissions("user.create") @Roles("SYSTEM_ADMIN") createUser(
     @Body() dto: CreateUserDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.createUser(dto, request.user!);
   }
   @Patch("users/:id/state")
+  @Permissions("user.disable")
   @Roles("SYSTEM_ADMIN")
   userState(
     @Param("id") id: string,
@@ -467,14 +479,20 @@ export class AdminController {
       dto.reason,
     );
   }
-  @Patch("users/:id/roles") @Roles("SYSTEM_ADMIN") userRoles(
+  @Patch("users/:id/roles")
+  @Permissions("user.manage_roles")
+  @Roles("SYSTEM_ADMIN")
+  userRoles(
     @Param("id") id: string,
     @Body() dto: UserRolesDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.setUserRoles(id, dto.roles, request.user!, dto.reason);
   }
-  @Post("users/:id/reset-password") @Roles("SYSTEM_ADMIN") resetPassword(
+  @Post("users/:id/reset-password")
+  @Permissions("user.reset_password")
+  @Roles("SYSTEM_ADMIN")
+  resetPassword(
     @Param("id") id: string,
     @Body() dto: ResetPasswordDto,
     @Req() request: AuthenticatedRequest,
@@ -486,34 +504,42 @@ export class AdminController {
       dto.reason,
     );
   }
-  @Get("synonyms") @Roles("CONTENT_MANAGER") synonyms() {
+  @Get("synonyms")
+  @Permissions("search.synonym.view")
+  @Roles("CONTENT_MANAGER")
+  synonyms() {
     return this.service.synonyms();
   }
-  @Post("synonyms") @Roles("CONTENT_MANAGER") addSynonym(
-    @Body() dto: SynonymDto,
-    @Req() request: AuthenticatedRequest,
-  ) {
+  @Post("synonyms")
+  @Permissions("search.synonym.manage")
+  @Roles("CONTENT_MANAGER")
+  addSynonym(@Body() dto: SynonymDto, @Req() request: AuthenticatedRequest) {
     return this.service.addSynonym(dto.term, dto.synonym, request.user!);
   }
-  @Post("synonym-sets/:id/activate") @Roles("CONTENT_MANAGER") activateSynonyms(
+  @Post("synonym-sets/:id/activate")
+  @Permissions("search.synonym.manage")
+  @Roles("CONTENT_MANAGER")
+  activateSynonyms(
     @Param("id") id: string,
     @Body() dto: ReasonDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.activateSynonymSet(id, request.user!, dto.reason);
   }
-  @Delete("synonyms/:id") @Roles("CONTENT_MANAGER") deleteSynonym(
-    @Param("id") id: string,
-    @Req() request: AuthenticatedRequest,
-  ) {
+  @Delete("synonyms/:id")
+  @Permissions("search.synonym.manage")
+  @Roles("CONTENT_MANAGER")
+  deleteSynonym(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
     return this.service.deleteSynonym(id, request.user!);
   }
   @Get("quality")
+  @Permissions("quality.view")
   @Roles("LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
   quality() {
     return this.service.quality();
   }
   @Patch("quality/:id")
+  @Permissions("quality.manage")
   @Roles("LEGAL_REVIEWER", "CONTENT_MANAGER")
   resolveQuality(
     @Param("id") id: string,
@@ -522,10 +548,16 @@ export class AdminController {
   ) {
     return this.service.resolveQuality(id, dto.status, dto.note, request.user!);
   }
-  @Get("reports") @Roles("CONTENT_MANAGER") reports() {
+  @Get("reports")
+  @Permissions("report.view")
+  @Roles("CONTENT_MANAGER")
+  reports() {
     return this.service.reports();
   }
-  @Patch("reports/:id") @Roles("CONTENT_MANAGER") reportState(
+  @Patch("reports/:id")
+  @Permissions("report.manage")
+  @Roles("CONTENT_MANAGER")
+  reportState(
     @Param("id") id: string,
     @Body() dto: ReportStateDto,
     @Req() request: AuthenticatedRequest,
@@ -533,6 +565,7 @@ export class AdminController {
     return this.service.updateReport(id, dto.status, dto.reason, request.user!);
   }
   @Post("reindex")
+  @Permissions("search.reindex")
   @Roles("CONTENT_MANAGER", "SYSTEM_ADMIN")
   @ApiOperation({ summary: "إعادة بناء فهرس البحث المشتق كاملًا" })
   async reindex() {
@@ -543,10 +576,10 @@ export class AdminController {
 
 @ApiTags("النشر")
 @Controller("publications")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
 export class PublicationsController {
   constructor(@Inject(AdminService) private readonly service: AdminService) {}
-  @Post() @Roles("CONTENT_MANAGER") publish(
+  @Post() @Permissions("legislation.publish") @Roles("CONTENT_MANAGER") publish(
     @Body() dto: PublicationDto,
     @Req() request: AuthenticatedRequest,
   ) {
@@ -561,9 +594,10 @@ export class PublicationsController {
 
 @ApiTags("البحث")
 @Controller("reindex")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard, RoleGuard)
 export class ReindexController {
   @Post()
+  @Permissions("search.reindex")
   @Roles("CONTENT_MANAGER", "SYSTEM_ADMIN")
   @ApiOperation({ summary: "إعادة بناء فهرس البحث المشتق كاملًا" })
   async rebuild() {
