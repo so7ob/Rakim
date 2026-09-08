@@ -5049,6 +5049,28 @@ main .reference-annexes .annex-download {
 .admin-page-heading-row p { max-width: 780px; margin: 0; color: var(--color-muted); }
 .admin-page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
+.admin-dialog-small { width: min(100%, 520px); }
+.admin-dialog-large { width: min(100%, 1180px); }
+.admin-dialog > header { align-items: flex-start; }
+.admin-dialog > header p { margin: 5px 0 0; color: var(--color-muted); }
+.admin-dialog .modal-body > form { margin: 0; }
+.admin-dialog .form-message,
+.admin-dialog .form-error { margin-top: 0; }
+.button.danger { background: #9c3144; color: #fff; }
+.button.danger:hover { background: #7f2636; }
+.admin-entity-details {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 0 24px; margin: 0;
+}
+.admin-entity-details > div { padding: 13px 0; border-bottom: 1px solid #e4e9ec; min-width: 0; }
+.admin-entity-details dt { margin-bottom: 5px; color: var(--color-muted); font-size: 12px; font-weight: 700; }
+.admin-entity-details dd { margin: 0; color: var(--color-navy); font-weight: 700; overflow-wrap: anywhere; white-space: pre-wrap; }
+.admin-entity-detail-wide { grid-column: 1 / -1; }
+.admin-entity-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.admin-list-card { border: 1px solid #e0e6e9; border-radius: 13px; padding: 16px; background: #fff; }
+.admin-list-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+.admin-list-card > header h3 { margin: 0 0 4px; color: var(--color-navy); }
+.admin-list-card > header p { margin: 0; color: var(--color-muted); }
+
 .admin-tabs {
   position: sticky; top: 0; z-index: 20;
   display: flex; gap: 4px; overflow-x: auto; scrollbar-width: thin;
@@ -5179,6 +5201,9 @@ main .reference-annexes .annex-download {
   .role-summary-grid,
   .role-assignment-grid,
   .admin-detail-grid { grid-template-columns: 1fr; }
+  .admin-entity-details { grid-template-columns: 1fr; }
+  .admin-entity-detail-wide { grid-column: auto; }
+  .admin-list-card > header { flex-direction: column; }
   .permission-savebar { align-items: stretch; flex-direction: column; }
 }
 
