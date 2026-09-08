@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminDialog } from "../../components/admin/AdminDialog";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 
@@ -23,6 +24,9 @@ export function AdminRolesPage() {
   const roles = useApi<AccessRole[]>("/admin/access-roles");
   const [query, setQuery] = useState("");
   const [message, setMessage] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const visible = roles.data?.filter((role) =>
     `${role.nameAr} ${role.code} ${role.descriptionAr ?? ""}`
       .toLowerCase()
@@ -32,15 +36,19 @@ export function AdminRolesPage() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    setSubmitting(true);
+    setCreateError("");
     try {
       await apiRequest("/admin/access-roles", {
         body: Object.fromEntries(form),
       });
       setMessage("أُنشئ الدور المخصص دون صلاحيات أولية.");
-      formElement.reset();
+      setCreating(false);
       roles.retry();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تعذر إنشاء الدور.");
+      setCreateError(error instanceof Error ? error.message : "تعذر إنشاء الدور.");
+    } finally {
+      setSubmitting(false);
     }
   };
   return (
@@ -54,16 +62,23 @@ export function AdminRolesPage() {
           { label: "المستخدمون والوصول" },
           { label: "الأدوار" },
         ]}
+        actions={
+          auth.hasPermission("role.create") ? (
+            <button type="button" className="button" onClick={() => setCreating(true)}>
+              + إنشاء دور
+            </button>
+          ) : undefined
+        }
       />
       {message && (
         <p className="form-message" role="status">
           {message}
         </p>
       )}
-      {auth.hasPermission("role.create") && (
-        <details className="admin-card admin-create-panel">
-          <summary>إنشاء دور مخصص</summary>
+      {creating && auth.hasPermission("role.create") && (
+        <AdminDialog title="إنشاء دور مخصص" onClose={() => setCreating(false)}>
           <form className="edit-form" onSubmit={create}>
+            {createError && <p className="form-error" role="alert">{createError}</p>}
             <div className="form-columns">
               <label>
                 اسم الدور
@@ -87,9 +102,12 @@ export function AdminRolesPage() {
               سبب الإنشاء
               <input name="reason" required minLength={3} />
             </label>
-            <button className="button">إنشاء الدور</button>
+            <div className="admin-entity-actions">
+              <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={submitting}>إلغاء</button>
+              <button className="button" disabled={submitting}>{submitting ? "جار الإنشاء…" : "إنشاء الدور"}</button>
+            </div>
           </form>
-        </details>
+        </AdminDialog>
       )}
       <div className="admin-filterbar">
         <label>

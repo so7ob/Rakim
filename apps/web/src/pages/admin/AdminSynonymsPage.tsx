@@ -5,6 +5,8 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 interface Synonym {
   setId: string;
   versionNo: number;
@@ -21,6 +23,11 @@ export function AdminSynonymsPage() {
   const canActivate = hasPermission("search.synonym_set.activate");
   const data = useApi<Synonym[]>("/admin/synonyms");
   const [msg, setMsg] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<Synonym | null>(null);
+  const [activating, setActivating] = useState<Synonym | null>(null);
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const sets = useMemo(
     () =>
       Array.from(
@@ -32,15 +39,19 @@ export function AdminSynonymsPage() {
     e.preventDefault();
     const formElement = e.currentTarget;
     const f = new FormData(formElement);
+    setSubmitting(true);
+    setSubmitError("");
     try {
       await apiRequest("/admin/synonyms", {
         body: { term: f.get("term"), synonym: f.get("synonym") },
       });
-      formElement.reset();
+      setCreating(false);
       setMsg("أضيف المرادف إلى نسخة قاموس مسودة.");
       data.retry();
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : "تعذر الإضافة.");
+      setSubmitError(error instanceof Error ? error.message : "تعذر الإضافة.");
+    } finally {
+      setSubmitting(false);
     }
   };
   const activate = async (id: string) => {
@@ -49,6 +60,7 @@ export function AdminSynonymsPage() {
         body: { reason: "اعتماد ونشر قاموس المرادفات بعد المراجعة" },
       });
       setMsg("نُشرت نسخة القاموس وأصبحت متاحة للبحث مباشرة.");
+      setActivating(null);
       data.retry();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "تعذر النشر.");
@@ -58,6 +70,7 @@ export function AdminSynonymsPage() {
     try {
       await apiRequest(`/admin/synonyms/${id}`, { method: "DELETE" });
       setMsg("حُذف المرادف من المسودة.");
+      setDeleting(null);
       data.retry();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "تعذر الحذف.");
@@ -70,13 +83,22 @@ export function AdminSynonymsPage() {
         eyebrow="قابل للإصدار والمراجعة"
         description="إدارة نسخ المرادفات القانونية المستخدمة في توسيع نتائج البحث."
         breadcrumbs={[
-          { label: "لوحة التحكم", to: "/admin" },
+          { label: "لوحة التحكم", to: "/ar/admin" },
           { label: "إدارة البحث" },
           { label: "قاموس المرادفات" },
         ]}
+        actions={
+          canCreate ? (
+            <button type="button" className="button" onClick={() => setCreating(true)}>
+              + إضافة مرادف
+            </button>
+          ) : undefined
+        }
       />
-      {canCreate && (
-        <form className="admin-card inline-form" onSubmit={submit}>
+      {creating && canCreate && (
+        <AdminDialog title="إضافة مرادف إلى المسودة" onClose={() => setCreating(false)}>
+        <form className="edit-form" onSubmit={submit}>
+          {submitError && <p className="form-error" role="alert">{submitError}</p>}
           <label>
             المصطلح
             <input name="term" required />
@@ -85,8 +107,12 @@ export function AdminSynonymsPage() {
             المرادف
             <input name="synonym" required />
           </label>
-          <button className="button">إضافة لمسودة</button>
+          <div className="admin-entity-actions">
+            <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={submitting}>إلغاء</button>
+            <button className="button" disabled={submitting}>{submitting ? "جار الإضافة…" : "إضافة لمسودة"}</button>
+          </div>
         </form>
+        </AdminDialog>
       )}
       {msg && (
         <p className="form-message" role="status">
@@ -103,7 +129,7 @@ export function AdminSynonymsPage() {
               <p>نشر في {new Date(set.publishedAt).toLocaleString("ar-YE")}</p>
             )}
             {canActivate && set.status === "DRAFT" && (
-              <button className="button" onClick={() => activate(set.setId)}>
+              <button className="button" onClick={() => setActivating(set)}>
                 اعتماد هذا الإصدار ونشره
               </button>
             )}
@@ -139,7 +165,7 @@ export function AdminSynonymsPage() {
                     {canDelete && item.id && item.status === "DRAFT" && (
                       <button
                         className="link-button danger"
-                        onClick={() => remove(item.id!)}
+                        onClick={() => setDeleting(item)}
                       >
                         حذف
                       </button>
@@ -150,6 +176,25 @@ export function AdminSynonymsPage() {
             </tbody>
           </table>
         </div>
+      )}
+      {deleting?.id && (
+        <ConfirmDialog
+          title={`حذف المرادف «${deleting.termAr}»؟`}
+          description={`سيحذف الربط مع «${deleting.synonymAr}» من نسخة القاموس المسودة فقط.`}
+          confirmLabel="حذف المرادف"
+          onClose={() => setDeleting(null)}
+          onConfirm={() => remove(deleting.id!)}
+        />
+      )}
+      {activating && (
+        <ConfirmDialog
+          title={`نشر الإصدار ${activating.versionNo}؟`}
+          description="ستصبح هذه النسخة هي القاموس المستخدم في توسيع البحث."
+          confirmLabel="اعتماد ونشر"
+          destructive={false}
+          onClose={() => setActivating(null)}
+          onConfirm={() => activate(activating.setId)}
+        />
       )}
     </section>
   );
