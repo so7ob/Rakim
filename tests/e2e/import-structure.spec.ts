@@ -315,19 +315,55 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
     page.getByRole("heading", { name: "الفصل الأول — التعاريف" }),
   ).toBeVisible();
   await page.getByRole("link", { name: /النص والمواد/ }).click();
-  await expect(
-    page.getByText("المادة 1 — النسخة 1", { exact: false }),
-  ).toBeVisible();
-  await expect(
-    page.getByText("المادة 5 — النسخة 1", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "المادة 1" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "المادة 5" })).toBeVisible();
+  await expect(page.locator(".admin-list-card input")).toHaveCount(0);
+  await expect(page.locator(".admin-list-card textarea")).toHaveCount(0);
+  await page.getByRole("button", { name: "تعديل المادة" }).first().click();
+  const articleDialog = page.getByRole("dialog", { name: "تعديل المادة 1" });
+  await expect(articleDialog).toBeVisible();
+  await expect(articleDialog.getByLabel("النص")).toHaveValue(/المادة/);
+  await articleDialog.getByRole("button", { name: "إلغاء" }).click();
+  await expect(articleDialog).toBeHidden();
   await page.reload();
-  await expect(
-    page.getByText("المادة 1 — النسخة 1", { exact: false }),
-  ).toBeVisible();
+  await expect(page.getByRole("heading", { name: "المادة 1" })).toBeVisible();
 
   const lawId = page.url().match(/content\/([^/]+)/)?.[1];
   expect(lawId).toBeTruthy();
+  await page.goto(`/ar/admin/content/${lawId}/general`);
+  await expect(page.locator(".admin-card input")).toHaveCount(0);
+  await expect(page.locator(".admin-card textarea")).toHaveCount(0);
+  await page.getByRole("button", { name: "تعديل البيانات" }).click();
+  const metadataDialog = page.getByRole("dialog", {
+    name: "تعديل بيانات التشريع",
+  });
+  await expect(metadataDialog.getByLabel("العنوان")).toHaveValue(draftTitle);
+  const updatedSummary = `ملخص View First للاختبار ${unique}`;
+  await metadataDialog.getByLabel("الملخص").fill(updatedSummary);
+  await metadataDialog
+    .getByLabel("سبب التعديل")
+    .fill("اختبار حفظ حوار البيانات الوصفية");
+  const metadataResponsePromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/v1/admin/legislations/${lawId}`) &&
+      response.request().method() === "PATCH",
+  );
+  await metadataDialog
+    .getByRole("button", { name: "حفظ التغييرات" })
+    .click();
+  expect((await metadataResponsePromise).ok()).toBeTruthy();
+  await expect(metadataDialog).toBeHidden();
+  await expect(
+    page.locator(".admin-entity-details dd").filter({ hasText: updatedSummary }),
+  ).toBeVisible();
+  await page.reload();
+  await expect(
+    page.locator(".admin-entity-details dd").filter({ hasText: updatedSummary }),
+  ).toBeVisible();
+  await page.screenshot({
+    path: testInfo.outputPath("admin-content-view-first.png"),
+    fullPage: true,
+  });
   const detailResponse = await page.request.get(
     `/api/v1/admin/legislations/${lawId}`,
   );

@@ -41,7 +41,9 @@ export function AdminDialog({
   const dialogRef = useRef<HTMLDivElement>(null);
   const returnFocusRef = useRef<HTMLElement | null>(null);
   const dirtyRef = useRef(dirty);
+  const onCloseRef = useRef(onClose);
   dirtyRef.current = dirty;
+  onCloseRef.current = onClose;
 
   const requestClose = () => {
     if (
@@ -49,7 +51,7 @@ export function AdminDialog({
       !window.confirm("لديك تغييرات غير محفوظة. هل تريد إغلاق النافذة؟")
     )
       return;
-    onClose();
+    onCloseRef.current();
   };
 
   useEffect(() => {
@@ -99,7 +101,7 @@ export function AdminDialog({
       document.body.style.overflow = previousOverflow;
       returnFocusRef.current?.focus();
     };
-  }, [initialFocusRef, onClose]);
+  }, [initialFocusRef]);
 
   return (
     <div
