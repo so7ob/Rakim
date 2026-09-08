@@ -11,6 +11,9 @@ import {
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { UnsavedChangesGuard } from "../../components/admin/UnsavedChangesGuard";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { EntityDetails } from "../../components/admin/EntityDetails";
 
 interface RoleDetail {
   id: string;
@@ -72,6 +75,10 @@ export function AdminRoleDetailPage() {
   );
   const [selection, setSelection] = useState<Map<string, string> | null>(null);
   const [message, setMessage] = useState("");
+  const [editing, setEditing] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [editError, setEditError] = useState("");
   const selected = useMemo(
     () =>
       selection ??
@@ -115,6 +122,15 @@ export function AdminRoleDetailPage() {
             {data.isActive ? "فعال" : "معطل"}
           </span>
         }
+        actions={
+          tab === "general" &&
+          !data.isProtected &&
+          auth.hasPermission("role.update") ? (
+            <button type="button" className="button" onClick={() => setEditing(true)}>
+              تعديل الدور
+            </button>
+          ) : undefined
+        }
       />
       <AdminTabs
         label="تفاصيل الدور"
@@ -156,110 +172,80 @@ export function AdminRoleDetailPage() {
         </p>
       )}
       {tab === "general" && (
-        <form
-          className="admin-card settings-form"
-          onSubmit={async (event: FormEvent<HTMLFormElement>) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            try {
-              await apiRequest(`/admin/access-roles/${id}`, {
-                method: "PATCH",
-                body: {
-                  nameAr: form.get("nameAr"),
-                  descriptionAr: form.get("descriptionAr"),
-                  isActive: form.get("isActive") === "true",
-                  reason: form.get("reason"),
-                },
-              });
-              setMessage("حُفظت بيانات الدور.");
-              role.retry();
-            } catch (error) {
-              setMessage(
-                error instanceof Error ? error.message : "تعذر الحفظ.",
-              );
-            }
-          }}
-        >
+        <section className="admin-card">
           <h2>بيانات الدور</h2>
-          <div className="form-columns">
-            <label>
-              الاسم
-              <input
-                name="nameAr"
-                defaultValue={data.nameAr}
-                required
-                disabled={
-                  data.isProtected || !auth.hasPermission("role.update")
-                }
-              />
-            </label>
-            <label>
-              الرمز
-              <input dir="ltr" value={data.code} readOnly />
-            </label>
-            <label>
-              الحالة
-              <select
-                name="isActive"
-                defaultValue={String(data.isActive)}
-                disabled={
-                  data.isSystem ||
-                  data.isProtected ||
-                  !auth.hasPermission("role.update")
-                }
-              >
-                <option value="true">فعال</option>
-                <option value="false">معطل</option>
-              </select>
-            </label>
-          </div>
-          <label>
-            الوصف
-            <textarea
-              name="descriptionAr"
-              defaultValue={data.descriptionAr ?? ""}
-              disabled={data.isProtected || !auth.hasPermission("role.update")}
-            />
-          </label>
-          {!data.isProtected && auth.hasPermission("role.update") && (
-            <>
-              <label>
-                سبب التغيير
-                <input name="reason" required />
-              </label>
-              <button className="button">حفظ بيانات الدور</button>
-            </>
-          )}
+          <EntityDetails items={[
+            { label: "الاسم", value: data.nameAr },
+            { label: "الرمز", value: <code dir="ltr">{data.code}</code> },
+            { label: "النوع", value: data.isProtected ? "محمي" : data.isSystem ? "نظامي" : "مخصص" },
+            { label: "الحالة", value: data.isActive ? "فعال" : "معطل" },
+            { label: "الوصف", value: data.descriptionAr || "—", wide: true },
+            { label: "آخر تحديث", value: new Date(data.updatedAt).toLocaleString("ar-YE") },
+          ]} />
           {!data.isSystem &&
             !data.isProtected &&
             auth.hasPermission("role.delete") && (
-              <button
-                type="button"
-                className="link-button danger"
-                onClick={async () => {
-                  if (
-                    !window.confirm(
-                      "لن يمكن استعادة الدور بعد الحذف. هل تريد المتابعة؟",
-                    )
-                  )
-                    return;
-                  try {
-                    await apiRequest(`/admin/access-roles/${id}`, {
-                      method: "DELETE",
-                      body: { reason: "حذف دور مخصص بعد التحقق من عدم إسناده" },
-                    });
-                    navigate("/ar/admin/roles");
-                  } catch (error) {
-                    setMessage(
-                      error instanceof Error ? error.message : "تعذر الحذف.",
-                    );
-                  }
-                }}
-              >
+              <button type="button" className="link-button danger" onClick={() => setDeleting(true)}>
                 حذف الدور المخصص
               </button>
             )}
-        </form>
+        </section>
+      )}
+      {editing && (
+        <AdminDialog title={`تعديل ${data.nameAr}`} onClose={() => setEditing(false)}>
+          <form
+            className="edit-form"
+            onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              setSaving(true);
+              setEditError("");
+              try {
+                await apiRequest(`/admin/access-roles/${id}`, {
+                  method: "PATCH",
+                  body: {
+                    nameAr: form.get("nameAr"),
+                    descriptionAr: form.get("descriptionAr"),
+                    isActive: form.get("isActive") === "true",
+                    reason: form.get("reason"),
+                  },
+                });
+                setEditing(false);
+                setMessage("حُفظت بيانات الدور.");
+                role.retry();
+              } catch (error) {
+                setEditError(error instanceof Error ? error.message : "تعذر الحفظ.");
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {editError && <p className="form-error" role="alert">{editError}</p>}
+            <label>الاسم<input name="nameAr" defaultValue={data.nameAr} required /></label>
+            <label>الحالة<select name="isActive" defaultValue={String(data.isActive)} disabled={data.isSystem}><option value="true">فعال</option><option value="false">معطل</option></select></label>
+            <label>الوصف<textarea name="descriptionAr" defaultValue={data.descriptionAr ?? ""} /></label>
+            <label>سبب التغيير<input name="reason" required /></label>
+            <div className="admin-entity-actions">
+              <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
+              <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ بيانات الدور"}</button>
+            </div>
+          </form>
+        </AdminDialog>
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title={`حذف الدور ${data.nameAr}؟`}
+          description="لن يمكن استعادة الدور، ولا يسمح الخادم بحذف دور مسند إلى مستخدمين."
+          confirmLabel="حذف الدور"
+          onClose={() => setDeleting(false)}
+          onConfirm={async () => {
+            await apiRequest(`/admin/access-roles/${id}`, {
+              method: "DELETE",
+              body: { reason: "حذف دور مخصص بعد التحقق من عدم إسناده" },
+            });
+            navigate("/ar/admin/roles");
+          }}
+        />
       )}
       {tab === "permissions" && (
         <section className="admin-card">

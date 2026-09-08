@@ -1,11 +1,12 @@
-import { useState } from "react";
+import { useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
+import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
+import { AdminDialog } from "../../components/admin/AdminDialog";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
-import { useAuth } from "../../auth/AuthContext";
 
 interface Item {
   id: string;
@@ -24,23 +25,32 @@ const labels = {
   authorities: "الجهات",
   subjects: "الموضوعات",
 } as const;
+type Kind = keyof typeof labels;
 
 export function AdminReferenceDataPage() {
   const { kind = "types" } = useParams();
+  const activeKind = (Object.keys(labels) as Kind[]).includes(kind as Kind)
+    ? (kind as Kind)
+    : "types";
   const auth = useAuth();
-  const data = useApi<Data>("/admin/reference-data");
+  const state = useApi<Data>("/admin/reference-data");
   const [message, setMessage] = useState("");
-  if (data.loading) return <LoadingCards />;
-  if (data.error || !data.data)
+  const [editing, setEditing] = useState<Item | null>(null);
+  const [creating, setCreating] = useState(false);
+  if (state.loading) return <LoadingCards />;
+  if (state.error || !state.data)
     return (
       <ErrorPanel
-        message={data.error?.message ?? "تعذر تحميل القوائم."}
-        retry={data.retry}
+        message={state.error?.message ?? "تعذر تحميل القوائم."}
+        retry={state.retry}
       />
     );
+  const items = state.data[activeKind];
+  const parentName = (id?: string | null) =>
+    state.data!.subjects.find((subject) => subject.id === id)?.nameAr ?? "—";
   const done = (text: string) => {
     setMessage(text);
-    data.retry();
+    state.retry();
   };
   return (
     <section>
@@ -53,200 +63,165 @@ export function AdminReferenceDataPage() {
           { label: "إدارة المحتوى" },
           { label: "القوائم المرجعية" },
         ]}
+        actions={
+          auth.hasPermission("reference.create") ? (
+            <button type="button" className="button" onClick={() => setCreating(true)}>
+              + إضافة إلى {labels[activeKind]}
+            </button>
+          ) : undefined
+        }
       />
       <AdminTabs
         label="أنواع القوائم المرجعية"
         items={[
-          {
-            label: "أنواع التشريعات",
-            to: "/ar/admin/reference-data/types",
-            count: data.data.types.length,
-          },
-          {
-            label: "التصنيفات والموضوعات",
-            to: "/ar/admin/reference-data/subjects",
-            count: data.data.subjects.length,
-          },
-          {
-            label: "الجهات",
-            to: "/ar/admin/reference-data/authorities",
-            count: data.data.authorities.length,
-          },
+          { label: "أنواع التشريعات", to: "/ar/admin/reference-data/types", count: state.data.types.length },
+          { label: "التصنيفات والموضوعات", to: "/ar/admin/reference-data/subjects", count: state.data.subjects.length },
+          { label: "الجهات", to: "/ar/admin/reference-data/authorities", count: state.data.authorities.length },
         ]}
       />
-      {message && (
-        <p role="status" className="form-message">
-          {message}
-        </p>
+      {message && <p role="status" className="form-message">{message}</p>}
+      <section className="admin-card">
+        <h2>{labels[activeKind]}</h2>
+        {!items.length ? (
+          <div className="admin-empty-inline">لا توجد عناصر في هذه القائمة.</div>
+        ) : (
+          <div className="admin-table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>الاسم</th>
+                  <th>الرمز</th>
+                  {activeKind === "subjects" && <th>الموضوع الأب</th>}
+                  <th>الحالة</th>
+                  <th>الإجراءات</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((item) => (
+                  <tr key={item.id}>
+                    <td><strong>{item.nameAr}</strong></td>
+                    <td><code dir="ltr">{item.code}</code></td>
+                    {activeKind === "subjects" && <td>{parentName(item.parentId)}</td>}
+                    <td>{item.isActive ? "فعال" : "معطل"}</td>
+                    <td>
+                      {auth.hasPermission("reference.update") ? (
+                        <button type="button" className="button secondary" onClick={() => setEditing(item)}>
+                          تعديل
+                        </button>
+                      ) : "عرض فقط"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+      {creating && (
+        <ReferenceDialog
+          kind={activeKind}
+          subjects={state.data.subjects}
+          onClose={() => setCreating(false)}
+          onDone={(text) => { setCreating(false); done(text); }}
+        />
       )}
-      {(Object.keys(labels) as Array<keyof typeof labels>)
-        .filter((item) => item === kind)
-        .map((activeKind) => (
-          <section className="admin-card" key={activeKind}>
-            <h2>{labels[activeKind]}</h2>
-            <div className="draft-articles">
-              {data.data![activeKind].map((item) => (
-                <ReferenceEditor
-                  key={item.id}
-                  kind={activeKind}
-                  item={item}
-                  subjects={data.data!.subjects}
-                  editable={auth.hasPermission("reference.update")}
-                  done={done}
-                />
-              ))}
-              {auth.hasPermission("reference.create") && (
-                <NewReference
-                  kind={activeKind}
-                  subjects={data.data!.subjects}
-                  done={done}
-                />
-              )}
-            </div>
-          </section>
-        ))}
+      {editing && (
+        <ReferenceDialog
+          kind={activeKind}
+          item={editing}
+          subjects={state.data.subjects}
+          onClose={() => setEditing(null)}
+          onDone={(text) => { setEditing(null); done(text); }}
+        />
+      )}
     </section>
   );
 }
 
-function fields(
-  kind: keyof typeof labels,
-  item: Partial<Item>,
-  subjects: Item[],
-) {
-  return (
-    <div className="form-columns">
-      <label>
-        الرمز
-        <input
-          name="code"
-          defaultValue={item.code ?? ""}
-          pattern="[A-Za-z0-9_]+"
-          required
-        />
-      </label>
-      <label>
-        الاسم العربي
-        <input name="nameAr" defaultValue={item.nameAr ?? ""} required />
-      </label>
-      {kind === "subjects" && (
-        <label>
-          الموضوع الأب
-          <select name="parentId" defaultValue={item.parentId ?? ""}>
-            <option value="">بلا أب</option>
-            {subjects
-              .filter((x) => x.id !== item.id)
-              .map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.nameAr}
-                </option>
-              ))}
-          </select>
-        </label>
-      )}
-      <label className="setting-toggle">
-        <input
-          name="isActive"
-          type="checkbox"
-          defaultChecked={item.isActive ?? true}
-        />
-        فعال
-      </label>
-    </div>
-  );
-}
-function ReferenceEditor({
+function ReferenceDialog({
   kind,
   item,
   subjects,
-  editable,
-  done,
+  onClose,
+  onDone,
 }: {
-  kind: keyof typeof labels;
-  item: Item;
+  kind: Kind;
+  item?: Item;
   subjects: Item[];
-  editable: boolean;
-  done: (x: string) => void;
+  onClose: () => void;
+  onDone: (message: string) => void;
 }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const submit = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    const form = new FormData(event.currentTarget);
+    setSubmitting(true);
+    setError("");
+    try {
+      await apiRequest(
+        item
+          ? `/admin/reference-data/${kind}/${item.id}`
+          : `/admin/reference-data/${kind}`,
+        {
+          ...(item ? { method: "PATCH" } : {}),
+          body: {
+            code: form.get("code"),
+            nameAr: form.get("nameAr"),
+            parentId: form.get("parentId"),
+            isActive: form.has("isActive"),
+            reason: form.get("reason"),
+          },
+        },
+      );
+      onDone(item ? "حُفظ عنصر القائمة المرجعية." : "أضيف عنصر القائمة المرجعية.");
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر حفظ العنصر.");
+      setSubmitting(false);
+    }
+  };
   return (
-    <details className="draft-article">
-      <summary>
-        {item.nameAr} — {item.code} {item.isActive ? "" : "(معطل)"}
-      </summary>
-      {editable && (
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const f = new FormData(event.currentTarget);
-            try {
-              await apiRequest(`/admin/reference-data/${kind}/${item.id}`, {
-                method: "PATCH",
-                body: {
-                  code: f.get("code"),
-                  nameAr: f.get("nameAr"),
-                  parentId: f.get("parentId"),
-                  isActive: f.has("isActive"),
-                  reason: f.get("reason"),
-                },
-              });
-              done("حُفظ عنصر القائمة المرجعية.");
-            } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر الحفظ.");
-            }
-          }}
-        >
-          {fields(kind, item, subjects)}
+    <AdminDialog
+      title={`${item ? "تعديل" : "إضافة"} عنصر في ${labels[kind]}`}
+      description={item ? "القيمة الحالية تبقى معروضة حتى يؤكد الخادم التعديل." : undefined}
+      onClose={onClose}
+    >
+      <form className="edit-form" onSubmit={submit}>
+        {error && <p className="form-error" role="alert">{error}</p>}
+        <div className="form-columns">
           <label>
-            سبب التغيير
-            <input name="reason" required />
+            الرمز
+            <input name="code" defaultValue={item?.code ?? ""} pattern="[A-Za-z0-9_]+" required />
           </label>
-          <button className="button secondary">حفظ</button>
-        </form>
-      )}
-    </details>
-  );
-}
-function NewReference({
-  kind,
-  subjects,
-  done,
-}: {
-  kind: keyof typeof labels;
-  subjects: Item[];
-  done: (x: string) => void;
-}) {
-  return (
-    <details className="draft-article">
-      <summary>+ إضافة عنصر إلى {labels[kind]}</summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const formElement = event.currentTarget;
-          const f = new FormData(formElement);
-          try {
-            await apiRequest(`/admin/reference-data/${kind}`, {
-              body: {
-                code: f.get("code"),
-                nameAr: f.get("nameAr"),
-                parentId: f.get("parentId"),
-                isActive: f.has("isActive"),
-                reason: f.get("reason"),
-              },
-            });
-            done("أضيف عنصر القائمة المرجعية.");
-            formElement.reset();
-          } catch (error) {
-            done(error instanceof Error ? error.message : "تعذرت الإضافة.");
-          }
-        }}
-      >
-        {fields(kind, {}, subjects)}
+          <label>
+            الاسم العربي
+            <input name="nameAr" defaultValue={item?.nameAr ?? ""} required />
+          </label>
+          {kind === "subjects" && (
+            <label>
+              الموضوع الأب
+              <select name="parentId" defaultValue={item?.parentId ?? ""}>
+                <option value="">بلا أب</option>
+                {subjects.filter((subject) => subject.id !== item?.id).map((subject) => (
+                  <option key={subject.id} value={subject.id}>{subject.nameAr}</option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label className="setting-toggle">
+            <input name="isActive" type="checkbox" defaultChecked={item?.isActive ?? true} />
+            فعال
+          </label>
+        </div>
         <label>
-          سبب الإضافة
+          سبب {item ? "التغيير" : "الإضافة"}
           <input name="reason" required />
         </label>
-        <button className="button">إضافة</button>
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={onClose} disabled={submitting}>إلغاء</button>
+          <button className="button" disabled={submitting}>{submitting ? "جار الحفظ…" : item ? "حفظ" : "إضافة"}</button>
+        </div>
       </form>
-    </details>
+    </AdminDialog>
   );
 }

@@ -5,6 +5,8 @@ import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 
 interface User {
   id: string;
@@ -34,6 +36,10 @@ export function AdminUsersPage() {
   const [role, setRole] = useState("");
   const [page, setPage] = useState(1);
   const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [creating, setCreating] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+  const [bulkAction, setBulkAction] = useState<boolean | null>(null);
   const filtered = useMemo(
     () =>
       (users.data ?? []).filter((user) => {
@@ -56,6 +62,8 @@ export function AdminUsersPage() {
     event.preventDefault();
     const formElement = event.currentTarget;
     const form = new FormData(formElement);
+    setSubmitting(true);
+    setCreateError("");
     try {
       await apiRequest("/admin/users", {
         body: {
@@ -66,38 +74,30 @@ export function AdminUsersPage() {
         },
       });
       setMessage("أُنشئ الحساب وأُسندت أدواره.");
-      formElement.reset();
+      setCreating(false);
       refresh();
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تعذر إنشاء الحساب.");
+      setCreateError(error instanceof Error ? error.message : "تعذر إنشاء الحساب.");
+    } finally {
+      setSubmitting(false);
     }
   };
   const bulkState = async (active: boolean) => {
-    if (
-      !selected.size ||
-      !window.confirm(`${active ? "تفعيل" : "تعطيل"} ${selected.size} حساب؟`)
-    )
-      return;
-    try {
-      await Promise.all(
-        [...selected].map((id) =>
-          apiRequest(`/admin/users/${id}/state`, {
-            method: "PATCH",
-            body: {
-              active,
-              reason: `إجراء جماعي: ${active ? "تفعيل" : "تعطيل"} حسابات محددة`,
-            },
-          }),
-        ),
-      );
-      setMessage(`تم ${active ? "تفعيل" : "تعطيل"} الحسابات المحددة.`);
-      setSelected(new Set());
-      users.retry();
-    } catch (error) {
-      setMessage(
-        error instanceof Error ? error.message : "تعذر الإجراء الجماعي.",
-      );
-    }
+    await Promise.all(
+      [...selected].map((id) =>
+        apiRequest(`/admin/users/${id}/state`, {
+          method: "PATCH",
+          body: {
+            active,
+            reason: `إجراء جماعي: ${active ? "تفعيل" : "تعطيل"} حسابات محددة`,
+          },
+        }),
+      ),
+    );
+    setMessage(`تم ${active ? "تفعيل" : "تعطيل"} الحسابات المحددة.`);
+    setSelected(new Set());
+    setBulkAction(null);
+    users.retry();
   };
   return (
     <section>
@@ -110,16 +110,23 @@ export function AdminUsersPage() {
           { label: "المستخدمون والوصول" },
           { label: "المستخدمون" },
         ]}
+        actions={
+          auth.hasPermission("user.create") ? (
+            <button type="button" className="button" onClick={() => setCreating(true)}>
+              + إنشاء حساب
+            </button>
+          ) : undefined
+        }
       />
       {message && (
         <p role="status" className="form-message">
           {message}
         </p>
       )}
-      {auth.hasPermission("user.create") && (
-        <details className="admin-card admin-create-panel">
-          <summary>إنشاء حساب جديد</summary>
+      {creating && auth.hasPermission("user.create") && (
+        <AdminDialog title="إنشاء حساب جديد" onClose={() => setCreating(false)}>
           <form className="edit-form" onSubmit={create}>
+            {createError && <p className="form-error" role="alert">{createError}</p>}
             <div className="form-columns">
               <label>
                 اسم المستخدم
@@ -154,9 +161,12 @@ export function AdminUsersPage() {
                 </label>
               ))}
             </fieldset>
-            <button className="button">إنشاء الحساب</button>
+            <div className="admin-entity-actions">
+              <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={submitting}>إلغاء</button>
+              <button className="button" disabled={submitting}>{submitting ? "جار الإنشاء…" : "إنشاء الحساب"}</button>
+            </div>
           </form>
-        </details>
+        </AdminDialog>
       )}
       <div className="admin-filterbar user-filterbar">
         <label>
@@ -212,7 +222,7 @@ export function AdminUsersPage() {
             {auth.hasPermission("user.enable") && (
               <button
                 className="button secondary"
-                onClick={() => bulkState(true)}
+                onClick={() => setBulkAction(true)}
               >
                 تفعيل
               </button>
@@ -220,7 +230,7 @@ export function AdminUsersPage() {
             {auth.hasPermission("user.disable") && (
               <button
                 className="button secondary danger"
-                onClick={() => bulkState(false)}
+                onClick={() => setBulkAction(false)}
               >
                 تعطيل
               </button>
@@ -347,6 +357,16 @@ export function AdminUsersPage() {
             </button>
           </nav>
         </>
+      )}
+      {bulkAction !== null && (
+        <ConfirmDialog
+          title={`${bulkAction ? "تفعيل" : "تعطيل"} ${selected.size} حساب؟`}
+          description={bulkAction ? "ستستعيد الحسابات المحددة إمكانية تسجيل الدخول." : "سيمنع تسجيل الدخول وتبطل الجلسات وفق سياسة الخادم."}
+          confirmLabel={bulkAction ? "تفعيل الحسابات" : "تعطيل الحسابات"}
+          destructive={!bulkAction}
+          onClose={() => setBulkAction(null)}
+          onConfirm={() => bulkState(bulkAction)}
+        />
       )}
     </section>
   );

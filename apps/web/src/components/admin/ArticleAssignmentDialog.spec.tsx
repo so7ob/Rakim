@@ -197,7 +197,7 @@ describe("ArticleAssignmentDialog", () => {
       />,
     );
     const dialog = await screen.findByRole("dialog");
-    fireEvent.click(within(dialog).getByLabelText(/^المادة 1/));
+    fireEvent.click(await within(dialog).findByLabelText(/^المادة 1/));
     fireEvent.change(within(dialog).getByLabelText("سبب التصحيح"), {
       target: { value: "اختبار الفشل" },
     });
