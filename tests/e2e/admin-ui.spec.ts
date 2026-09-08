@@ -4,9 +4,10 @@ const password = "DevOnly!ChangeMe2026";
 
 async function loginAsSystemAdministrator(
   page: import("@playwright/test").Page,
+  username = "system_admin",
 ) {
   await page.goto("/ar/login");
-  await page.getByLabel("اسم المستخدم").fill("system_admin");
+  await page.getByLabel("اسم المستخدم").fill(username);
   await page.getByLabel("كلمة المرور").fill(password);
   await page.getByRole("button", { name: "تسجيل الدخول" }).click();
   await expect(page).toHaveURL(/\/ar\/admin$/);
@@ -82,4 +83,30 @@ test("mobile administration drawer is keyboard accessible and has no horizontal 
   );
   expect(overflow).toBeLessThanOrEqual(1);
   expect(pageErrors).toEqual([]);
+});
+
+test("legal content stays View First and its edit dialog fits mobile RTL", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "mobile-390");
+  await loginAsSystemAdministrator(page, "super");
+  await page.goto("/ar/admin/content");
+  await page.getByRole("link", { name: "فتح" }).first().click();
+  await page.getByRole("link", { name: "البيانات العامة" }).click();
+  await expect(page.locator(".admin-card input")).toHaveCount(0);
+  await page.getByRole("button", { name: "تعديل البيانات" }).click();
+  const dialog = page.getByRole("dialog", { name: "تعديل بيانات التشريع" });
+  await expect(dialog).toBeVisible();
+  const box = await dialog.boundingBox();
+  expect(box).not.toBeNull();
+  expect(box!.x).toBeGreaterThanOrEqual(0);
+  expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+  const overflow = await page.evaluate(
+    () => document.documentElement.scrollWidth - window.innerWidth,
+  );
+  expect(overflow).toBeLessThanOrEqual(1);
+  await page.screenshot({
+    path: testInfo.outputPath("admin-content-dialog-mobile.png"),
+    fullPage: false,
+  });
 });

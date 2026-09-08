@@ -13,6 +13,8 @@ import {
   type StructureNodeItem,
 } from "../../components/admin/StructureTree";
 import { ArticleAssignmentDialog } from "../../components/admin/ArticleAssignmentDialog";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { EntityDetails } from "../../components/admin/EntityDetails";
 interface Detail {
   id: string;
   display_code: string | null;
@@ -108,6 +110,9 @@ export function AdminContentDetailPage() {
       : null,
   );
   const [msg, setMsg] = useState("");
+  const [metadataOpen, setMetadataOpen] = useState(false);
+  const [metadataDirty, setMetadataDirty] = useState(false);
+  const [metadataSaving, setMetadataSaving] = useState(false);
   const [selectedStructureId, setSelectedStructureId] = useState<string | null>(
     null,
   );
@@ -137,6 +142,7 @@ export function AdminContentDetailPage() {
   const save = async (e: FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const f = new FormData(e.currentTarget);
+    setMetadataSaving(true);
     try {
       await apiRequest(`/admin/legislations/${id}`, {
         method: "PATCH",
@@ -164,9 +170,13 @@ export function AdminContentDetailPage() {
         },
       });
       setMsg("حُفظت التغييرات وسُجلت.");
+      setMetadataDirty(false);
+      setMetadataOpen(false);
       item.retry();
     } catch (error) {
       setMsg(error instanceof Error ? error.message : "تعذر الحفظ.");
+    } finally {
+      setMetadataSaving(false);
     }
   };
   return (
@@ -183,6 +193,17 @@ export function AdminContentDetailPage() {
           { label: law.title_ar },
         ]}
         status={<StatusBadge status={law.status} />}
+        actions={
+          tab === "general" && canEditMetadata ? (
+            <button
+              type="button"
+              className="button"
+              onClick={() => setMetadataOpen(true)}
+            >
+              تعديل البيانات
+            </button>
+          ) : undefined
+        }
       />
       <AdminTabs
         label="أقسام التشريع"
@@ -225,9 +246,19 @@ export function AdminContentDetailPage() {
           {msg}
         </p>
       )}
-      {tab === "general" && canEditMetadata && (
-        <form className="admin-card edit-form" onSubmit={save}>
-          <h2>كل بيانات التشريع المعروضة</h2>
+      {metadataOpen && canEditMetadata && (
+        <AdminDialog
+          title="تعديل بيانات التشريع"
+          description="تظهر التغييرات في شاشة العرض بعد تأكيد الخادم."
+          size="large"
+          dirty={metadataDirty}
+          onClose={() => setMetadataOpen(false)}
+        >
+        <form
+          className="edit-form"
+          onSubmit={save}
+          onInput={() => setMetadataDirty(true)}
+        >
           {!isDraft && (
             <p className="form-warning">
               هذا تصحيح بيانات وصفية منشورة يسجل قبل/بعد. النص والديباجة
@@ -403,43 +434,78 @@ export function AdminContentDetailPage() {
               placeholder="سبب واضح يظهر في سجل التدقيق"
             />
           </label>
-          <button className="button">حفظ</button>
+          <div className="admin-entity-actions">
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setMetadataOpen(false)}
+              disabled={metadataSaving}
+            >
+              إلغاء
+            </button>
+            <button className="button" disabled={metadataSaving}>
+              {metadataSaving ? "جار الحفظ…" : "حفظ التغييرات"}
+            </button>
+          </div>
         </form>
+        </AdminDialog>
       )}
-      {tab === "general" && !canEditMetadata && (
+      {tab === "general" && (
         <section className="admin-card">
           <h2>البيانات العامة</h2>
-          <p className="form-warning">
-            هذه البيانات متاحة للعرض فقط وفق صلاحيات حسابك وحالة التشريع.
-          </p>
-          <dl className="admin-summary-list">
-            <div>
-              <dt>رمز العرض</dt>
-              <dd>{law.display_code ?? "—"}</dd>
-            </div>
-            <div>
-              <dt>الرقم والسنة</dt>
-              <dd>
-                {law.official_number ?? "—"} / {law.year}
-              </dd>
-            </div>
-            <div>
-              <dt>الحالة القانونية</dt>
-              <dd>{law.legal_status}</dd>
-            </div>
-            <div>
-              <dt>درجة التحقق</dt>
-              <dd>{law.verification_level}</dd>
-            </div>
-            <div>
-              <dt>تاريخ الإصدار</dt>
-              <dd>{law.issue_date?.slice(0, 10) ?? "—"}</dd>
-            </div>
-            <div>
-              <dt>تاريخ النفاذ</dt>
-              <dd>{law.effective_from?.slice(0, 10) ?? "—"}</dd>
-            </div>
-          </dl>
+          {!canEditMetadata && (
+            <p className="form-warning">
+              هذه البيانات متاحة للعرض فقط وفق صلاحيات حسابك وحالة التشريع.
+            </p>
+          )}
+          <EntityDetails
+            items={[
+              { label: "العنوان", value: law.title_ar, wide: true },
+              { label: "الملخص", value: law.summary_ar || "—", wide: true },
+              ...(isDraft
+                ? [{
+                    label: "الديباجة",
+                    value: law.versions[0]?.preambleText || "—",
+                    wide: true,
+                  }]
+                : []),
+              { label: "رمز العرض", value: law.display_code || "—" },
+              { label: "الرقم", value: law.official_number || "—" },
+              { label: "السنة", value: law.year },
+              {
+                label: "النوع",
+                value:
+                  law.references.types.find((entry) => entry.id === law.type_id)
+                    ?.name || law.typeName || "—",
+              },
+              {
+                label: "الجهة",
+                value:
+                  law.references.authorities.find(
+                    (entry) => entry.id === law.authority_id,
+                  )?.name || "—",
+              },
+              { label: "الحالة القانونية", value: law.legal_status },
+              { label: "درجة التحقق", value: law.verification_level },
+              { label: "تاريخ الإصدار", value: law.issue_date?.slice(0, 10) || "—" },
+              { label: "تاريخ النشر", value: law.publication_date?.slice(0, 10) || "—" },
+              { label: "تاريخ النفاذ", value: law.effective_from?.slice(0, 10) || "—" },
+              { label: "تاريخ الإلغاء", value: law.repeal_date?.slice(0, 10) || "—" },
+              { label: "عدد الجريدة", value: law.gazette?.issueNumber || "—" },
+              { label: "تاريخ الجريدة", value: law.gazette?.publicationDate || "—" },
+              { label: "ناشر الجريدة", value: law.gazette?.publisher || "—" },
+              { label: "ملاحظات الجريدة", value: law.gazette?.notes || "—", wide: true },
+              {
+                label: "الموضوعات والتصنيفات",
+                value:
+                  law.references.subjects
+                    .filter((subject) => law.selectedSubjectIds.includes(subject.id))
+                    .map((subject) => subject.name)
+                    .join("، ") || "—",
+                wide: true,
+              },
+            ]}
+          />
         </section>
       )}
       {tab === "articles" && law.articles.length > 0 && (
@@ -768,6 +834,19 @@ function AdminEmptyState({
     </div>
   );
 }
+
+function structurePath(node: StructureNodeItem, nodes: StructureNodeItem[]) {
+  const path: string[] = [];
+  const visited = new Set<string>();
+  let current: StructureNodeItem | undefined = node;
+  while (current && !visited.has(current.id)) {
+    visited.add(current.id);
+    path.unshift(structureNodeName(current));
+    current = nodes.find((candidate) => candidate.id === current?.parentId);
+  }
+  return path.join(" / ");
+}
+
 function ArticleEditor({
   article,
   nodes,
@@ -779,17 +858,60 @@ function ArticleEditor({
   editable: boolean;
   done: (message: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const structure = nodes.find((node) => node.id === article.structureNodeId);
   return (
-    <details className="draft-article">
-      <summary>
-        المادة {article.currentLabel} — النسخة {article.versionNo}{" "}
+    <article className="admin-list-card">
+      <header>
+        <div>
+          <h3>المادة {article.currentLabel}</h3>
+          <p>{structure ? structurePath(structure, nodes) : "دون موقع في البنية"}</p>
+        </div>
         <StatusBadge status={article.status} />
-      </summary>
-      {editable ? (
+      </header>
+      <EntityDetails
+        items={[
+          { label: "الرقم المنشور", value: article.publishedLabel },
+          { label: "النسخة", value: article.versionNo },
+          { label: "مفتاح الترتيب", value: article.sortKey },
+          { label: "بداية النفاذ", value: article.validFrom },
+          {
+            label: "الموقع في البنية",
+            value: structure ? structurePath(structure, nodes) : "غير مرتبطة",
+          },
+          {
+            label: "النص",
+            value: article.textOriginal ?? article.textPreview ?? "—",
+            wide: true,
+          },
+        ]}
+      />
+      {editable && (
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>
+            تعديل المادة
+          </button>
+        </div>
+      )}
+      {editing && (
+        <AdminDialog
+          title={`تعديل المادة ${article.currentLabel}`}
+          description="محرر واسع للنص القانوني وبيانات موضع المادة."
+          size="large"
+          dirty={dirty}
+          onClose={() => setEditing(false)}
+        >
         <form
+          className="edit-form"
+          onInput={() => setDirty(true)}
           onSubmit={async (event) => {
             event.preventDefault();
             const form = new FormData(event.currentTarget);
+            setSaving(true);
+            setError("");
             try {
               await apiRequest(`/admin/articles/${article.id}/metadata`, {
                 method: "PATCH",
@@ -803,12 +925,17 @@ function ArticleEditor({
                   reason: form.get("reason"),
                 },
               });
+              setDirty(false);
+              setEditing(false);
               done(`حُفظ نص المادة ${article.currentLabel}.`);
             } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر حفظ المادة.");
+              setError(error instanceof Error ? error.message : "تعذر حفظ المادة.");
+            } finally {
+              setSaving(false);
             }
           }}
         >
+          {error && <p className="form-error" role="alert">{error}</p>}
           <div className="form-columns">
             <label>
               رقم/وسم المادة الحالي
@@ -867,14 +994,18 @@ function ArticleEditor({
             سبب التعديل
             <input name="reason" required />
           </label>
-          <button className="button secondary">حفظ المادة</button>
+          <div className="admin-entity-actions">
+            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>
+              إلغاء
+            </button>
+            <button className="button" disabled={saving}>
+              {saving ? "جار الحفظ…" : "حفظ المادة"}
+            </button>
+          </div>
         </form>
-      ) : (
-        <p className="legal-text compact">
-          {article.textOriginal ?? article.textPreview}
-        </p>
+        </AdminDialog>
       )}
-    </details>
+    </article>
   );
 }
 
@@ -889,16 +1020,40 @@ function StructureEditor({
   editable: boolean;
   done: (message: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+  const parent = nodes.find((entry) => entry.id === node.parentId);
   return (
-    <details className="draft-article">
-      <summary>
-        {node.titleAr} — {node.nodeType}
-      </summary>
+    <div>
+      <EntityDetails
+        items={[
+          { label: "العنوان", value: node.titleAr },
+          { label: "النوع", value: node.nodeType },
+          { label: "الوسم", value: node.labelAr || "—" },
+          { label: "مفتاح الترتيب", value: node.sortKey },
+          { label: "العنصر الأب", value: parent ? structureNodeName(parent) : "بلا أب" },
+          { label: "عدد المواد المباشرة", value: node.directArticleCount },
+        ]}
+      />
       {editable && (
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>
+            تعديل العنصر
+          </button>
+        </div>
+      )}
+      {editing && (
+        <AdminDialog title={`تعديل ${node.titleAr}`} dirty={dirty} onClose={() => setEditing(false)}>
         <form
+          className="edit-form"
+          onInput={() => setDirty(true)}
           onSubmit={async (event) => {
             event.preventDefault();
             const f = new FormData(event.currentTarget);
+            setSaving(true);
+            setError("");
             try {
               await apiRequest(`/admin/structure/${node.id}`, {
                 method: "PATCH",
@@ -911,12 +1066,17 @@ function StructureEditor({
                   reason: f.get("reason"),
                 },
               });
+              setDirty(false);
+              setEditing(false);
               done("حُفظ عنصر الهيكل وسُجل التعديل.");
             } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر الحفظ.");
+              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
+            } finally {
+              setSaving(false);
             }
           }}
         >
+          {error && <p className="form-error" role="alert">{error}</p>}
           <div className="form-columns">
             <label>
               النوع
@@ -964,10 +1124,14 @@ function StructureEditor({
             سبب التعديل
             <input name="reason" required />
           </label>
-          <button className="button secondary">حفظ الهيكل</button>
+          <div className="admin-entity-actions">
+            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
+            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ الهيكل"}</button>
+          </div>
         </form>
+        </AdminDialog>
       )}
-    </details>
+    </div>
   );
 }
 
@@ -980,14 +1144,24 @@ function NewStructureEditor({
   nodes: Detail["structures"];
   done: (x: string) => void;
 }) {
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>+ إضافة باب أو فصل أو قسم</summary>
+    <div className="admin-entity-actions">
+      <button type="button" className="button" onClick={() => setCreating(true)}>
+        + إضافة عنصر بنية
+      </button>
+      {creating && (
+      <AdminDialog title="إضافة باب أو فصل أو قسم" onClose={() => setCreating(false)}>
       <form
+        className="edit-form"
         onSubmit={async (event) => {
           event.preventDefault();
           const formElement = event.currentTarget;
           const f = new FormData(formElement);
+          setSaving(true);
+          setError("");
           try {
             await apiRequest(`/admin/legislations/${id}/structure`, {
               body: {
@@ -1000,12 +1174,15 @@ function NewStructureEditor({
               },
             });
             done("أضيف عنصر الهيكل.");
-            formElement.reset();
+            setCreating(false);
           } catch (error) {
-            done(error instanceof Error ? error.message : "تعذرت الإضافة.");
+            setError(error instanceof Error ? error.message : "تعذرت الإضافة.");
+          } finally {
+            setSaving(false);
           }
         }}
       >
+        {error && <p className="form-error" role="alert">{error}</p>}
         <div className="form-columns">
           <label>
             النوع
@@ -1050,9 +1227,14 @@ function NewStructureEditor({
           سبب الإضافة
           <input name="reason" required />
         </label>
-        <button className="button">إضافة</button>
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={saving}>إلغاء</button>
+          <button className="button" disabled={saving}>{saving ? "جار الإضافة…" : "إضافة"}</button>
+        </div>
       </form>
-    </details>
+      </AdminDialog>
+      )}
+    </div>
   );
 }
 
@@ -1071,16 +1253,36 @@ function AnnexEditor({
   canRepeal: boolean;
   done: (message: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>
-        {annex.titleAr} — {annex.versionCount} إصدار
-      </summary>
+    <article className="admin-list-card">
+      <header>
+        <div>
+          <h3>{annex.titleAr}</h3>
+          <p>{annex.versionCount} إصدار محفوظ</p>
+        </div>
+        <StatusBadge status={annex.status} />
+      </header>
+      <EntityDetails items={[
+        { label: "النوع", value: annex.annexType },
+        { label: "الحالة", value: annex.status },
+      ]} />
       {editable && (
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل الملحق</button>
+        </div>
+      )}
+      {editing && (
+        <AdminDialog title={`تعديل ${annex.titleAr}`} onClose={() => setEditing(false)}>
         <form
+          className="edit-form"
           onSubmit={async (event) => {
             event.preventDefault();
             const f = new FormData(event.currentTarget);
+            setSaving(true);
+            setError("");
             try {
               await apiRequest(`/admin/annexes/${annex.id}`, {
                 method: "PATCH",
@@ -1091,12 +1293,16 @@ function AnnexEditor({
                   reason: f.get("reason"),
                 },
               });
+              setEditing(false);
               done("حُفظت بيانات الملحق.");
             } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر الحفظ.");
+              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
+            } finally {
+              setSaving(false);
             }
           }}
         >
+          {error && <p className="form-error" role="alert">{error}</p>}
           <div className="form-columns">
             <label>
               العنوان
@@ -1139,10 +1345,14 @@ function AnnexEditor({
             سبب التعديل
             <input name="reason" required />
           </label>
-          <button className="button secondary">حفظ الملحق</button>
+          <div className="admin-entity-actions">
+            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
+            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ الملحق"}</button>
+          </div>
         </form>
+        </AdminDialog>
       )}
-    </details>
+    </article>
   );
 }
 
@@ -1157,15 +1367,23 @@ function NewAnnexEditor({
   canPublish: boolean;
   done: (x: string) => void;
 }) {
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   if (!sources.length) return <p>اربط مصدرًا بالتشريع قبل إضافة ملحق.</p>;
   return (
-    <details className="draft-article">
-      <summary>+ إضافة لائحة أو جدول أو ملحق</summary>
+    <div className="admin-entity-actions">
+      <button type="button" className="button" onClick={() => setCreating(true)}>+ إضافة ملحق</button>
+      {creating && (
+      <AdminDialog title="إضافة لائحة أو جدول أو ملحق" size="large" onClose={() => setCreating(false)}>
       <form
+        className="edit-form"
         onSubmit={async (event) => {
           event.preventDefault();
           const formElement = event.currentTarget;
           const f = new FormData(formElement);
+          setSaving(true);
+          setError("");
           try {
             await apiRequest(`/admin/legislations/${id}/annexes`, {
               body: {
@@ -1179,12 +1397,15 @@ function NewAnnexEditor({
               },
             });
             done("أضيف إصدار الملحق الأول.");
-            formElement.reset();
+            setCreating(false);
           } catch (error) {
-            done(error instanceof Error ? error.message : "تعذرت الإضافة.");
+            setError(error instanceof Error ? error.message : "تعذرت الإضافة.");
+          } finally {
+            setSaving(false);
           }
         }}
       >
+        {error && <p className="form-error" role="alert">{error}</p>}
         <div className="form-columns">
           <label>
             العنوان
@@ -1240,9 +1461,14 @@ function NewAnnexEditor({
           سبب الإضافة
           <input name="reason" required />
         </label>
-        <button className="button">إضافة الملحق</button>
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={saving}>إلغاء</button>
+          <button className="button" disabled={saving}>{saving ? "جار الإضافة…" : "إضافة الملحق"}</button>
+        </div>
       </form>
-    </details>
+      </AdminDialog>
+      )}
+    </div>
   );
 }
 
@@ -1261,16 +1487,37 @@ function RelationEditor({
   canReview: boolean;
   done: (message: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>
-        {relation.targetTitle} — {relation.relationType}
-      </summary>
+    <article className="admin-list-card">
+      <header>
+        <div>
+          <h3>{relation.targetTitle}</h3>
+          <p>{relation.relationType}</p>
+        </div>
+        <StatusBadge status={relation.reviewStatus} />
+      </header>
+      <EntityDetails items={[
+        { label: "النطاق أو المادة", value: relation.scopeText || "—" },
+        { label: "تاريخ الأثر", value: relation.effectiveFrom || "—" },
+        { label: "مصدر الإثبات", value: sources.find((source) => source.id === relation.sourceDocumentId)?.originalName || "—", wide: true },
+      ]} />
       {editable && (
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل العلاقة</button>
+        </div>
+      )}
+      {editing && (
+        <AdminDialog title={`تعديل العلاقة مع ${relation.targetTitle}`} onClose={() => setEditing(false)}>
         <form
+          className="edit-form"
           onSubmit={async (event) => {
             event.preventDefault();
             const f = new FormData(event.currentTarget);
+            setSaving(true);
+            setError("");
             try {
               await apiRequest(`/admin/relations/${relation.id}`, {
                 method: "PATCH",
@@ -1284,12 +1531,16 @@ function RelationEditor({
                   reason: f.get("reason"),
                 },
               });
+              setEditing(false);
               done("حُفظت العلاقة القانونية.");
             } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر الحفظ.");
+              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
+            } finally {
+              setSaving(false);
             }
           }}
         >
+          {error && <p className="form-error" role="alert">{error}</p>}
           <div className="form-columns">
             <label>
               التشريع المقابل
@@ -1359,10 +1610,14 @@ function RelationEditor({
             سبب التعديل
             <input name="reason" required />
           </label>
-          <button className="button secondary">حفظ العلاقة</button>
+          <div className="admin-entity-actions">
+            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
+            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ العلاقة"}</button>
+          </div>
         </form>
+        </AdminDialog>
       )}
-    </details>
+    </article>
   );
 }
 
@@ -1379,14 +1634,22 @@ function NewRelationEditor({
   canReview: boolean;
   done: (x: string) => void;
 }) {
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>+ إضافة علاقة قانونية</summary>
+    <div className="admin-entity-actions">
+      <button type="button" className="button" onClick={() => setCreating(true)}>+ إضافة علاقة</button>
+      {creating && (
+      <AdminDialog title="إضافة علاقة قانونية" onClose={() => setCreating(false)}>
       <form
+        className="edit-form"
         onSubmit={async (event) => {
           event.preventDefault();
           const formElement = event.currentTarget;
           const f = new FormData(formElement);
+          setSaving(true);
+          setError("");
           try {
             await apiRequest(`/admin/legislations/${id}/relations`, {
               body: {
@@ -1400,12 +1663,15 @@ function NewRelationEditor({
               },
             });
             done("أضيفت العلاقة القانونية.");
-            formElement.reset();
+            setCreating(false);
           } catch (error) {
-            done(error instanceof Error ? error.message : "تعذرت الإضافة.");
+            setError(error instanceof Error ? error.message : "تعذرت الإضافة.");
+          } finally {
+            setSaving(false);
           }
         }}
       >
+        {error && <p className="form-error" role="alert">{error}</p>}
         <div className="form-columns">
           <label>
             التشريع المقابل
@@ -1465,9 +1731,14 @@ function NewRelationEditor({
           سبب الإضافة
           <input name="reason" required />
         </label>
-        <button className="button">إضافة العلاقة</button>
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={saving}>إلغاء</button>
+          <button className="button" disabled={saving}>{saving ? "جار الإضافة…" : "إضافة العلاقة"}</button>
+        </div>
       </form>
-    </details>
+      </AdminDialog>
+      )}
+    </div>
   );
 }
 
@@ -1480,9 +1751,13 @@ function SourceEditor({
   editable: boolean;
   done: (message: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>
+    <article className="admin-list-card">
+      <header>
+        <div>
         <strong>{source.originalName}</strong>{" "}
         <span className="review-flag">
           {source.sourceRole === "OFFICIAL_PDF"
@@ -1491,27 +1766,31 @@ function SourceEditor({
               ? "مصدر الاستخراج"
               : "مصدر داعم"}
         </span>{" "}
+        </div>
         <StatusBadge status={source.extractionStatus} />
-      </summary>
-      <dl className="inline-meta">
-        <div>
-          <dt>النوع</dt>
-          <dd>{source.mediaType}</dd>
-        </div>
-        <div>
-          <dt>الحجم</dt>
-          <dd>{source.byteSize} بايت</dd>
-        </div>
-        <div>
-          <dt>البصمة</dt>
-          <dd className="hash">{source.sha256}</dd>
-        </div>
-      </dl>
+      </header>
+      <EntityDetails items={[
+        { label: "النوع", value: source.mediaType },
+        { label: "الحجم", value: `${source.byteSize} بايت` },
+        { label: "جهة الحصول", value: source.obtainedFrom },
+        { label: "عدد الصفحات", value: source.pageCount ?? "—" },
+        { label: "دقة OCR", value: source.ocrConfidence ?? "—" },
+        { label: "البصمة", value: source.sha256, wide: true },
+      ]} />
       {editable && (
+        <div className="admin-entity-actions">
+          <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل المصدر</button>
+        </div>
+      )}
+      {editing && (
+        <AdminDialog title={`تعديل ${source.originalName}`} onClose={() => setEditing(false)}>
         <form
+          className="edit-form"
           onSubmit={async (event) => {
             event.preventDefault();
             const f = new FormData(event.currentTarget);
+            setSaving(true);
+            setError("");
             try {
               await apiRequest(`/admin/sources/${source.id}`, {
                 method: "PATCH",
@@ -1524,12 +1803,16 @@ function SourceEditor({
                   reason: f.get("reason"),
                 },
               });
+              setEditing(false);
               done("حُفظت بيانات المصدر.");
             } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر الحفظ.");
+              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
+            } finally {
+              setSaving(false);
             }
           }}
         >
+          {error && <p className="form-error" role="alert">{error}</p>}
           <label>
             جهة الحصول
             <input
@@ -1571,10 +1854,14 @@ function SourceEditor({
             سبب التعديل
             <input name="reason" required />
           </label>
-          <button className="button secondary">حفظ المصدر</button>
+          <div className="admin-entity-actions">
+            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
+            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ المصدر"}</button>
+          </div>
         </form>
+        </AdminDialog>
       )}
-    </details>
+    </article>
   );
 }
 
