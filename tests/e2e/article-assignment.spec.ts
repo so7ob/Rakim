@@ -184,23 +184,30 @@ test("bulk assigns, moves, persists, and enforces article.update", async ({
     .getByRole("button")
     .filter({ hasText: "الفصل الأول" });
   await firstChapter.click();
-  let structureEditor = page
+  await page
     .locator(".structure-node-details")
-    .locator("details.draft-article");
-  await structureEditor.locator("summary").click();
+    .getByRole("button", { name: "تعديل العنصر" })
+    .click();
+  let structureEditor = page.getByRole("dialog", {
+    name: "تعديل أحكام البداية",
+  });
   await expect(structureEditor.locator('input[name="titleAr"]')).toHaveValue(
     "أحكام البداية",
   );
+  await structureEditor.getByRole("button", { name: "إلغاء" }).click();
 
   const secondChapter = page
     .getByRole("tree", { name: "شجرة البنية القانونية" })
     .getByRole("button")
     .filter({ hasText: "الفصل الثاني" });
   await secondChapter.click();
-  structureEditor = page
+  await page
     .locator(".structure-node-details")
-    .locator("details.draft-article");
-  await structureEditor.locator("summary").click();
+    .getByRole("button", { name: "تعديل العنصر" })
+    .click();
+  structureEditor = page.getByRole("dialog", {
+    name: "تعديل أحكام النهاية",
+  });
   await expect(structureEditor.locator('input[name="titleAr"]')).toHaveValue(
     "أحكام النهاية",
   );
