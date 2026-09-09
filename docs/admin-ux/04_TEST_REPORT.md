@@ -10,7 +10,7 @@
 | `npm test` | **109 ناجحة**: API 74، Web 10، Worker 25 |
 | `npm run build` | ناجح للحزم الثلاث؛ Vite حوّل 96 module |
 | `npm run test:infra` | ناجح؛ Nginx syntax وsystemd |
-| `YLP_TEST_API_PORT=4100 YLP_TEST_WEB_PORT=4273 npm run test:e2e -- --workers=1` | **64 ناجحة، 76 skipped مقصودة حسب project، 0 فشل، 140 حالة** |
+| `YLP_TEST_API_PORT=4100 YLP_TEST_WEB_PORT=4273 npm run test:e2e -- --workers=1` | **65 ناجحة، 79 skipped مقصودة حسب project، 0 فشل، 144 حالة** |
 | `VISUAL_BASE_URL=http://127.0.0.1:4273 VISUAL_ADMIN_USERNAME=super npm run visual:admin` | **84 لقطة**، 0 overflow، 0 console errors، 0 HTTP errors، 0 failed requests، 0 external requests |
 
 ## اختبارات المكونات
@@ -35,6 +35,7 @@
 ## تغطية الصلاحيات والخادم
 
 - `admin-auth.spec.ts`: 401/403، CSRF، Canonical RBAC، ceiling لمنع privilege escalation، persistence بعد refresh/login، وتحديثات الإعدادات والسياسات.
+- سيناريو delete view-only: أبقى `role.view` وطبّق `DENY role.delete` على مدير نظام مؤقتًا؛ اختفى زر الحذف، أعاد DELETE المباشر **403**، وبقي المورد موجودًا ثم استُعيدت المنح ونُظفت البيانات في `finally`.
 - `admin-view-first.spec.ts`: المستخدم دون `reference.create/update` لا يرى الإجراءات والخادم يرفض المسارين بـ403.
 - `article-assignment.spec.ts`: المستخدم دون `article.update` ممنوع من API، والمستخدم المصرح له ينجح.
 - اختبارات API integration/unit تتحقق من `PermissionGuard`, role/user grants, protected roles, sessions وworkflow policies.
