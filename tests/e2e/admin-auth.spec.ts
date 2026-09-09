@@ -690,6 +690,133 @@ test("granular permissions persist, enforce in the API, and drive navigation", a
   ).toBe(403);
 });
 
+test("a view-only role administrator cannot see or call delete", async ({
+  page,
+  request,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  const superAdmin = await login(request, "super");
+  const users = await (
+    await request.get("/api/v1/admin/users", {
+      headers: { cookie: superAdmin.cookie },
+    })
+  ).json();
+  const systemAdmin = users.find(
+    (item: { username: string }) => item.username === "system_admin",
+  );
+  const access = await (
+    await request.get(`/api/v1/admin/users/${systemAdmin.id}/permissions`, {
+      headers: { cookie: superAdmin.cookie },
+    })
+  ).json();
+  const original = access.directOverrides.map(
+    (item: { code: string; effect: string; scope: string }) => ({
+      code: item.code,
+      effect: item.effect,
+      scope: item.scope,
+    }),
+  );
+  let roleId = "";
+
+  try {
+    const create = await request.post("/api/v1/admin/access-roles", {
+      headers: {
+        cookie: superAdmin.cookie,
+        "x-csrf-token": superAdmin.csrfToken,
+      },
+      data: {
+        code: `TEST_DELETE_DENY_${Date.now()}`,
+        nameAr: "دور مؤقت لاختبار منع الحذف",
+        descriptionAr: "يُحذف بعد التحقق من Canonical role.delete.",
+        reason: "اختبار واجهة ومنفذ حذف غير مصرح",
+      },
+    });
+    expect(create.ok()).toBeTruthy();
+    roleId = (await create.json()).id;
+
+    const denyDelete = await request.patch(
+      `/api/v1/admin/users/${systemAdmin.id}/granular-permissions`,
+      {
+        headers: {
+          cookie: superAdmin.cookie,
+          "x-csrf-token": superAdmin.csrfToken,
+        },
+        data: {
+          selections: [
+            ...original.filter(
+              (item: { code: string }) => item.code !== "role.delete",
+            ),
+            { code: "role.delete", effect: "DENY", scope: "ALL" },
+          ],
+          reason: "اختبار سحب صلاحية حذف الدور مؤقتًا",
+        },
+      },
+    );
+    expect(denyDelete.ok()).toBeTruthy();
+
+    await page.goto("/ar/login");
+    await page.getByLabel("اسم المستخدم").fill("system_admin");
+    await page.getByLabel("كلمة المرور").fill(password);
+    await page.getByRole("button", { name: "تسجيل الدخول" }).click();
+    await expect(page).toHaveURL(/\/ar\/admin$/);
+    await page.goto(`/ar/admin/roles/${roleId}/general`);
+    await expect(
+      page.getByRole("heading", { name: "دور مؤقت لاختبار منع الحذف" }),
+    ).toBeVisible();
+    await expect(
+      page.getByRole("button", { name: "حذف الدور المخصص" }),
+    ).toHaveCount(0);
+
+    const deniedActor = await login(request, "system_admin");
+    const deniedDelete = await request.delete(
+      `/api/v1/admin/access-roles/${roleId}`,
+      {
+        headers: {
+          cookie: deniedActor.cookie,
+          "x-csrf-token": deniedActor.csrfToken,
+        },
+        data: { reason: "يجب أن يرفض الخادم هذا الحذف" },
+      },
+    );
+    expect(deniedDelete.status()).toBe(403);
+    expect(
+      (
+        await request.get(`/api/v1/admin/access-roles/${roleId}`, {
+          headers: { cookie: superAdmin.cookie },
+        })
+      ).status(),
+    ).toBe(200);
+  } finally {
+    const restore = await request.patch(
+      `/api/v1/admin/users/${systemAdmin.id}/granular-permissions`,
+      {
+        headers: {
+          cookie: superAdmin.cookie,
+          "x-csrf-token": superAdmin.csrfToken,
+        },
+        data: {
+          selections: original,
+          reason: "استعادة صلاحيات مدير النظام بعد اختبار منع الحذف",
+        },
+      },
+    );
+    expect(restore.ok()).toBeTruthy();
+    if (roleId) {
+      const remove = await request.delete(
+        `/api/v1/admin/access-roles/${roleId}`,
+        {
+          headers: {
+            cookie: superAdmin.cookie,
+            "x-csrf-token": superAdmin.csrfToken,
+          },
+          data: { reason: "تنظيف الدور المؤقت بعد اختبار منع الحذف" },
+        },
+      );
+      expect(remove.ok()).toBeTruthy();
+    }
+  }
+});
+
 test("role permissions are inherited and removed with the role", async ({
   request,
 }, testInfo) => {
