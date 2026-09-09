@@ -156,7 +156,7 @@ describe("MariaDB temporal integrity", () => {
         username: "data_entry",
         displayName: "مدخل",
         roles: ["DATA_ENTRY"],
-        permissions: ["draft:create"],
+        permissions: ["legislation.create"],
       },
     );
     auditedLawId = created.id;
@@ -175,6 +175,13 @@ describe("MariaDB temporal integrity", () => {
     );
     const userId = (name: string) =>
       users.find((user: { username: string }) => user.username === name).id;
+    await db.query("UPDATE legislations SET status='PUBLISHED' WHERE id=?", [
+      lawId,
+    ]);
+    await db.query(
+      "UPDATE article_versions SET status='PUBLISHED' WHERE article_id=?",
+      [articleId],
+    );
     const service = new AmendmentsService(db);
     const draft = await service.create(
       {
@@ -192,7 +199,7 @@ describe("MariaDB temporal integrity", () => {
         username: "data_entry",
         displayName: "مدخل",
         roles: ["DATA_ENTRY"],
-        permissions: [],
+        permissions: ["amendment.create"],
       },
     );
     amendmentId = draft.id;
@@ -203,7 +210,7 @@ describe("MariaDB temporal integrity", () => {
         username: "legal_reviewer",
         displayName: "مراجع",
         roles: ["LEGAL_REVIEWER"],
-        permissions: [],
+        permissions: ["amendment.review"],
       },
       "مراجعة قانونية مستقلة",
     );
@@ -214,7 +221,7 @@ describe("MariaDB temporal integrity", () => {
         username: "content_manager",
         displayName: "مدير محتوى",
         roles: ["CONTENT_MANAGER"],
-        permissions: [],
+        permissions: ["amendment.publish"],
       },
       "نشر بعد اكتمال المراجعة",
     );

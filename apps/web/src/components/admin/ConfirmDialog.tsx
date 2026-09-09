@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useRef, useState, type ReactNode } from "react";
 import { AdminDialog } from "./AdminDialog";
 
 export function ConfirmDialog({
@@ -8,6 +8,7 @@ export function ConfirmDialog({
   onConfirm,
   onClose,
   destructive = true,
+  children,
 }: {
   title: string;
   description: string;
@@ -15,7 +16,9 @@ export function ConfirmDialog({
   onConfirm: () => Promise<void> | void;
   onClose: () => void;
   destructive?: boolean;
+  children?: ReactNode;
 }) {
+  const pending = useRef(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   return (
@@ -39,15 +42,20 @@ export function ConfirmDialog({
             className={`button${destructive ? " danger" : ""}`}
             disabled={submitting}
             onClick={async () => {
+              if (pending.current) return;
+              pending.current = true;
               setSubmitting(true);
               setError("");
               try {
                 await onConfirm();
               } catch (reason) {
                 setError(
-                  reason instanceof Error ? reason.message : "تعذر تنفيذ الإجراء.",
+                  reason instanceof Error
+                    ? reason.message
+                    : "تعذر تنفيذ الإجراء.",
                 );
                 setSubmitting(false);
+                pending.current = false;
               }
             }}
           >
@@ -56,6 +64,7 @@ export function ConfirmDialog({
         </>
       }
     >
+      {children}
       {error && (
         <p className="form-error" role="alert">
           {error}

@@ -1,3 +1,5 @@
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { useMemo, useState, type FormEvent } from "react";
 import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -24,6 +26,8 @@ export function AdminSynonymsPage() {
   const canActivate = hasPermission("search.synonym_set.activate");
   const data = useApi<Synonym[]>("/admin/synonyms");
   const [msg, setMsg] = useState("");
+  const [creatingSet, setCreatingSet] = useState(false);
+  const [editing, setEditing] = useState<Synonym | null>(null);
   const [creating, setCreating] = useState(false);
   const [deleting, setDeleting] = useState<Synonym | null>(null);
   const [activating, setActivating] = useState<Synonym | null>(null);
@@ -65,6 +69,7 @@ export function AdminSynonymsPage() {
       data.retry();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "تعذر النشر.");
+      throw e;
     }
   };
   const remove = async (id: string) => {
@@ -75,6 +80,7 @@ export function AdminSynonymsPage() {
       data.retry();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "تعذر الحذف.");
+      throw e;
     }
   };
   return (
@@ -142,10 +148,58 @@ export function AdminSynonymsPage() {
           </form>
         </AdminDialog>
       )}
+      {editing && (
+        <RecordFormDialog
+          title="تعديل المرادف"
+          method="PATCH"
+          path={`/admin/synonyms/${editing.id}`}
+          fields={[
+            {
+              name: "term",
+              label: "المصطلح",
+              value: editing.termAr ?? "",
+              required: true,
+              maxLength: 200,
+            },
+            {
+              name: "synonym",
+              label: "المرادف",
+              value: editing.synonymAr ?? "",
+              required: true,
+              maxLength: 200,
+            },
+          ]}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null);
+            data.retry();
+          }}
+        />
+      )}
       {msg && (
         <p className="form-message" role="status">
           {msg}
         </p>
+      )}
+      {hasPermission("search.synonym_set.create") && (
+        <button
+          className="button secondary"
+          onClick={() => setCreatingSet(true)}
+        >
+          + إنشاء مجموعة مسودة
+        </button>
+      )}
+      {creatingSet && (
+        <RecordFormDialog
+          title="إنشاء مجموعة مرادفات"
+          path="/admin/synonym-sets"
+          fields={[{ name: "reason", label: "سبب الإنشاء", required: true }]}
+          onClose={() => setCreatingSet(false)}
+          onDone={() => {
+            setCreatingSet(false);
+            data.retry();
+          }}
+        />
       )}
       <div className="dictionary-versions">
         {sets.map((set) => (
@@ -153,6 +207,14 @@ export function AdminSynonymsPage() {
             <h2>
               الإصدار {set.versionNo} <StatusBadge status={set.status} />
             </h2>
+            <div className="admin-entity-actions">
+              <LifecycleActions
+                kind="synonym-sets"
+                id={set.setId}
+                label={`الإصدار ${set.versionNo}`}
+                onDone={data.retry}
+              />
+            </div>
             {set.publishedAt && (
               <p>نشر في {new Date(set.publishedAt).toLocaleString("ar-YE")}</p>
             )}
@@ -190,6 +252,25 @@ export function AdminSynonymsPage() {
                   <td>{item.termAr ?? "—"}</td>
                   <td>{item.synonymAr ?? "—"}</td>
                   <td>
+                    {item.id && (
+                      <LifecycleActions
+                        kind="synonyms"
+                        id={item.id}
+                        label={`${item.termAr} / ${item.synonymAr}`}
+                        onDone={data.retry}
+                        allowDelete={false}
+                      />
+                    )}
+                    {item.id &&
+                      item.status === "DRAFT" &&
+                      hasPermission("search.synonym.update") && (
+                        <button
+                          className="link-button"
+                          onClick={() => setEditing(item)}
+                        >
+                          تعديل
+                        </button>
+                      )}
                     {canDelete && item.id && item.status === "DRAFT" && (
                       <button
                         className="link-button danger"

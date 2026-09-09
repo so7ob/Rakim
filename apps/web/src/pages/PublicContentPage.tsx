@@ -1,4 +1,4 @@
-import { Link } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { ErrorPanel, LoadingCards } from "../components/StatePanel";
 import { useApi } from "../hooks/use-api";
 import { ConstitutionDocumentPage } from "./ConstitutionDocumentPage";
@@ -215,3 +215,8 @@ export const publicPages = {
     ],
   },
 } satisfies Record<string, PublicContent>;
+
+export function DynamicPublicContentPage() {
+  const { slug = "" } = useParams();
+  return <ManagedPublicContentPage slug={`pages/${slug}`} />;
+}

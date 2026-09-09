@@ -50,7 +50,7 @@ export async function apiGet<T>(
   return response.json() as Promise<T>;
 }
 
-export async function apiRequest<T>(
+async function sendApiRequest<T>(
   path: string,
   options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
@@ -101,4 +101,23 @@ export async function apiRequest<T>(
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+// Coalesce identical in-flight mutations, including repeat clicks before React rerenders.
+// Entries live only until completion; request contents are never logged or persisted.
+const pendingMutations = new Map<string, Promise<unknown>>();
+export function apiRequest<T>(
+  path: string,
+  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<T> {
+  if (options.body instanceof FormData || options.signal)
+    return sendApiRequest<T>(path, options);
+  const key = `${options.method ?? "POST"}:${path}:${JSON.stringify(options.body)}`;
+  const existing = pendingMutations.get(key);
+  if (existing) return existing as Promise<T>;
+  const pending = sendApiRequest<T>(path, options).finally(() =>
+    pendingMutations.delete(key),
+  );
+  pendingMutations.set(key, pending);
+  return pending;
 }

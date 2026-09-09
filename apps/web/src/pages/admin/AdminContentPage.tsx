@@ -1,3 +1,4 @@
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -338,6 +339,12 @@ export function AdminContentPage() {
                             أرشفة
                           </Link>
                         )}
+                      <LifecycleActions
+                        kind="legislations"
+                        id={item.id}
+                        label={item.titleAr}
+                        onDone={list.retry}
+                      />
                     </AdminRowActions>
                   </td>
                 </tr>

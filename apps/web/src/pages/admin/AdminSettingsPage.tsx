@@ -1,3 +1,5 @@
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -59,6 +61,7 @@ export function AdminSettingsPage() {
   const siteConfig = useSiteConfig();
   const isWorkflow = tab === "workflow";
   const state = useApi<SettingsState>(isWorkflow ? null : "/admin/site");
+  const [creatingPage, setCreatingPage] = useState(false);
   const [message, setMessage] = useState("");
   const canViewSettings = auth.hasPermission("settings.view");
   const canViewWorkflow = auth.hasPermission("workflow_policy.view");
@@ -220,6 +223,50 @@ export function AdminSettingsPage() {
             />
           )}
         </section>
+      )}
+      {tab === "pages" && auth.hasPermission("public_page.create") && (
+        <button className="button" onClick={() => setCreatingPage(true)}>
+          + إضافة صفحة عامة
+        </button>
+      )}
+      {creatingPage && (
+        <RecordFormDialog
+          title="إضافة صفحة عامة"
+          path="/admin/site/pages"
+          fields={[
+            {
+              name: "slug",
+              label: "الرابط بعد /ar/pages/",
+              required: true,
+              maxLength: 120,
+            },
+            {
+              name: "titleAr",
+              label: "عنوان الصفحة",
+              required: true,
+              maxLength: 500,
+            },
+            { name: "introAr", label: "المقدمة", type: "textarea" },
+            {
+              name: "sectionTitle",
+              label: "عنوان القسم الأول",
+              required: true,
+              maxLength: 500,
+            },
+            {
+              name: "sectionBody",
+              label: "محتوى القسم الأول",
+              type: "textarea",
+              required: true,
+            },
+            { name: "reason", label: "سبب الإضافة", required: true },
+          ]}
+          onClose={() => setCreatingPage(false)}
+          onDone={() => {
+            setCreatingPage(false);
+            state.retry();
+          }}
+        />
       )}
       {tab === "pages" && (
         <section className="admin-card">
@@ -420,6 +467,14 @@ function NavigationEditor({
           { label: "الترتيب", value: item.sortOrder },
         ]}
       />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="navigation"
+          id={item.id}
+          label={item.labelAr}
+          onDone={() => done("حُدّث رابط التنقل.")}
+        />
+      </div>
       {editable && (
         <div className="admin-entity-actions">
           <button
@@ -673,6 +728,14 @@ function PageEditor({
           },
         ]}
       />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="pages"
+          id={page.id}
+          label={page.titleAr}
+          onDone={() => done("حُدّثت حالة الصفحة.")}
+        />
+      </div>
       {canSaveCurrentStatus && (
         <div className="admin-entity-actions">
           <button

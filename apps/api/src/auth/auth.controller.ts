@@ -71,7 +71,10 @@ export class AuthController {
   async me(@Req() request: AuthenticatedRequest) {
     return {
       user: request.user,
-      csrfToken: await this.auth.rotateCsrf(request.sessionId!),
+      csrfToken: await this.auth.sessionCsrf(
+        request.sessionId!,
+        sessionCookie(request.headers.cookie)!,
+      ),
     };
   }
 
@@ -84,7 +87,10 @@ export class AuthController {
     if (!session) return { user: null, csrfToken: "" };
     return {
       user: await this.auth.userById(session.userId),
-      csrfToken: await this.auth.rotateCsrf(session.id),
+      csrfToken: await this.auth.sessionCsrf(
+        session.id,
+        sessionCookie(request.headers.cookie)!,
+      ),
     };
   }
 

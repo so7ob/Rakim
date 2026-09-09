@@ -24,7 +24,10 @@ import { AccountPage } from "./pages/AccountPage";
 import { AdminReportsPage } from "./pages/admin/AdminReportsPage";
 import { AdminAmendmentsPage } from "./pages/admin/AdminAmendmentsPage";
 import { LatestModificationsPage } from "./pages/LatestModificationsPage";
-import { ManagedPublicContentPage } from "./pages/PublicContentPage";
+import {
+  ManagedPublicContentPage,
+  DynamicPublicContentPage,
+} from "./pages/PublicContentPage";
 import { DownloadPage } from "./pages/DownloadPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { AdminSettingsPage } from "./pages/admin/AdminSettingsPage";
@@ -132,6 +135,7 @@ export function App() {
           path="legal/privacy-policy"
           element={<ManagedPublicContentPage slug="legal/privacy-policy" />}
         />
+        <Route path="pages/:slug" element={<DynamicPublicContentPage />} />
         <Route path="search" element={<SearchPage />} />
         <Route element={<RequireAuth />}>
           <Route path="account" element={<AccountPage />} />

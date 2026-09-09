@@ -295,7 +295,7 @@ export class AccessControlService {
       u.created_at createdAt,u.last_login_at lastLoginAt,u.failed_login_count failedLoginCount,
       (SELECT COALESCE(MAX(r.authority_level),0) FROM user_roles ur
        JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.is_active=TRUE) authorityLevel
-      FROM users u WHERE u.id=?`,
+      FROM users u WHERE u.deleted_at IS NULL AND u.id=?`,
       [id],
     );
     if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
@@ -366,7 +366,7 @@ export class AccessControlService {
     const normalized = this.normalizeOverrides(overrides);
     await this.db.transaction(async (manager) => {
       const users = await manager.query(
-        "SELECT id FROM users WHERE id=? FOR UPDATE",
+        "SELECT id FROM users WHERE deleted_at IS NULL AND id=? FOR UPDATE",
         [userId],
       );
       if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
@@ -421,7 +421,7 @@ export class AccessControlService {
   ) {
     return this.db.transaction(async (manager) => {
       const users = await manager.query(
-        "SELECT id,username,display_name displayName FROM users WHERE id=? FOR UPDATE",
+        "SELECT id,username,display_name displayName FROM users WHERE deleted_at IS NULL AND id=? FOR UPDATE",
         [userId],
       );
       if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
@@ -620,7 +620,10 @@ export class AccessControlService {
   }
 
   private async assertUserExists(id: string) {
-    const rows = await this.db.query("SELECT id FROM users WHERE id=?", [id]);
+    const rows = await this.db.query(
+      "SELECT id FROM users WHERE deleted_at IS NULL AND id=?",
+      [id],
+    );
     if (!rows[0]) throw new NotFoundException("المستخدم غير موجود.");
   }
 

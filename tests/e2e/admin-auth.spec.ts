@@ -1,3 +1,4 @@
+import { PERMISSION_CATALOG } from "../../apps/api/src/common/permission-catalog.js";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
@@ -572,7 +573,7 @@ test("granular permissions persist, enforce in the API, and drive navigation", a
   });
   expect(catalogResponse.ok()).toBeTruthy();
   const catalog = await catalogResponse.json();
-  expect(catalog.permissions).toHaveLength(75);
+  expect(catalog.permissions).toHaveLength(PERMISSION_CATALOG.length);
 
   const users = await (
     await request.get("/api/v1/admin/users", {

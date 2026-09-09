@@ -88,6 +88,27 @@ class UpdateDraftDto {
   @IsOptional() @IsString() preambleText?: string;
   @IsString() @Length(3, 1000) reason!: string;
 }
+class GazetteDto {
+  @IsString() @Length(1, 80) issueNumber!: string;
+  @IsOptional() @IsString() publicationDate?: string;
+  @IsOptional() @IsString() @Length(0, 200) publisher?: string;
+  @IsOptional() @IsString() @Length(0, 10000) notes?: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class LinkSourceDto {
+  @IsString() sourceDocumentId!: string;
+  @IsIn(["EXTRACTION", "OFFICIAL_PDF", "SUPPORTING"]) sourceRole!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class CreateArticleDto {
+  @IsString() @Length(1, 120) currentLabel!: string;
+  @IsString() @Length(1, 120) sortKey!: string;
+  @IsOptional() @IsString() structureNodeId?: string;
+  @IsString() sourceDocumentId!: string;
+  @IsDateString() validFrom!: string;
+  @IsString() @Length(1, 100000) text!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
 class UserStateDto {
   @IsBoolean() active!: boolean;
   @IsString() @Length(3, 1000) reason!: string;
@@ -256,6 +277,51 @@ export class AdminController {
   dashboard() {
     return this.service.dashboard();
   }
+  @Post("legislations/:id/sources")
+  @Permissions("source.update")
+  linkSource(
+    @Param("id") id: string,
+    @Body() dto: LinkSourceDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.linkSource(id, dto, req.user!);
+  }
+  @Delete("legislations/:id/sources/:sourceId")
+  @Permissions("source.delete")
+  unlinkSource(
+    @Param("id") id: string,
+    @Param("sourceId") sourceId: string,
+    @Body() dto: ReasonDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.unlinkSource(id, sourceId, req.user!, dto.reason);
+  }
+  @Get("gazette-issues") @Permissions("reference.view") gazettes() {
+    return this.service.gazettes();
+  }
+  @Post("gazette-issues") @Permissions("reference.create") createGazette(
+    @Body() dto: GazetteDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.saveGazette(dto, req.user!);
+  }
+  @Patch("gazette-issues/:id") @Permissions("reference.update") updateGazette(
+    @Param("id") id: string,
+    @Body() dto: GazetteDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.saveGazette(dto, req.user!, id);
+  }
+  @Post("synonym-sets")
+  @Permissions("search.synonym_set.create")
+  createSynonymSet(@Body() dto: ReasonDto, @Req() req: AuthenticatedRequest) {
+    return this.service.createSynonymSet(req.user!, dto.reason);
+  }
+  @Get("source-options")
+  @Permissions("source.view")
+  sourceOptions() {
+    return this.service.sourceOptions();
+  }
   @Get("references")
   @Permissions("reference.view")
   references() {
@@ -329,6 +395,15 @@ export class AdminController {
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.transition(id, dto.target, request.user!, dto.reason);
+  }
+  @Post("legislations/:id/articles")
+  @Permissions("article.create")
+  createArticle(
+    @Param("id") id: string,
+    @Body() dto: CreateArticleDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.createArticle(id, dto, req.user!);
   }
   @Patch("articles/:id")
   @Permissions("article.update")
@@ -562,6 +637,15 @@ export class AdminController {
   @Permissions("search.synonym.create")
   addSynonym(@Body() dto: SynonymDto, @Req() request: AuthenticatedRequest) {
     return this.service.addSynonym(dto.term, dto.synonym, request.user!);
+  }
+  @Patch("synonyms/:id")
+  @Permissions("search.synonym.update")
+  updateSynonym(
+    @Param("id") id: string,
+    @Body() dto: SynonymDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.updateSynonym(id, dto.term, dto.synonym, req.user!);
   }
   @Post("synonym-sets/:id/activate")
   @Permissions("search.synonym_set.activate")

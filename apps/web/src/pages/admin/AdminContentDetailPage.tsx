@@ -1,5 +1,8 @@
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useEffect, useState, type FormEvent } from "react";
-import { useLocation, useParams } from "react-router-dom";
+import { Link, useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -102,6 +105,7 @@ interface Detail {
 export function AdminContentDetailPage() {
   const { id, tab = "general" } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const auth = useAuth();
   const item = useApi<Detail>(
     id
@@ -109,6 +113,11 @@ export function AdminContentDetailPage() {
           tab === "articles" ? "?articleContent=full" : ""
         }`
       : null,
+  );
+  const [linkingSource, setLinkingSource] = useState(false);
+  const [creatingArticle, setCreatingArticle] = useState(false);
+  const sourceOptions = useApi<Array<{ id: string; originalName: string }>>(
+    auth.hasPermission("source.view") ? "/admin/source-options" : null,
   );
   const [msg, setMsg] = useState("");
   const [metadataOpen, setMetadataOpen] = useState(() =>
@@ -257,202 +266,216 @@ export function AdminContentDetailPage() {
           dirty={metadataDirty}
           onClose={() => setMetadataOpen(false)}
         >
-        <form
-          className="edit-form"
-          onSubmit={save}
-          onInput={() => setMetadataDirty(true)}
-        >
-          {!isDraft && (
-            <p className="form-warning">
-              هذا تصحيح بيانات وصفية منشورة يسجل قبل/بعد. النص والديباجة
-              المنشوران لا يعدلان في مكانهما.
-            </p>
-          )}
-          <label>
-            العنوان
-            <input name="titleAr" defaultValue={law.title_ar} required />
-          </label>
-          <label>
-            الملخص
-            <textarea name="summaryAr" defaultValue={law.summary_ar ?? ""} />
-          </label>
-          {isDraft && (
+          <form
+            className="edit-form"
+            onSubmit={save}
+            onInput={() => setMetadataDirty(true)}
+          >
+            {!isDraft && (
+              <p className="form-warning">
+                هذا تصحيح بيانات وصفية منشورة يسجل قبل/بعد. النص والديباجة
+                المنشوران لا يعدلان في مكانهما.
+              </p>
+            )}
             <label>
-              الديباجة
-              <textarea
-                name="preambleText"
-                defaultValue={law.versions[0]?.preambleText ?? ""}
-              />
-            </label>
-          )}
-          <div className="form-columns">
-            <label>
-              رمز العرض الدائم
-              <input name="displayCode" defaultValue={law.display_code ?? ""} />
+              العنوان
+              <input name="titleAr" defaultValue={law.title_ar} required />
             </label>
             <label>
-              الرقم
-              <input
-                name="officialNumber"
-                defaultValue={law.official_number ?? ""}
-              />
+              الملخص
+              <textarea name="summaryAr" defaultValue={law.summary_ar ?? ""} />
             </label>
-            <label>
-              السنة
-              <input
-                name="year"
-                type="number"
-                defaultValue={law.year}
-                required
-              />
-            </label>
-            <label>
-              تاريخ الإصدار
-              <input
-                name="issueDate"
-                type="date"
-                defaultValue={law.issue_date?.slice(0, 10) ?? ""}
-              />
-            </label>
-            <label>
-              تاريخ النشر
-              <input
-                name="publicationDate"
-                type="date"
-                defaultValue={law.publication_date?.slice(0, 10) ?? ""}
-              />
-            </label>
-            <label>
-              تاريخ النفاذ
-              <input
-                name="effectiveFrom"
-                type="date"
-                defaultValue={law.effective_from?.slice(0, 10) ?? ""}
-              />
-            </label>
-            <label>
-              تاريخ الإلغاء
-              <input
-                name="repealDate"
-                type="date"
-                defaultValue={law.repeal_date?.slice(0, 10) ?? ""}
-              />
-            </label>
-            <label>
-              النوع
-              <select name="typeId" defaultValue={law.type_id}>
-                {law.references.types.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              الجهة
-              <select name="authorityId" defaultValue={law.authority_id}>
-                {law.references.authorities.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              الحالة القانونية
-              <select name="legalStatus" defaultValue={law.legal_status}>
-                <option value="IN_FORCE">ساري</option>
-                <option value="AMENDED">معدل</option>
-                <option value="PARTIALLY_REPEALED">ملغى جزئيًا</option>
-                <option value="REPEALED">ملغى</option>
-                <option value="SUSPENDED">موقوف</option>
-                <option value="UNKNOWN">غير محدد</option>
-              </select>
-            </label>
-            <label>
-              درجة التحقق
-              <select
-                name="verificationLevel"
-                defaultValue={law.verification_level}
-              >
-                {["A", "B", "C", "D"].map((level) => (
-                  <option key={level}>{level}</option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <fieldset className="admin-fieldset">
-            <legend>بيانات الجريدة الرسمية</legend>
+            {isDraft && (
+              <label>
+                الديباجة
+                <textarea
+                  name="preambleText"
+                  defaultValue={law.versions[0]?.preambleText ?? ""}
+                />
+              </label>
+            )}
             <div className="form-columns">
               <label>
-                عدد الجريدة
+                رمز العرض الدائم
                 <input
-                  name="gazetteIssueNumber"
-                  defaultValue={law.gazette?.issueNumber ?? ""}
+                  name="displayCode"
+                  defaultValue={law.display_code ?? ""}
                 />
               </label>
               <label>
-                تاريخ الجريدة
+                الرقم
                 <input
-                  name="gazettePublicationDate"
+                  name="officialNumber"
+                  defaultValue={law.official_number ?? ""}
+                />
+              </label>
+              <label>
+                السنة
+                <input
+                  name="year"
+                  type="number"
+                  defaultValue={law.year}
+                  required
+                />
+              </label>
+              <label>
+                تاريخ الإصدار
+                <input
+                  name="issueDate"
                   type="date"
-                  defaultValue={law.gazette?.publicationDate ?? ""}
+                  defaultValue={law.issue_date?.slice(0, 10) ?? ""}
                 />
               </label>
               <label>
-                الناشر
+                تاريخ النشر
                 <input
-                  name="gazettePublisher"
-                  defaultValue={law.gazette?.publisher ?? ""}
+                  name="publicationDate"
+                  type="date"
+                  defaultValue={law.publication_date?.slice(0, 10) ?? ""}
                 />
+              </label>
+              <label>
+                تاريخ النفاذ
+                <input
+                  name="effectiveFrom"
+                  type="date"
+                  defaultValue={law.effective_from?.slice(0, 10) ?? ""}
+                />
+              </label>
+              <label>
+                تاريخ الإلغاء
+                <input
+                  name="repealDate"
+                  type="date"
+                  defaultValue={law.repeal_date?.slice(0, 10) ?? ""}
+                />
+              </label>
+              <label>
+                النوع
+                <select name="typeId" defaultValue={law.type_id}>
+                  {law.references.types.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                الجهة
+                <select name="authorityId" defaultValue={law.authority_id}>
+                  {law.references.authorities.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                الحالة القانونية
+                <select name="legalStatus" defaultValue={law.legal_status}>
+                  <option value="IN_FORCE">ساري</option>
+                  <option value="AMENDED">معدل</option>
+                  <option value="PARTIALLY_REPEALED">ملغى جزئيًا</option>
+                  <option value="REPEALED">ملغى</option>
+                  <option value="SUSPENDED">موقوف</option>
+                  <option value="UNKNOWN">غير محدد</option>
+                </select>
+              </label>
+              <label>
+                درجة التحقق
+                <select
+                  name="verificationLevel"
+                  defaultValue={law.verification_level}
+                >
+                  {["A", "B", "C", "D"].map((level) => (
+                    <option key={level}>{level}</option>
+                  ))}
+                </select>
               </label>
             </div>
+            <fieldset className="admin-fieldset">
+              <legend>بيانات الجريدة الرسمية</legend>
+              <div className="form-columns">
+                <label>
+                  عدد الجريدة
+                  <input
+                    name="gazetteIssueNumber"
+                    defaultValue={law.gazette?.issueNumber ?? ""}
+                  />
+                </label>
+                <label>
+                  تاريخ الجريدة
+                  <input
+                    name="gazettePublicationDate"
+                    type="date"
+                    defaultValue={law.gazette?.publicationDate ?? ""}
+                  />
+                </label>
+                <label>
+                  الناشر
+                  <input
+                    name="gazettePublisher"
+                    defaultValue={law.gazette?.publisher ?? ""}
+                  />
+                </label>
+              </div>
+              <label>
+                ملاحظات الجريدة
+                <textarea
+                  name="gazetteNotes"
+                  defaultValue={law.gazette?.notes ?? ""}
+                />
+              </label>
+            </fieldset>
+            <fieldset className="admin-fieldset checkbox-grid">
+              <legend>الموضوعات والتصنيفات</legend>
+              {law.references.subjects.map((subject) => (
+                <label key={subject.id}>
+                  <input
+                    type="checkbox"
+                    name="subjectIds"
+                    value={subject.id}
+                    defaultChecked={law.selectedSubjectIds.includes(subject.id)}
+                  />
+                  {subject.name}
+                </label>
+              ))}
+            </fieldset>
             <label>
-              ملاحظات الجريدة
-              <textarea
-                name="gazetteNotes"
-                defaultValue={law.gazette?.notes ?? ""}
+              سبب التعديل
+              <input
+                name="reason"
+                required
+                placeholder="سبب واضح يظهر في سجل التدقيق"
               />
             </label>
-          </fieldset>
-          <fieldset className="admin-fieldset checkbox-grid">
-            <legend>الموضوعات والتصنيفات</legend>
-            {law.references.subjects.map((subject) => (
-              <label key={subject.id}>
-                <input
-                  type="checkbox"
-                  name="subjectIds"
-                  value={subject.id}
-                  defaultChecked={law.selectedSubjectIds.includes(subject.id)}
-                />
-                {subject.name}
-              </label>
-            ))}
-          </fieldset>
-          <label>
-            سبب التعديل
-            <input
-              name="reason"
-              required
-              placeholder="سبب واضح يظهر في سجل التدقيق"
-            />
-          </label>
-          <div className="admin-entity-actions">
-            <button
-              type="button"
-              className="button secondary"
-              onClick={() => setMetadataOpen(false)}
-              disabled={metadataSaving}
-            >
-              إلغاء
-            </button>
-            <button className="button" disabled={metadataSaving}>
-              {metadataSaving ? "جار الحفظ…" : "حفظ التغييرات"}
-            </button>
-          </div>
-        </form>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setMetadataOpen(false)}
+                disabled={metadataSaving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={metadataSaving}>
+                {metadataSaving ? "جار الحفظ…" : "حفظ التغييرات"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="legislations"
+          id={law.id}
+          label={law.title_ar}
+          onDone={(action) => {
+            if (action === "delete") navigate("/ar/admin/content");
+            else item.retry();
+          }}
+        />
+      </div>
       {tab === "general" && (
         <section className="admin-card">
           <h2>البيانات العامة</h2>
@@ -466,11 +489,13 @@ export function AdminContentDetailPage() {
               { label: "العنوان", value: law.title_ar, wide: true },
               { label: "الملخص", value: law.summary_ar || "—", wide: true },
               ...(isDraft
-                ? [{
-                    label: "الديباجة",
-                    value: law.versions[0]?.preambleText || "—",
-                    wide: true,
-                  }]
+                ? [
+                    {
+                      label: "الديباجة",
+                      value: law.versions[0]?.preambleText || "—",
+                      wide: true,
+                    },
+                  ]
                 : []),
               { label: "رمز العرض", value: law.display_code || "—" },
               { label: "الرقم", value: law.official_number || "—" },
@@ -479,7 +504,9 @@ export function AdminContentDetailPage() {
                 label: "النوع",
                 value:
                   law.references.types.find((entry) => entry.id === law.type_id)
-                    ?.name || law.typeName || "—",
+                    ?.name ||
+                  law.typeName ||
+                  "—",
               },
               {
                 label: "الجهة",
@@ -490,19 +517,40 @@ export function AdminContentDetailPage() {
               },
               { label: "الحالة القانونية", value: law.legal_status },
               { label: "درجة التحقق", value: law.verification_level },
-              { label: "تاريخ الإصدار", value: law.issue_date?.slice(0, 10) || "—" },
-              { label: "تاريخ النشر", value: law.publication_date?.slice(0, 10) || "—" },
-              { label: "تاريخ النفاذ", value: law.effective_from?.slice(0, 10) || "—" },
-              { label: "تاريخ الإلغاء", value: law.repeal_date?.slice(0, 10) || "—" },
+              {
+                label: "تاريخ الإصدار",
+                value: law.issue_date?.slice(0, 10) || "—",
+              },
+              {
+                label: "تاريخ النشر",
+                value: law.publication_date?.slice(0, 10) || "—",
+              },
+              {
+                label: "تاريخ النفاذ",
+                value: law.effective_from?.slice(0, 10) || "—",
+              },
+              {
+                label: "تاريخ الإلغاء",
+                value: law.repeal_date?.slice(0, 10) || "—",
+              },
               { label: "عدد الجريدة", value: law.gazette?.issueNumber || "—" },
-              { label: "تاريخ الجريدة", value: law.gazette?.publicationDate || "—" },
+              {
+                label: "تاريخ الجريدة",
+                value: law.gazette?.publicationDate || "—",
+              },
               { label: "ناشر الجريدة", value: law.gazette?.publisher || "—" },
-              { label: "ملاحظات الجريدة", value: law.gazette?.notes || "—", wide: true },
+              {
+                label: "ملاحظات الجريدة",
+                value: law.gazette?.notes || "—",
+                wide: true,
+              },
               {
                 label: "الموضوعات والتصنيفات",
                 value:
                   law.references.subjects
-                    .filter((subject) => law.selectedSubjectIds.includes(subject.id))
+                    .filter((subject) =>
+                      law.selectedSubjectIds.includes(subject.id),
+                    )
                     .map((subject) => subject.name)
                     .join("، ") || "—",
                 wide: true,
@@ -510,6 +558,68 @@ export function AdminContentDetailPage() {
             ]}
           />
         </section>
+      )}
+      {tab === "articles" &&
+        ["INBOX", "DRAFT"].includes(law.status) &&
+        auth.hasPermission("article.create") && (
+          <button className="button" onClick={() => setCreatingArticle(true)}>
+            + إضافة مادة
+          </button>
+        )}
+      {creatingArticle && (
+        <RecordFormDialog
+          title="إضافة مادة إلى المسودة"
+          path={`/admin/legislations/${id}/articles`}
+          fields={[
+            {
+              name: "currentLabel",
+              label: "رقم المادة",
+              required: true,
+              maxLength: 120,
+            },
+            {
+              name: "sortKey",
+              label: "مفتاح الترتيب",
+              required: true,
+              maxLength: 120,
+            },
+            {
+              name: "structureNodeId",
+              label: "الموقع في الهيكل",
+              options: law.structures.map((n) => ({
+                value: n.id,
+                label: n.titleAr,
+              })),
+            },
+            {
+              name: "sourceDocumentId",
+              label: "المصدر",
+              required: true,
+              options: (sourceOptions.data ?? law.sources).map((s) => ({
+                value: s.id,
+                label: s.originalName,
+              })),
+            },
+            {
+              name: "validFrom",
+              label: "بداية النفاذ",
+              type: "date",
+              required: true,
+            },
+            {
+              name: "text",
+              label: "نص المادة",
+              type: "textarea",
+              required: true,
+            },
+            { name: "reason", label: "سبب الإضافة", required: true },
+          ]}
+          onClose={() => setCreatingArticle(false)}
+          onDone={() => {
+            setCreatingArticle(false);
+            item.retry();
+          }}
+        />
       )}
       {tab === "articles" && law.articles.length > 0 && (
         <section className="admin-card">
@@ -769,6 +879,54 @@ export function AdminContentDetailPage() {
         </section>
       )}
       {tab === "sources" && (
+        <div className="admin-entity-actions">
+          {auth.hasPermission("source.upload") && (
+            <Link className="button secondary" to="/ar/admin/imports/upload">
+              رفع مصدر أو مرفق جديد
+            </Link>
+          )}
+          {auth.hasPermission("source.update") &&
+            ["INBOX", "DRAFT"].includes(law.status) && (
+              <button className="button" onClick={() => setLinkingSource(true)}>
+                ربط مصدر أو تعديل دوره
+              </button>
+            )}
+        </div>
+      )}
+      {linkingSource && (
+        <RecordFormDialog
+          title="ربط مصدر بالتشريع"
+          path={`/admin/legislations/${id}/sources`}
+          fields={[
+            {
+              name: "sourceDocumentId",
+              label: "المصدر",
+              required: true,
+              options: (sourceOptions.data ?? law.sources).map((s) => ({
+                value: s.id,
+                label: s.originalName,
+              })),
+            },
+            {
+              name: "sourceRole",
+              label: "دور المصدر",
+              required: true,
+              options: [
+                { value: "EXTRACTION", label: "مصدر النص" },
+                { value: "OFFICIAL_PDF", label: "الوثيقة الرسمية PDF" },
+                { value: "SUPPORTING", label: "مرفق داعم" },
+              ],
+            },
+            { name: "reason", label: "سبب الربط", required: true },
+          ]}
+          onClose={() => setLinkingSource(false)}
+          onDone={() => {
+            setLinkingSource(false);
+            item.retry();
+          }}
+        />
+      )}
+      {tab === "sources" && (
         <div className="admin-grid">
           <section className="admin-card">
             <h2>المصادر</h2>
@@ -777,6 +935,7 @@ export function AdminContentDetailPage() {
             )}
             {law.sources.map((source) => (
               <SourceEditor
+                legislationId={law.id}
                 key={source.id}
                 source={source}
                 editable={auth.hasPermission("source.update")}
@@ -871,7 +1030,9 @@ function ArticleEditor({
       <header>
         <div>
           <h3>المادة {article.currentLabel}</h3>
-          <p>{structure ? structurePath(structure, nodes) : "دون موقع في البنية"}</p>
+          <p>
+            {structure ? structurePath(structure, nodes) : "دون موقع في البنية"}
+          </p>
         </div>
         <StatusBadge status={article.status} />
       </header>
@@ -892,9 +1053,21 @@ function ArticleEditor({
           },
         ]}
       />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="articles"
+          id={article.id}
+          label={article.currentLabel}
+          onDone={() => done("حُدّثت حالة السجل.")}
+        />
+      </div>
       {editable && (
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setEditing(true)}>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setEditing(true)}
+          >
             تعديل المادة
           </button>
         </div>
@@ -907,105 +1080,116 @@ function ArticleEditor({
           dirty={dirty}
           onClose={() => setEditing(false)}
         >
-        <form
-          className="edit-form"
-          onInput={() => setDirty(true)}
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            setSaving(true);
-            setError("");
-            try {
-              await apiRequest(`/admin/articles/${article.id}/metadata`, {
-                method: "PATCH",
-                body: {
-                  currentLabel: form.get("currentLabel"),
-                  publishedLabel: form.get("publishedLabel"),
-                  sortKey: form.get("sortKey"),
-                  structureNodeId: form.get("structureNodeId") || undefined,
-                  validFrom: form.get("validFrom"),
-                  text: form.get("text"),
-                  reason: form.get("reason"),
-                },
-              });
-              setDirty(false);
-              setEditing(false);
-              done(`حُفظ نص المادة ${article.currentLabel}.`);
-            } catch (error) {
-              setError(error instanceof Error ? error.message : "تعذر حفظ المادة.");
-            } finally {
-              setSaving(false);
-            }
-          }}
-        >
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="form-columns">
+          <form
+            className="edit-form"
+            onInput={() => setDirty(true)}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const form = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/articles/${article.id}/metadata`, {
+                  method: "PATCH",
+                  body: {
+                    currentLabel: form.get("currentLabel"),
+                    publishedLabel: form.get("publishedLabel"),
+                    sortKey: form.get("sortKey"),
+                    structureNodeId: form.get("structureNodeId") || undefined,
+                    validFrom: form.get("validFrom"),
+                    text: form.get("text"),
+                    reason: form.get("reason"),
+                  },
+                });
+                setDirty(false);
+                setEditing(false);
+                done(`حُفظ نص المادة ${article.currentLabel}.`);
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر حفظ المادة.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                رقم/وسم المادة الحالي
+                <input
+                  name="currentLabel"
+                  defaultValue={article.currentLabel}
+                  required
+                />
+              </label>
+              <label>
+                الرقم كما نُشر
+                <input
+                  name="publishedLabel"
+                  defaultValue={article.publishedLabel}
+                  required
+                />
+              </label>
+              <label>
+                مفتاح الترتيب
+                <input name="sortKey" defaultValue={article.sortKey} required />
+              </label>
+              <label>
+                الباب أو الفصل
+                <select
+                  name="structureNodeId"
+                  defaultValue={article.structureNodeId ?? ""}
+                >
+                  <option value="">بدون عقدة</option>
+                  {nodes.map((node) => (
+                    <option key={node.id} value={node.id}>
+                      {node.titleAr}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                بداية نفاذ النسخة
+                <input
+                  name="validFrom"
+                  type="date"
+                  defaultValue={article.validFrom}
+                  required
+                />
+              </label>
+            </div>
             <label>
-              رقم/وسم المادة الحالي
-              <input
-                name="currentLabel"
-                defaultValue={article.currentLabel}
+              النص
+              <textarea
+                name="text"
+                defaultValue={article.textOriginal ?? ""}
                 required
+                rows={7}
               />
             </label>
             <label>
-              الرقم كما نُشر
-              <input
-                name="publishedLabel"
-                defaultValue={article.publishedLabel}
-                required
-              />
+              سبب التعديل
+              <input name="reason" required />
             </label>
-            <label>
-              مفتاح الترتيب
-              <input name="sortKey" defaultValue={article.sortKey} required />
-            </label>
-            <label>
-              الباب أو الفصل
-              <select
-                name="structureNodeId"
-                defaultValue={article.structureNodeId ?? ""}
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
               >
-                <option value="">بدون عقدة</option>
-                {nodes.map((node) => (
-                  <option key={node.id} value={node.id}>
-                    {node.titleAr}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              بداية نفاذ النسخة
-              <input
-                name="validFrom"
-                type="date"
-                defaultValue={article.validFrom}
-                required
-              />
-            </label>
-          </div>
-          <label>
-            النص
-            <textarea
-              name="text"
-              defaultValue={article.textOriginal ?? ""}
-              required
-              rows={7}
-            />
-          </label>
-          <label>
-            سبب التعديل
-            <input name="reason" required />
-          </label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>
-              إلغاء
-            </button>
-            <button className="button" disabled={saving}>
-              {saving ? "جار الحفظ…" : "حفظ المادة"}
-            </button>
-          </div>
-        </form>
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ المادة"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
     </article>
@@ -1036,102 +1220,136 @@ function StructureEditor({
           { label: "النوع", value: node.nodeType },
           { label: "الوسم", value: node.labelAr || "—" },
           { label: "مفتاح الترتيب", value: node.sortKey },
-          { label: "العنصر الأب", value: parent ? structureNodeName(parent) : "بلا أب" },
+          {
+            label: "العنصر الأب",
+            value: parent ? structureNodeName(parent) : "بلا أب",
+          },
           { label: "عدد المواد المباشرة", value: node.directArticleCount },
         ]}
       />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="structure"
+          id={node.id}
+          label={node.titleAr}
+          onDone={() => done("حُدّثت حالة السجل.")}
+        />
+      </div>
       {editable && (
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setEditing(true)}>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setEditing(true)}
+          >
             تعديل العنصر
           </button>
         </div>
       )}
       {editing && (
-        <AdminDialog title={`تعديل ${node.titleAr}`} dirty={dirty} onClose={() => setEditing(false)}>
-        <form
-          className="edit-form"
-          onInput={() => setDirty(true)}
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const f = new FormData(event.currentTarget);
-            setSaving(true);
-            setError("");
-            try {
-              await apiRequest(`/admin/structure/${node.id}`, {
-                method: "PATCH",
-                body: {
-                  nodeType: f.get("nodeType"),
-                  parentId: f.get("parentId"),
-                  labelAr: f.get("labelAr"),
-                  titleAr: f.get("titleAr"),
-                  sortKey: f.get("sortKey"),
-                  reason: f.get("reason"),
-                },
-              });
-              setDirty(false);
-              setEditing(false);
-              done("حُفظ عنصر الهيكل وسُجل التعديل.");
-            } catch (error) {
-              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
-            } finally {
-              setSaving(false);
-            }
-          }}
+        <AdminDialog
+          title={`تعديل ${node.titleAr}`}
+          dirty={dirty}
+          onClose={() => setEditing(false)}
         >
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="form-columns">
-            <label>
-              النوع
-              <select name="nodeType" defaultValue={node.nodeType}>
-                {[
-                  "PREAMBLE",
-                  "BOOK",
-                  "PART",
-                  "TITLE",
-                  "CHAPTER",
-                  "SECTION",
-                  "SUBSECTION",
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              العنوان
-              <input name="titleAr" defaultValue={node.titleAr} required />
-            </label>
-            <label>
-              الوسم
-              <input name="labelAr" defaultValue={node.labelAr ?? ""} />
-            </label>
-            <label>
-              مفتاح الترتيب
-              <input name="sortKey" defaultValue={node.sortKey} required />
-            </label>
-            <label>
-              العنصر الأب
-              <select name="parentId" defaultValue={node.parentId ?? ""}>
-                <option value="">بلا أب</option>
-                {nodes
-                  .filter((x) => x.id !== node.id)
-                  .map((x) => (
-                    <option key={x.id} value={x.id}>
-                      {x.titleAr}
-                    </option>
+          <form
+            className="edit-form"
+            onInput={() => setDirty(true)}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const f = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/structure/${node.id}`, {
+                  method: "PATCH",
+                  body: {
+                    nodeType: f.get("nodeType"),
+                    parentId: f.get("parentId"),
+                    labelAr: f.get("labelAr"),
+                    titleAr: f.get("titleAr"),
+                    sortKey: f.get("sortKey"),
+                    reason: f.get("reason"),
+                  },
+                });
+                setDirty(false);
+                setEditing(false);
+                done("حُفظ عنصر الهيكل وسُجل التعديل.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                النوع
+                <select name="nodeType" defaultValue={node.nodeType}>
+                  {[
+                    "PREAMBLE",
+                    "BOOK",
+                    "PART",
+                    "TITLE",
+                    "CHAPTER",
+                    "SECTION",
+                    "SUBSECTION",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
                   ))}
-              </select>
+                </select>
+              </label>
+              <label>
+                العنوان
+                <input name="titleAr" defaultValue={node.titleAr} required />
+              </label>
+              <label>
+                الوسم
+                <input name="labelAr" defaultValue={node.labelAr ?? ""} />
+              </label>
+              <label>
+                مفتاح الترتيب
+                <input name="sortKey" defaultValue={node.sortKey} required />
+              </label>
+              <label>
+                العنصر الأب
+                <select name="parentId" defaultValue={node.parentId ?? ""}>
+                  <option value="">بلا أب</option>
+                  {nodes
+                    .filter((x) => x.id !== node.id)
+                    .map((x) => (
+                      <option key={x.id} value={x.id}>
+                        {x.titleAr}
+                      </option>
+                    ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              سبب التعديل
+              <input name="reason" required />
             </label>
-          </div>
-          <label>
-            سبب التعديل
-            <input name="reason" required />
-          </label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
-            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ الهيكل"}</button>
-          </div>
-        </form>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ الهيكل"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
     </div>
@@ -1152,90 +1370,112 @@ function NewStructureEditor({
   const [error, setError] = useState("");
   return (
     <div className="admin-entity-actions">
-      <button type="button" className="button" onClick={() => setCreating(true)}>
+      <button
+        type="button"
+        className="button"
+        onClick={() => setCreating(true)}
+      >
         + إضافة عنصر بنية
       </button>
       {creating && (
-      <AdminDialog title="إضافة باب أو فصل أو قسم" onClose={() => setCreating(false)}>
-      <form
-        className="edit-form"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const formElement = event.currentTarget;
-          const f = new FormData(formElement);
-          setSaving(true);
-          setError("");
-          try {
-            await apiRequest(`/admin/legislations/${id}/structure`, {
-              body: {
-                nodeType: f.get("nodeType"),
-                parentId: f.get("parentId"),
-                labelAr: f.get("labelAr"),
-                titleAr: f.get("titleAr"),
-                sortKey: f.get("sortKey"),
-                reason: f.get("reason"),
-              },
-            });
-            done("أضيف عنصر الهيكل.");
-            setCreating(false);
-          } catch (error) {
-            setError(error instanceof Error ? error.message : "تعذرت الإضافة.");
-          } finally {
-            setSaving(false);
-          }
-        }}
-      >
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="form-columns">
-          <label>
-            النوع
-            <select name="nodeType">
-              {[
-                "BOOK",
-                "PART",
-                "TITLE",
-                "CHAPTER",
-                "SECTION",
-                "SUBSECTION",
-              ].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            العنوان
-            <input name="titleAr" required />
-          </label>
-          <label>
-            الوسم
-            <input name="labelAr" />
-          </label>
-          <label>
-            الترتيب
-            <input name="sortKey" required placeholder="010.020" />
-          </label>
-          <label>
-            الأب
-            <select name="parentId">
-              <option value="">بلا أب</option>
-              {nodes.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.titleAr}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label>
-          سبب الإضافة
-          <input name="reason" required />
-        </label>
-        <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={saving}>إلغاء</button>
-          <button className="button" disabled={saving}>{saving ? "جار الإضافة…" : "إضافة"}</button>
-        </div>
-      </form>
-      </AdminDialog>
+        <AdminDialog
+          title="إضافة باب أو فصل أو قسم"
+          onClose={() => setCreating(false)}
+        >
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/legislations/${id}/structure`, {
+                  body: {
+                    nodeType: f.get("nodeType"),
+                    parentId: f.get("parentId"),
+                    labelAr: f.get("labelAr"),
+                    titleAr: f.get("titleAr"),
+                    sortKey: f.get("sortKey"),
+                    reason: f.get("reason"),
+                  },
+                });
+                done("أضيف عنصر الهيكل.");
+                setCreating(false);
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذرت الإضافة.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                النوع
+                <select name="nodeType">
+                  {[
+                    "BOOK",
+                    "PART",
+                    "TITLE",
+                    "CHAPTER",
+                    "SECTION",
+                    "SUBSECTION",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                العنوان
+                <input name="titleAr" required />
+              </label>
+              <label>
+                الوسم
+                <input name="labelAr" />
+              </label>
+              <label>
+                الترتيب
+                <input name="sortKey" required placeholder="010.020" />
+              </label>
+              <label>
+                الأب
+                <select name="parentId">
+                  <option value="">بلا أب</option>
+                  {nodes.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.titleAr}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              سبب الإضافة
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الإضافة…" : "إضافة"}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
       )}
     </div>
   );
@@ -1268,91 +1508,125 @@ function AnnexEditor({
         </div>
         <StatusBadge status={annex.status} />
       </header>
-      <EntityDetails items={[
-        { label: "النوع", value: annex.annexType },
-        { label: "الحالة", value: annex.status },
-      ]} />
+      <EntityDetails
+        items={[
+          { label: "النوع", value: annex.annexType },
+          { label: "الحالة", value: annex.status },
+        ]}
+      />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="annexes"
+          id={annex.id}
+          label={annex.titleAr}
+          onDone={() => done("حُدّثت حالة السجل.")}
+        />
+      </div>
       {editable && (
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل الملحق</button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setEditing(true)}
+          >
+            تعديل الملحق
+          </button>
         </div>
       )}
       {editing && (
-        <AdminDialog title={`تعديل ${annex.titleAr}`} onClose={() => setEditing(false)}>
-        <form
-          className="edit-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const f = new FormData(event.currentTarget);
-            setSaving(true);
-            setError("");
-            try {
-              await apiRequest(`/admin/annexes/${annex.id}`, {
-                method: "PATCH",
-                body: {
-                  annexType: f.get("annexType"),
-                  titleAr: f.get("titleAr"),
-                  status: f.get("status"),
-                  reason: f.get("reason"),
-                },
-              });
-              setEditing(false);
-              done("حُفظت بيانات الملحق.");
-            } catch (error) {
-              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
-            } finally {
-              setSaving(false);
-            }
-          }}
+        <AdminDialog
+          title={`تعديل ${annex.titleAr}`}
+          onClose={() => setEditing(false)}
         >
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="form-columns">
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const f = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/annexes/${annex.id}`, {
+                  method: "PATCH",
+                  body: {
+                    annexType: f.get("annexType"),
+                    titleAr: f.get("titleAr"),
+                    status: f.get("status"),
+                    reason: f.get("reason"),
+                  },
+                });
+                setEditing(false);
+                done("حُفظت بيانات الملحق.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                العنوان
+                <input name="titleAr" defaultValue={annex.titleAr} required />
+              </label>
+              <label>
+                النوع
+                <select name="annexType" defaultValue={annex.annexType}>
+                  {[
+                    "EXECUTIVE_REGULATION",
+                    "TABLE",
+                    "FORM",
+                    "ANNEX",
+                    "MAP",
+                    "TARIFF",
+                    "LIST",
+                    "CORRECTION",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                الحالة
+                <select name="status" defaultValue={annex.status}>
+                  {annex.status === "DRAFT" && <option>DRAFT</option>}
+                  {(annex.status === "PUBLISHED" || canPublish) && (
+                    <option>PUBLISHED</option>
+                  )}
+                  {(annex.status === "REPLACED" || canReplace) && (
+                    <option>REPLACED</option>
+                  )}
+                  {(annex.status === "REPEALED" || canRepeal) && (
+                    <option>REPEALED</option>
+                  )}
+                </select>
+              </label>
+            </div>
             <label>
-              العنوان
-              <input name="titleAr" defaultValue={annex.titleAr} required />
+              سبب التعديل
+              <input name="reason" required />
             </label>
-            <label>
-              النوع
-              <select name="annexType" defaultValue={annex.annexType}>
-                {[
-                  "EXECUTIVE_REGULATION",
-                  "TABLE",
-                  "FORM",
-                  "ANNEX",
-                  "MAP",
-                  "TARIFF",
-                  "LIST",
-                  "CORRECTION",
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              الحالة
-              <select name="status" defaultValue={annex.status}>
-                {annex.status === "DRAFT" && <option>DRAFT</option>}
-                {(annex.status === "PUBLISHED" || canPublish) && (
-                  <option>PUBLISHED</option>
-                )}
-                {(annex.status === "REPLACED" || canReplace) && (
-                  <option>REPLACED</option>
-                )}
-                {(annex.status === "REPEALED" || canRepeal) && (
-                  <option>REPEALED</option>
-                )}
-              </select>
-            </label>
-          </div>
-          <label>
-            سبب التعديل
-            <input name="reason" required />
-          </label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
-            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ الملحق"}</button>
-          </div>
-        </form>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ الملحق"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
     </article>
@@ -1376,100 +1650,125 @@ function NewAnnexEditor({
   if (!sources.length) return <p>اربط مصدرًا بالتشريع قبل إضافة ملحق.</p>;
   return (
     <div className="admin-entity-actions">
-      <button type="button" className="button" onClick={() => setCreating(true)}>+ إضافة ملحق</button>
-      {creating && (
-      <AdminDialog title="إضافة لائحة أو جدول أو ملحق" size="large" onClose={() => setCreating(false)}>
-      <form
-        className="edit-form"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const formElement = event.currentTarget;
-          const f = new FormData(formElement);
-          setSaving(true);
-          setError("");
-          try {
-            await apiRequest(`/admin/legislations/${id}/annexes`, {
-              body: {
-                annexType: f.get("annexType"),
-                titleAr: f.get("titleAr"),
-                status: f.get("status"),
-                validFrom: f.get("validFrom"),
-                sourceDocumentId: f.get("sourceDocumentId"),
-                structuredTableJson: f.get("structuredTableJson"),
-                reason: f.get("reason"),
-              },
-            });
-            done("أضيف إصدار الملحق الأول.");
-            setCreating(false);
-          } catch (error) {
-            setError(error instanceof Error ? error.message : "تعذرت الإضافة.");
-          } finally {
-            setSaving(false);
-          }
-        }}
+      <button
+        type="button"
+        className="button"
+        onClick={() => setCreating(true)}
       >
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="form-columns">
-          <label>
-            العنوان
-            <input name="titleAr" required />
-          </label>
-          <label>
-            النوع
-            <select name="annexType">
-              {[
-                "EXECUTIVE_REGULATION",
-                "TABLE",
-                "FORM",
-                "ANNEX",
-                "MAP",
-                "TARIFF",
-                "LIST",
-                "CORRECTION",
-              ].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            الحالة
-            <select name="status">
-              <option>DRAFT</option>
-              {canPublish && <option>PUBLISHED</option>}
-            </select>
-          </label>
-          <label>
-            النفاذ
-            <input name="validFrom" type="date" required />
-          </label>
-          <label>
-            المصدر
-            <select name="sourceDocumentId">
-              {sources.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.originalName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label>
-          جدول منظم JSON اختياري
-          <textarea
-            name="structuredTableJson"
-            placeholder='{"columns":["الحقل"],"rows":[["القيمة"]]}'
-          />
-        </label>
-        <label>
-          سبب الإضافة
-          <input name="reason" required />
-        </label>
-        <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={saving}>إلغاء</button>
-          <button className="button" disabled={saving}>{saving ? "جار الإضافة…" : "إضافة الملحق"}</button>
-        </div>
-      </form>
-      </AdminDialog>
+        + إضافة ملحق
+      </button>
+      {creating && (
+        <AdminDialog
+          title="إضافة لائحة أو جدول أو ملحق"
+          size="large"
+          onClose={() => setCreating(false)}
+        >
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/legislations/${id}/annexes`, {
+                  body: {
+                    annexType: f.get("annexType"),
+                    titleAr: f.get("titleAr"),
+                    status: f.get("status"),
+                    validFrom: f.get("validFrom"),
+                    sourceDocumentId: f.get("sourceDocumentId"),
+                    structuredTableJson: f.get("structuredTableJson"),
+                    reason: f.get("reason"),
+                  },
+                });
+                done("أضيف إصدار الملحق الأول.");
+                setCreating(false);
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذرت الإضافة.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                العنوان
+                <input name="titleAr" required />
+              </label>
+              <label>
+                النوع
+                <select name="annexType">
+                  {[
+                    "EXECUTIVE_REGULATION",
+                    "TABLE",
+                    "FORM",
+                    "ANNEX",
+                    "MAP",
+                    "TARIFF",
+                    "LIST",
+                    "CORRECTION",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                الحالة
+                <select name="status">
+                  <option>DRAFT</option>
+                  {canPublish && <option>PUBLISHED</option>}
+                </select>
+              </label>
+              <label>
+                النفاذ
+                <input name="validFrom" type="date" required />
+              </label>
+              <label>
+                المصدر
+                <select name="sourceDocumentId">
+                  {sources.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.originalName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              جدول منظم JSON اختياري
+              <textarea
+                name="structuredTableJson"
+                placeholder='{"columns":["الحقل"],"rows":[["القيمة"]]}'
+              />
+            </label>
+            <label>
+              سبب الإضافة
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الإضافة…" : "إضافة الملحق"}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
       )}
     </div>
   );
@@ -1502,122 +1801,168 @@ function RelationEditor({
         </div>
         <StatusBadge status={relation.reviewStatus} />
       </header>
-      <EntityDetails items={[
-        { label: "النطاق أو المادة", value: relation.scopeText || "—" },
-        { label: "تاريخ الأثر", value: relation.effectiveFrom || "—" },
-        { label: "مصدر الإثبات", value: sources.find((source) => source.id === relation.sourceDocumentId)?.originalName || "—", wide: true },
-      ]} />
+      <EntityDetails
+        items={[
+          { label: "النطاق أو المادة", value: relation.scopeText || "—" },
+          { label: "تاريخ الأثر", value: relation.effectiveFrom || "—" },
+          {
+            label: "مصدر الإثبات",
+            value:
+              sources.find((source) => source.id === relation.sourceDocumentId)
+                ?.originalName || "—",
+            wide: true,
+          },
+        ]}
+      />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="relations"
+          id={relation.id}
+          label={relation.targetTitle}
+          onDone={() => done("حُدّثت حالة السجل.")}
+        />
+      </div>
       {editable && (
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل العلاقة</button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setEditing(true)}
+          >
+            تعديل العلاقة
+          </button>
         </div>
       )}
       {editing && (
-        <AdminDialog title={`تعديل العلاقة مع ${relation.targetTitle}`} onClose={() => setEditing(false)}>
-        <form
-          className="edit-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const f = new FormData(event.currentTarget);
-            setSaving(true);
-            setError("");
-            try {
-              await apiRequest(`/admin/relations/${relation.id}`, {
-                method: "PATCH",
-                body: {
-                  relationType: f.get("relationType"),
-                  targetLegislationId: f.get("targetLegislationId"),
-                  scopeText: f.get("scopeText"),
-                  effectiveFrom: f.get("effectiveFrom"),
-                  sourceDocumentId: f.get("sourceDocumentId") || undefined,
-                  reviewStatus: f.get("reviewStatus"),
-                  reason: f.get("reason"),
-                },
-              });
-              setEditing(false);
-              done("حُفظت العلاقة القانونية.");
-            } catch (error) {
-              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
-            } finally {
-              setSaving(false);
-            }
-          }}
+        <AdminDialog
+          title={`تعديل العلاقة مع ${relation.targetTitle}`}
+          onClose={() => setEditing(false)}
         >
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <div className="form-columns">
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const f = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/relations/${relation.id}`, {
+                  method: "PATCH",
+                  body: {
+                    relationType: f.get("relationType"),
+                    targetLegislationId: f.get("targetLegislationId"),
+                    scopeText: f.get("scopeText"),
+                    effectiveFrom: f.get("effectiveFrom"),
+                    sourceDocumentId: f.get("sourceDocumentId") || undefined,
+                    reviewStatus: f.get("reviewStatus"),
+                    reason: f.get("reason"),
+                  },
+                });
+                setEditing(false);
+                done("حُفظت العلاقة القانونية.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                التشريع المقابل
+                <select
+                  name="targetLegislationId"
+                  defaultValue={relation.targetLegislationId}
+                >
+                  {options.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                نوع العلاقة
+                <select
+                  name="relationType"
+                  defaultValue={relation.relationType}
+                >
+                  {[
+                    "AMENDS",
+                    "REPEALS",
+                    "IMPLEMENTS",
+                    "BASED_ON",
+                    "REFERS_TO",
+                    "CORRECTS",
+                    "TOPICALLY_RELATED",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                تاريخ الأثر
+                <input
+                  name="effectiveFrom"
+                  type="date"
+                  defaultValue={relation.effectiveFrom ?? ""}
+                />
+              </label>
+              <label>
+                حالة المراجعة
+                <select
+                  name="reviewStatus"
+                  defaultValue={relation.reviewStatus}
+                >
+                  <option>UNREVIEWED</option>
+                  {canReview && <option>REVIEWED</option>}
+                  {canReview && <option>REJECTED</option>}
+                </select>
+              </label>
+              <label>
+                مصدر الإثبات
+                <select
+                  name="sourceDocumentId"
+                  defaultValue={relation.sourceDocumentId ?? ""}
+                >
+                  <option value="">بدون مصدر (للتشابه الموضوعي فقط)</option>
+                  {sources.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.originalName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <label>
-              التشريع المقابل
-              <select
-                name="targetLegislationId"
-                defaultValue={relation.targetLegislationId}
+              النطاق أو المادة
+              <input name="scopeText" defaultValue={relation.scopeText ?? ""} />
+            </label>
+            <label>
+              سبب التعديل
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
               >
-                {options.map((x) => (
-                  <option key={x.id} value={x.id}>
-                    {x.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            <label>
-              نوع العلاقة
-              <select name="relationType" defaultValue={relation.relationType}>
-                {[
-                  "AMENDS",
-                  "REPEALS",
-                  "IMPLEMENTS",
-                  "BASED_ON",
-                  "REFERS_TO",
-                  "CORRECTS",
-                  "TOPICALLY_RELATED",
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
-            </label>
-            <label>
-              تاريخ الأثر
-              <input
-                name="effectiveFrom"
-                type="date"
-                defaultValue={relation.effectiveFrom ?? ""}
-              />
-            </label>
-            <label>
-              حالة المراجعة
-              <select name="reviewStatus" defaultValue={relation.reviewStatus}>
-                <option>UNREVIEWED</option>
-                {canReview && <option>REVIEWED</option>}
-                {canReview && <option>REJECTED</option>}
-              </select>
-            </label>
-            <label>
-              مصدر الإثبات
-              <select
-                name="sourceDocumentId"
-                defaultValue={relation.sourceDocumentId ?? ""}
-              >
-                <option value="">بدون مصدر (للتشابه الموضوعي فقط)</option>
-                {sources.map((source) => (
-                  <option key={source.id} value={source.id}>
-                    {source.originalName}
-                  </option>
-                ))}
-              </select>
-            </label>
-          </div>
-          <label>
-            النطاق أو المادة
-            <input name="scopeText" defaultValue={relation.scopeText ?? ""} />
-          </label>
-          <label>
-            سبب التعديل
-            <input name="reason" required />
-          </label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
-            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ العلاقة"}</button>
-          </div>
-        </form>
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ العلاقة"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
     </article>
@@ -1642,118 +1987,146 @@ function NewRelationEditor({
   const [error, setError] = useState("");
   return (
     <div className="admin-entity-actions">
-      <button type="button" className="button" onClick={() => setCreating(true)}>+ إضافة علاقة</button>
-      {creating && (
-      <AdminDialog title="إضافة علاقة قانونية" onClose={() => setCreating(false)}>
-      <form
-        className="edit-form"
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const formElement = event.currentTarget;
-          const f = new FormData(formElement);
-          setSaving(true);
-          setError("");
-          try {
-            await apiRequest(`/admin/legislations/${id}/relations`, {
-              body: {
-                targetLegislationId: f.get("targetLegislationId"),
-                relationType: f.get("relationType"),
-                scopeText: f.get("scopeText"),
-                effectiveFrom: f.get("effectiveFrom"),
-                sourceDocumentId: f.get("sourceDocumentId") || undefined,
-                reviewStatus: f.get("reviewStatus"),
-                reason: f.get("reason"),
-              },
-            });
-            done("أضيفت العلاقة القانونية.");
-            setCreating(false);
-          } catch (error) {
-            setError(error instanceof Error ? error.message : "تعذرت الإضافة.");
-          } finally {
-            setSaving(false);
-          }
-        }}
+      <button
+        type="button"
+        className="button"
+        onClick={() => setCreating(true)}
       >
-        {error && <p className="form-error" role="alert">{error}</p>}
-        <div className="form-columns">
-          <label>
-            التشريع المقابل
-            <select name="targetLegislationId">
-              {options.map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.name}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            نوع العلاقة
-            <select name="relationType">
-              {[
-                "AMENDS",
-                "REPEALS",
-                "IMPLEMENTS",
-                "BASED_ON",
-                "REFERS_TO",
-                "CORRECTS",
-                "TOPICALLY_RELATED",
-              ].map((x) => (
-                <option key={x}>{x}</option>
-              ))}
-            </select>
-          </label>
-          <label>
-            تاريخ الأثر
-            <input name="effectiveFrom" type="date" />
-          </label>
-          <label>
-            المراجعة
-            <select name="reviewStatus">
-              <option>UNREVIEWED</option>
-              {canReview && <option>REVIEWED</option>}
-              {canReview && <option>REJECTED</option>}
-            </select>
-          </label>
-          <label>
-            مصدر الإثبات
-            <select name="sourceDocumentId">
-              <option value="">بدون مصدر (للتشابه الموضوعي فقط)</option>
-              {sources.map((source) => (
-                <option key={source.id} value={source.id}>
-                  {source.originalName}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-        <label>
-          النطاق أو المادة
-          <input name="scopeText" />
-        </label>
-        <label>
-          سبب الإضافة
-          <input name="reason" required />
-        </label>
-        <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={saving}>إلغاء</button>
-          <button className="button" disabled={saving}>{saving ? "جار الإضافة…" : "إضافة العلاقة"}</button>
-        </div>
-      </form>
-      </AdminDialog>
+        + إضافة علاقة
+      </button>
+      {creating && (
+        <AdminDialog
+          title="إضافة علاقة قانونية"
+          onClose={() => setCreating(false)}
+        >
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/legislations/${id}/relations`, {
+                  body: {
+                    targetLegislationId: f.get("targetLegislationId"),
+                    relationType: f.get("relationType"),
+                    scopeText: f.get("scopeText"),
+                    effectiveFrom: f.get("effectiveFrom"),
+                    sourceDocumentId: f.get("sourceDocumentId") || undefined,
+                    reviewStatus: f.get("reviewStatus"),
+                    reason: f.get("reason"),
+                  },
+                });
+                done("أضيفت العلاقة القانونية.");
+                setCreating(false);
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذرت الإضافة.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                التشريع المقابل
+                <select name="targetLegislationId">
+                  {options.map((x) => (
+                    <option key={x.id} value={x.id}>
+                      {x.name}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                نوع العلاقة
+                <select name="relationType">
+                  {[
+                    "AMENDS",
+                    "REPEALS",
+                    "IMPLEMENTS",
+                    "BASED_ON",
+                    "REFERS_TO",
+                    "CORRECTS",
+                    "TOPICALLY_RELATED",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                تاريخ الأثر
+                <input name="effectiveFrom" type="date" />
+              </label>
+              <label>
+                المراجعة
+                <select name="reviewStatus">
+                  <option>UNREVIEWED</option>
+                  {canReview && <option>REVIEWED</option>}
+                  {canReview && <option>REJECTED</option>}
+                </select>
+              </label>
+              <label>
+                مصدر الإثبات
+                <select name="sourceDocumentId">
+                  <option value="">بدون مصدر (للتشابه الموضوعي فقط)</option>
+                  {sources.map((source) => (
+                    <option key={source.id} value={source.id}>
+                      {source.originalName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            </div>
+            <label>
+              النطاق أو المادة
+              <input name="scopeText" />
+            </label>
+            <label>
+              سبب الإضافة
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الإضافة…" : "إضافة العلاقة"}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
       )}
     </div>
   );
 }
 
-function SourceEditor({
+export function SourceEditor({
   source,
+  legislationId,
   editable,
   done,
 }: {
   source: Detail["sources"][number];
+  legislationId?: string;
   editable: boolean;
   done: (message: string) => void;
 }) {
+  const auth = useAuth();
+  const [unlinking, setUnlinking] = useState(false);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -1761,107 +2134,170 @@ function SourceEditor({
     <article className="admin-list-card">
       <header>
         <div>
-        <strong>{source.originalName}</strong>{" "}
-        <span className="review-flag">
-          {source.sourceRole === "OFFICIAL_PDF"
-            ? "PDF رسمي للتنزيل"
-            : source.sourceRole === "EXTRACTION"
-              ? "مصدر الاستخراج"
-              : "مصدر داعم"}
-        </span>{" "}
+          <strong>{source.originalName}</strong>{" "}
+          <span className="review-flag">
+            {source.sourceRole === "OFFICIAL_PDF"
+              ? "PDF رسمي للتنزيل"
+              : source.sourceRole === "EXTRACTION"
+                ? "مصدر الاستخراج"
+                : "مصدر داعم"}
+          </span>{" "}
         </div>
         <StatusBadge status={source.extractionStatus} />
       </header>
-      <EntityDetails items={[
-        { label: "النوع", value: source.mediaType },
-        { label: "الحجم", value: `${source.byteSize} بايت` },
-        { label: "جهة الحصول", value: source.obtainedFrom },
-        { label: "عدد الصفحات", value: source.pageCount ?? "—" },
-        { label: "دقة OCR", value: source.ocrConfidence ?? "—" },
-        { label: "البصمة", value: source.sha256, wide: true },
-      ]} />
+      <EntityDetails
+        items={[
+          { label: "النوع", value: source.mediaType },
+          { label: "الحجم", value: `${source.byteSize} بايت` },
+          { label: "جهة الحصول", value: source.obtainedFrom },
+          { label: "عدد الصفحات", value: source.pageCount ?? "—" },
+          { label: "دقة OCR", value: source.ocrConfidence ?? "—" },
+          { label: "البصمة", value: source.sha256, wide: true },
+        ]}
+      />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="sources"
+          id={source.id}
+          label={source.originalName}
+          onDone={() => done("حُدّثت حالة السجل.")}
+        />
+      </div>
+      {legislationId && auth.hasPermission("source.delete") && (
+        <button
+          className="link-button danger"
+          onClick={() => setUnlinking(true)}
+        >
+          فك ارتباط المصدر
+        </button>
+      )}
+      {unlinking && (
+        <ConfirmDialog
+          title={`فك ارتباط ${source.originalName}`}
+          description="يفك الارتباط بهذه المسودة فقط ولا يحذف الملف. يمنع الخادم فك مصدر مثبت في نسخة تشريعية محفوظة."
+          confirmLabel="فك الارتباط"
+          onClose={() => setUnlinking(false)}
+          onConfirm={async () => {
+            await apiRequest(
+              `/admin/legislations/${legislationId}/sources/${source.id}`,
+              {
+                method: "DELETE",
+                body: {
+                  reason: `فك ارتباط المصدر ${source.originalName} من المسودة`,
+                },
+              },
+            );
+            setUnlinking(false);
+            done("فُك ارتباط المصدر.");
+          }}
+        />
+      )}
       {editable && (
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل المصدر</button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setEditing(true)}
+          >
+            تعديل المصدر
+          </button>
         </div>
       )}
       {editing && (
-        <AdminDialog title={`تعديل ${source.originalName}`} onClose={() => setEditing(false)}>
-        <form
-          className="edit-form"
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const f = new FormData(event.currentTarget);
-            setSaving(true);
-            setError("");
-            try {
-              await apiRequest(`/admin/sources/${source.id}`, {
-                method: "PATCH",
-                body: {
-                  obtainedFrom: f.get("obtainedFrom"),
-                  pageCount: f.get("pageCount")
-                    ? Number(f.get("pageCount"))
-                    : undefined,
-                  extractionStatus: f.get("extractionStatus"),
-                  reason: f.get("reason"),
-                },
-              });
-              setEditing(false);
-              done("حُفظت بيانات المصدر.");
-            } catch (error) {
-              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
-            } finally {
-              setSaving(false);
-            }
-          }}
+        <AdminDialog
+          title={`تعديل ${source.originalName}`}
+          onClose={() => setEditing(false)}
         >
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <label>
-            جهة الحصول
-            <input
-              name="obtainedFrom"
-              defaultValue={source.obtainedFrom}
-              required
-            />
-          </label>
-          <div className="form-columns">
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const f = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/sources/${source.id}`, {
+                  method: "PATCH",
+                  body: {
+                    obtainedFrom: f.get("obtainedFrom"),
+                    pageCount: f.get("pageCount")
+                      ? Number(f.get("pageCount"))
+                      : undefined,
+                    extractionStatus: f.get("extractionStatus"),
+                    reason: f.get("reason"),
+                  },
+                });
+                setEditing(false);
+                done("حُفظت بيانات المصدر.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
             <label>
-              عدد الصفحات
+              جهة الحصول
               <input
-                name="pageCount"
-                type="number"
-                min="1"
-                defaultValue={source.pageCount ?? ""}
+                name="obtainedFrom"
+                defaultValue={source.obtainedFrom}
+                required
               />
             </label>
+            <div className="form-columns">
+              <label>
+                عدد الصفحات
+                <input
+                  name="pageCount"
+                  type="number"
+                  min="1"
+                  defaultValue={source.pageCount ?? ""}
+                />
+              </label>
+              <label>
+                حالة الاستخراج
+                <select
+                  name="extractionStatus"
+                  defaultValue={source.extractionStatus}
+                >
+                  {[
+                    "PENDING",
+                    "EXTRACTED",
+                    "OCR_REQUIRED",
+                    "OCR_UNREVIEWED",
+                    "REVIEWED",
+                    "FAILED",
+                  ].map((x) => (
+                    <option key={x}>{x}</option>
+                  ))}
+                </select>
+              </label>
+            </div>
             <label>
-              حالة الاستخراج
-              <select
-                name="extractionStatus"
-                defaultValue={source.extractionStatus}
-              >
-                {[
-                  "PENDING",
-                  "EXTRACTED",
-                  "OCR_REQUIRED",
-                  "OCR_UNREVIEWED",
-                  "REVIEWED",
-                  "FAILED",
-                ].map((x) => (
-                  <option key={x}>{x}</option>
-                ))}
-              </select>
+              سبب التعديل
+              <input name="reason" required />
             </label>
-          </div>
-          <label>
-            سبب التعديل
-            <input name="reason" required />
-          </label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
-            <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ المصدر"}</button>
-          </div>
-        </form>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ المصدر"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
     </article>

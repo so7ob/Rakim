@@ -1,3 +1,6 @@
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { SourceEditor } from "./AdminContentDetailPage";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -9,6 +12,9 @@ import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
 interface ImportItem {
   id: string;
+  sourceDocumentId: string;
+  obtainedFrom: string;
+  pageCount: number | null;
   status: string;
   detectedFormat: string;
   createdAt: string;
@@ -242,6 +248,15 @@ export function AdminImportsPage() {
                       </Link>
                     </p>
                   )}
+                  <SourceEditor
+                    source={{
+                      ...item,
+                      id: item.sourceDocumentId,
+                      sourceRole: "EXTRACTION",
+                    }}
+                    editable={auth.hasPermission("source.update")}
+                    done={imports.retry}
+                  />
                   <ImportPreview
                     id={item.id}
                     mediaType={item.mediaType}
@@ -264,12 +279,27 @@ function ImportPreview({
   mediaType: string;
   name: string;
 }) {
+  const auth = useAuth();
+  const [addingAttachment, setAddingAttachment] = useState(false);
+  const [removingAttachment, setRemovingAttachment] = useState<{
+    sourceDocumentId: string;
+    originalName: string;
+  } | null>(null);
+  const sources = useApi<Array<{ id: string; originalName: string }>>(
+    addingAttachment ? "/admin/source-options" : null,
+  );
   const { data, error, loading, retry } = useApi<{
     extracted_text: string;
     error_details: string | null;
     analysis: ImportAnalysis | null;
     attachments: Array<{
       sourceDocumentId: string;
+      obtainedFrom: string;
+      pageCount: number | null;
+      ocrConfidence: number | null;
+      extractionStatus: string;
+      byteSize: number;
+      sha256: string;
       originalName: string;
       mediaType: string;
       role: "OFFICIAL_PDF";
@@ -295,6 +325,80 @@ function ImportPreview({
     mediaType.startsWith("image/");
   return (
     <>
+      {auth.hasPermission("source.update") && (
+        <button
+          className="button secondary"
+          onClick={() => setAddingAttachment(true)}
+        >
+          إضافة مرفق PDF مدقق
+        </button>
+      )}
+      {addingAttachment && (
+        <RecordFormDialog
+          title="إضافة مرفق إلى حزمة المصدر"
+          path={`/imports/${id}/attachments`}
+          fields={[
+            {
+              name: "sourceDocumentId",
+              label: "المرفق المدقق",
+              required: true,
+              options: (sources.data ?? []).map((s) => ({
+                value: s.id,
+                label: s.originalName,
+              })),
+            },
+            { name: "reason", label: "سبب الإضافة", required: true },
+          ]}
+          onClose={() => setAddingAttachment(false)}
+          onDone={() => {
+            setAddingAttachment(false);
+            retry();
+          }}
+        />
+      )}
+      {data?.attachments.map((attachment) => (
+        <section key={attachment.sourceDocumentId}>
+          <SourceEditor
+            source={{
+              ...attachment,
+              id: attachment.sourceDocumentId,
+              sourceRole: attachment.role,
+            }}
+            editable={auth.hasPermission("source.update")}
+            done={retry}
+          />
+          {auth.hasPermission("source.delete") && (
+            <button
+              className="link-button danger"
+              onClick={() => setRemovingAttachment(attachment)}
+            >
+              إزالة ارتباط المرفق من الحزمة
+            </button>
+          )}
+        </section>
+      ))}
+      {removingAttachment && (
+        <ConfirmDialog
+          title={`إزالة ${removingAttachment.originalName}`}
+          description="يزال ارتباط الملف بالحزمة فقط. تمنع إزالة المرفق المثبت في تاريخ تشريعي أو المستخدم في تشريع حتى معالجة الارتباط المسموح."
+          confirmLabel="إزالة الارتباط"
+          onClose={() => setRemovingAttachment(null)}
+          onConfirm={async () => {
+            await apiRequest(
+              `/imports/${id}/attachments/${removingAttachment.sourceDocumentId}`,
+              {
+                method: "DELETE",
+                body: {
+                  reason: `إزالة ارتباط ${removingAttachment.originalName} من حزمة المصدر`,
+                },
+              },
+            );
+            setRemovingAttachment(null);
+            retry();
+          }}
+        />
+      )}
+
       <StructureAnalysisPreview analysis={data?.analysis ?? null} />
       <h3>المقارنة مع المصدر</h3>
       <div className="source-compare">

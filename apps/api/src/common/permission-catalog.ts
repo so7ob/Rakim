@@ -603,7 +603,11 @@ export const LEGACY_ROLE_PERMISSION_MAP: Record<string, string[]> = {
   ),
 };
 
-export const PERMISSION_CATALOG = CANONICAL_PERMISSION_CATALOG;
+import { CRUD_PERMISSION_CATALOG } from "./crud-permission-catalog.js";
+export const PERMISSION_CATALOG = [
+  ...CANONICAL_PERMISSION_CATALOG,
+  ...CRUD_PERMISSION_CATALOG,
+];
 export const ROLE_PERMISSION_MAP = CANONICAL_ROLE_PERMISSION_MAP;
 
 export const permissionDefinition = (code: string) =>

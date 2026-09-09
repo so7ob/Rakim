@@ -1,5 +1,11 @@
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useMemo, useState, type FormEvent } from "react";
-import { Navigate, useLocation, useParams } from "react-router-dom";
+import {
+  Navigate,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
@@ -84,6 +90,7 @@ interface Catalog {
 export function AdminUserDetailPage() {
   const { id = "", tab = "profile" } = useParams();
   const location = useLocation();
+  const navigate = useNavigate();
   const auth = useAuth();
   const allowedTabs: Record<string, boolean> = {
     profile: true,
@@ -173,6 +180,20 @@ export function AdminUserDetailPage() {
           </span>
         }
       />
+      {data.canManage && (
+        <div className="admin-entity-actions">
+          <LifecycleActions
+            kind="users"
+            allowState={false}
+            id={id}
+            label={data.displayName}
+            onDone={(action) => {
+              if (action === "delete") navigate("/ar/admin/users");
+              else user.retry();
+            }}
+          />
+        </div>
+      )}
       <AdminTabs
         label="تفاصيل المستخدم"
         items={[
@@ -362,53 +383,55 @@ export function AdminUserDetailPage() {
                 mode="user"
                 userOverrides={selectedOverrides}
                 onUserOverrideChange={
-                  data.canManage && auth.hasPermission("user.permissions.manage")
+                  data.canManage &&
+                  auth.hasPermission("user.permissions.manage")
                     ? setOverrides
                     : undefined
                 }
               />
-              {data.canManage && auth.hasPermission("user.permissions.manage") && (
-                <form
-                  className="permission-savebar"
-                  onSubmit={async (event) => {
-                    event.preventDefault();
-                    const form = new FormData(event.currentTarget);
-                    try {
-                      await apiRequest(
-                        `/admin/users/${id}/granular-permissions`,
-                        {
-                          method: "PATCH",
-                          body: {
-                            selections: [...selectedOverrides].map(
-                              ([code, value]) => ({ code, ...value }),
-                            ),
-                            reason: form.get("reason"),
+              {data.canManage &&
+                auth.hasPermission("user.permissions.manage") && (
+                  <form
+                    className="permission-savebar"
+                    onSubmit={async (event) => {
+                      event.preventDefault();
+                      const form = new FormData(event.currentTarget);
+                      try {
+                        await apiRequest(
+                          `/admin/users/${id}/granular-permissions`,
+                          {
+                            method: "PATCH",
+                            body: {
+                              selections: [...selectedOverrides].map(
+                                ([code, value]) => ({ code, ...value }),
+                              ),
+                              reason: form.get("reason"),
+                            },
                           },
-                        },
-                      );
-                      setMessage(
-                        "حُفظت الصلاحيات المباشرة وأُبطلت جلسات المستخدم.",
-                      );
-                      setOverrides(null);
-                      permissionAccess.retry();
-                    } catch (error) {
-                      setMessage(
-                        error instanceof Error
-                          ? error.message
-                          : "تعذر حفظ الصلاحيات.",
-                      );
-                    }
-                  }}
-                >
-                  <label>
-                    سبب التغيير
-                    <input name="reason" required />
-                  </label>
-                  <button className="button" disabled={overrides === null}>
-                    حفظ الصلاحيات المباشرة
-                  </button>
-                </form>
-              )}
+                        );
+                        setMessage(
+                          "حُفظت الصلاحيات المباشرة وأُبطلت جلسات المستخدم.",
+                        );
+                        setOverrides(null);
+                        permissionAccess.retry();
+                      } catch (error) {
+                        setMessage(
+                          error instanceof Error
+                            ? error.message
+                            : "تعذر حفظ الصلاحيات.",
+                        );
+                      }
+                    }}
+                  >
+                    <label>
+                      سبب التغيير
+                      <input name="reason" required />
+                    </label>
+                    <button className="button" disabled={overrides === null}>
+                      حفظ الصلاحيات المباشرة
+                    </button>
+                  </form>
+                )}
             </>
           )}
         </section>
@@ -576,75 +599,75 @@ function ProfileTab({
     <div className="admin-detail-grid">
       <section className="admin-card">
         <h2>الملف الشخصي</h2>
-        <EntityDetails items={[
-          { label: "اسم المستخدم", value: <code dir="ltr">{user.username}</code> },
-          { label: "الاسم الظاهر", value: user.displayName },
-          { label: "تاريخ الإنشاء", value: new Date(user.createdAt).toLocaleString("ar-YE") },
-          { label: "الحالة", value: user.isActive ? "نشط" : "معطل" },
-        ]} />
+        <EntityDetails
+          items={[
+            {
+              label: "اسم المستخدم",
+              value: <code dir="ltr">{user.username}</code>,
+            },
+            { label: "الاسم الظاهر", value: user.displayName },
+            {
+              label: "تاريخ الإنشاء",
+              value: new Date(user.createdAt).toLocaleString("ar-YE"),
+            },
+            { label: "الحالة", value: user.isActive ? "نشط" : "معطل" },
+          ]}
+        />
         {user.canManage && auth.hasPermission("user.update") && (
           <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل الملف</button>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setEditing(true)}
+            >
+              تعديل الملف
+            </button>
           </div>
         )}
       </section>
       <section className="admin-card">
         <h2>حالة الحساب</h2>
-        <EntityDetails items={[
-          { label: "آخر دخول", value: user.lastLoginAt ? new Date(user.lastLoginAt).toLocaleString("ar-YE") : "لم يسجل" },
-          { label: "محاولات فاشلة", value: user.failedLoginCount },
-          { label: "الجلسات", value: "تُعرض من تبويب الجلسات عند توفر الصلاحية." },
-        ]} />
+        <EntityDetails
+          items={[
+            {
+              label: "آخر دخول",
+              value: user.lastLoginAt
+                ? new Date(user.lastLoginAt).toLocaleString("ar-YE")
+                : "لم يسجل",
+            },
+            { label: "محاولات فاشلة", value: user.failedLoginCount },
+            {
+              label: "الجلسات",
+              value: "تُعرض من تبويب الجلسات عند توفر الصلاحية.",
+            },
+          ]}
+        />
         <div className="admin-entity-actions">
-        {canChangeState && (
-          <button type="button" className={`button secondary${user.isActive ? " danger" : ""}`} onClick={() => setChangingState(true)}>
-            {user.isActive ? "تعطيل الحساب" : "تفعيل الحساب"}
-          </button>
-        )}
-        {user.canManage && auth.hasPermission("user.reset_password") && (
-          <button type="button" className="button secondary" onClick={() => setResetting(true)}>إعادة تعيين كلمة المرور</button>
-        )}
+          {canChangeState && (
+            <button
+              type="button"
+              className={`button secondary${user.isActive ? " danger" : ""}`}
+              onClick={() => setChangingState(true)}
+            >
+              {user.isActive ? "تعطيل الحساب" : "تفعيل الحساب"}
+            </button>
+          )}
+          {user.canManage && auth.hasPermission("user.reset_password") && (
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => setResetting(true)}
+            >
+              إعادة تعيين كلمة المرور
+            </button>
+          )}
         </div>
       </section>
       {editing && user.canManage && auth.hasPermission("user.update") && (
-        <AdminDialog title="تعديل الملف الشخصي" onClose={() => setEditing(false)}>
-        <form
-          className="edit-form"
-          onSubmit={async (event: FormEvent<HTMLFormElement>) => {
-            event.preventDefault();
-            const form = new FormData(event.currentTarget);
-            setSubmitting(true);
-            setError("");
-            try {
-              await apiRequest(`/admin/users/${user.id}/profile`, {
-                method: "PATCH",
-                body: {
-                  displayName: form.get("displayName"),
-                  reason: form.get("reason"),
-                },
-              });
-              setEditing(false);
-              message("حُفظ الملف الشخصي.");
-              refresh();
-            } catch (error) {
-              setError(error instanceof Error ? error.message : "تعذر الحفظ.");
-            } finally {
-              setSubmitting(false);
-            }
-          }}
+        <AdminDialog
+          title="تعديل الملف الشخصي"
+          onClose={() => setEditing(false)}
         >
-          {error && <p className="form-error" role="alert">{error}</p>}
-          <label>الاسم الظاهر<input name="displayName" defaultValue={user.displayName} required /></label>
-          <label>سبب التغيير<input name="reason" required /></label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={submitting}>إلغاء</button>
-            <button className="button" disabled={submitting}>{submitting ? "جار الحفظ…" : "حفظ الملف"}</button>
-          </div>
-        </form>
-        </AdminDialog>
-      )}
-      {resetting && user.canManage && auth.hasPermission("user.reset_password") && (
-        <AdminDialog title="إعادة تعيين كلمة المرور" description="سيبطل الخادم جميع جلسات المستخدم بعد نجاح العملية." onClose={() => setResetting(false)}>
           <form
             className="edit-form"
             onSubmit={async (event: FormEvent<HTMLFormElement>) => {
@@ -653,39 +676,146 @@ function ProfileTab({
               setSubmitting(true);
               setError("");
               try {
-                await apiRequest(`/admin/users/${user.id}/reset-password`, {
-                  body: { password: form.get("password"), reason: form.get("reason") },
+                await apiRequest(`/admin/users/${user.id}/profile`, {
+                  method: "PATCH",
+                  body: {
+                    displayName: form.get("displayName"),
+                    reason: form.get("reason"),
+                  },
                 });
-                setResetting(false);
-                message("أعيد تعيين كلمة المرور وأُبطلت الجلسات.");
+                setEditing(false);
+                message("حُفظ الملف الشخصي.");
+                refresh();
               } catch (error) {
-                setError(error instanceof Error ? error.message : "تعذر إعادة تعيين كلمة المرور.");
+                setError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
               } finally {
                 setSubmitting(false);
               }
             }}
           >
-            {error && <p className="form-error" role="alert">{error}</p>}
-            <label>كلمة المرور الجديدة<input name="password" type="password" minLength={12} autoComplete="new-password" required /></label>
-            <label>سبب الإجراء<input name="reason" required /></label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <label>
+              الاسم الظاهر
+              <input
+                name="displayName"
+                defaultValue={user.displayName}
+                required
+              />
+            </label>
+            <label>
+              سبب التغيير
+              <input name="reason" required />
+            </label>
             <div className="admin-entity-actions">
-              <button type="button" className="button secondary" onClick={() => setResetting(false)} disabled={submitting}>إلغاء</button>
-              <button className="button" disabled={submitting}>{submitting ? "جار التنفيذ…" : "إعادة التعيين"}</button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={submitting}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={submitting}>
+                {submitting ? "جار الحفظ…" : "حفظ الملف"}
+              </button>
             </div>
           </form>
         </AdminDialog>
       )}
+      {resetting &&
+        user.canManage &&
+        auth.hasPermission("user.reset_password") && (
+          <AdminDialog
+            title="إعادة تعيين كلمة المرور"
+            description="سيبطل الخادم جميع جلسات المستخدم بعد نجاح العملية."
+            onClose={() => setResetting(false)}
+          >
+            <form
+              className="edit-form"
+              onSubmit={async (event: FormEvent<HTMLFormElement>) => {
+                event.preventDefault();
+                const form = new FormData(event.currentTarget);
+                setSubmitting(true);
+                setError("");
+                try {
+                  await apiRequest(`/admin/users/${user.id}/reset-password`, {
+                    body: {
+                      password: form.get("password"),
+                      reason: form.get("reason"),
+                    },
+                  });
+                  setResetting(false);
+                  message("أعيد تعيين كلمة المرور وأُبطلت الجلسات.");
+                } catch (error) {
+                  setError(
+                    error instanceof Error
+                      ? error.message
+                      : "تعذر إعادة تعيين كلمة المرور.",
+                  );
+                } finally {
+                  setSubmitting(false);
+                }
+              }}
+            >
+              {error && (
+                <p className="form-error" role="alert">
+                  {error}
+                </p>
+              )}
+              <label>
+                كلمة المرور الجديدة
+                <input
+                  name="password"
+                  type="password"
+                  minLength={12}
+                  autoComplete="new-password"
+                  required
+                />
+              </label>
+              <label>
+                سبب الإجراء
+                <input name="reason" required />
+              </label>
+              <div className="admin-entity-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setResetting(false)}
+                  disabled={submitting}
+                >
+                  إلغاء
+                </button>
+                <button className="button" disabled={submitting}>
+                  {submitting ? "جار التنفيذ…" : "إعادة التعيين"}
+                </button>
+              </div>
+            </form>
+          </AdminDialog>
+        )}
       {changingState && canChangeState && (
         <ConfirmDialog
           title={`${user.isActive ? "تعطيل" : "تفعيل"} الحساب؟`}
-          description={user.isActive ? "سيمنع المستخدم من الدخول وتبطل جلساته وفق سياسة الخادم." : "سيتمكن المستخدم من تسجيل الدخول مجددًا."}
+          description={
+            user.isActive
+              ? "سيمنع المستخدم من الدخول وتبطل جلساته وفق سياسة الخادم."
+              : "سيتمكن المستخدم من تسجيل الدخول مجددًا."
+          }
           confirmLabel={user.isActive ? "تعطيل الحساب" : "تفعيل الحساب"}
           destructive={user.isActive}
           onClose={() => setChangingState(false)}
           onConfirm={async () => {
             await apiRequest(`/admin/users/${user.id}/state`, {
               method: "PATCH",
-              body: { active: !user.isActive, reason: "تغيير حالة الحساب من صفحة تفاصيل المستخدم" },
+              body: {
+                active: !user.isActive,
+                reason: "تغيير حالة الحساب من صفحة تفاصيل المستخدم",
+              },
             });
             setChangingState(false);
             message(user.isActive ? "عُطل الحساب." : "فُعل الحساب.");

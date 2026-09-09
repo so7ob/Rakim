@@ -1,3 +1,5 @@
+import { AdminGazettesPage } from "./AdminGazettesPage";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -37,6 +39,7 @@ export function AdminReferenceDataPage() {
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState<Item | null>(null);
   const [creating, setCreating] = useState(false);
+  if (kind === "gazettes") return <AdminGazettesPage />;
   if (state.loading) return <LoadingCards />;
   if (state.error || !state.data)
     return (
@@ -65,7 +68,11 @@ export function AdminReferenceDataPage() {
         ]}
         actions={
           auth.hasPermission("reference.create") ? (
-            <button type="button" className="button" onClick={() => setCreating(true)}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => setCreating(true)}
+            >
               + إضافة إلى {labels[activeKind]}
             </button>
           ) : undefined
@@ -74,16 +81,35 @@ export function AdminReferenceDataPage() {
       <AdminTabs
         label="أنواع القوائم المرجعية"
         items={[
-          { label: "أنواع التشريعات", to: "/ar/admin/reference-data/types", count: state.data.types.length },
-          { label: "التصنيفات والموضوعات", to: "/ar/admin/reference-data/subjects", count: state.data.subjects.length },
-          { label: "الجهات", to: "/ar/admin/reference-data/authorities", count: state.data.authorities.length },
+          { label: "أعداد الجريدة", to: "/ar/admin/reference-data/gazettes" },
+          {
+            label: "أنواع التشريعات",
+            to: "/ar/admin/reference-data/types",
+            count: state.data.types.length,
+          },
+          {
+            label: "التصنيفات والموضوعات",
+            to: "/ar/admin/reference-data/subjects",
+            count: state.data.subjects.length,
+          },
+          {
+            label: "الجهات",
+            to: "/ar/admin/reference-data/authorities",
+            count: state.data.authorities.length,
+          },
         ]}
       />
-      {message && <p role="status" className="form-message">{message}</p>}
+      {message && (
+        <p role="status" className="form-message">
+          {message}
+        </p>
+      )}
       <section className="admin-card">
         <h2>{labels[activeKind]}</h2>
         {!items.length ? (
-          <div className="admin-empty-inline">لا توجد عناصر في هذه القائمة.</div>
+          <div className="admin-empty-inline">
+            لا توجد عناصر في هذه القائمة.
+          </div>
         ) : (
           <div className="admin-table-wrap">
             <table>
@@ -99,16 +125,34 @@ export function AdminReferenceDataPage() {
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td><strong>{item.nameAr}</strong></td>
-                    <td><code dir="ltr">{item.code}</code></td>
-                    {activeKind === "subjects" && <td>{parentName(item.parentId)}</td>}
+                    <td>
+                      <strong>{item.nameAr}</strong>
+                    </td>
+                    <td>
+                      <code dir="ltr">{item.code}</code>
+                    </td>
+                    {activeKind === "subjects" && (
+                      <td>{parentName(item.parentId)}</td>
+                    )}
                     <td>{item.isActive ? "فعال" : "معطل"}</td>
                     <td>
+                      <LifecycleActions
+                        kind={activeKind}
+                        id={item.id}
+                        label={item.nameAr}
+                        onDone={state.retry}
+                      />
                       {auth.hasPermission("reference.update") ? (
-                        <button type="button" className="button secondary" onClick={() => setEditing(item)}>
+                        <button
+                          type="button"
+                          className="button secondary"
+                          onClick={() => setEditing(item)}
+                        >
                           تعديل
                         </button>
-                      ) : "عرض فقط"}
+                      ) : (
+                        "عرض فقط"
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -122,7 +166,10 @@ export function AdminReferenceDataPage() {
           kind={activeKind}
           subjects={state.data.subjects}
           onClose={() => setCreating(false)}
-          onDone={(text) => { setCreating(false); done(text); }}
+          onDone={(text) => {
+            setCreating(false);
+            done(text);
+          }}
         />
       )}
       {editing && (
@@ -131,7 +178,10 @@ export function AdminReferenceDataPage() {
           item={editing}
           subjects={state.data.subjects}
           onClose={() => setEditing(null)}
-          onDone={(text) => { setEditing(null); done(text); }}
+          onDone={(text) => {
+            setEditing(null);
+            done(text);
+          }}
         />
       )}
     </section>
@@ -174,7 +224,9 @@ function ReferenceDialog({
           },
         },
       );
-      onDone(item ? "حُفظ عنصر القائمة المرجعية." : "أضيف عنصر القائمة المرجعية.");
+      onDone(
+        item ? "حُفظ عنصر القائمة المرجعية." : "أضيف عنصر القائمة المرجعية.",
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "تعذر حفظ العنصر.");
       setSubmitting(false);
@@ -183,15 +235,26 @@ function ReferenceDialog({
   return (
     <AdminDialog
       title={`${item ? "تعديل" : "إضافة"} عنصر في ${labels[kind]}`}
-      description={item ? "القيمة الحالية تبقى معروضة حتى يؤكد الخادم التعديل." : undefined}
+      description={
+        item ? "القيمة الحالية تبقى معروضة حتى يؤكد الخادم التعديل." : undefined
+      }
       onClose={onClose}
     >
       <form className="edit-form" onSubmit={submit}>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="form-columns">
           <label>
             الرمز
-            <input name="code" defaultValue={item?.code ?? ""} pattern="[A-Za-z0-9_]+" required />
+            <input
+              name="code"
+              defaultValue={item?.code ?? ""}
+              pattern="[A-Za-z0-9_]+"
+              required
+            />
           </label>
           <label>
             الاسم العربي
@@ -202,14 +265,22 @@ function ReferenceDialog({
               الموضوع الأب
               <select name="parentId" defaultValue={item?.parentId ?? ""}>
                 <option value="">بلا أب</option>
-                {subjects.filter((subject) => subject.id !== item?.id).map((subject) => (
-                  <option key={subject.id} value={subject.id}>{subject.nameAr}</option>
-                ))}
+                {subjects
+                  .filter((subject) => subject.id !== item?.id)
+                  .map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.nameAr}
+                    </option>
+                  ))}
               </select>
             </label>
           )}
           <label className="setting-toggle">
-            <input name="isActive" type="checkbox" defaultChecked={item?.isActive ?? true} />
+            <input
+              name="isActive"
+              type="checkbox"
+              defaultChecked={item?.isActive ?? true}
+            />
             فعال
           </label>
         </div>
@@ -218,8 +289,17 @@ function ReferenceDialog({
           <input name="reason" required />
         </label>
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={onClose} disabled={submitting}>إلغاء</button>
-          <button className="button" disabled={submitting}>{submitting ? "جار الحفظ…" : item ? "حفظ" : "إضافة"}</button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={onClose}
+            disabled={submitting}
+          >
+            إلغاء
+          </button>
+          <button className="button" disabled={submitting}>
+            {submitting ? "جار الحفظ…" : item ? "حفظ" : "إضافة"}
+          </button>
         </div>
       </form>
     </AdminDialog>

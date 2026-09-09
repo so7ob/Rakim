@@ -5,6 +5,7 @@ import { useAuth } from "../auth/AuthContext";
 import { useApi } from "../hooks/use-api";
 import { UiIcon } from "./UiIcon";
 interface Favorite {
+  isActive: boolean;
   id: string;
 }
 export function LegislationActions({
@@ -18,7 +19,9 @@ export function LegislationActions({
 }) {
   const auth = useAuth();
   const favorites = useApi<Favorite[]>(auth.user ? "/me/favorites" : null);
-  const favorite = Boolean(favorites.data?.some((item) => item.id === id));
+  const favorite = Boolean(
+    favorites.data?.some((item) => item.id === id && item.isActive),
+  );
   const [msg, setMsg] = useState("");
   const toggle = async () => {
     if (!auth.user) return;

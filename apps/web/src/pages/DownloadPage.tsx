@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { apiRequest } from "../api";
+import { apiGet } from "../api";
 
 export function DownloadPage({ annex = false }: { annex?: boolean }) {
   const { id, attachmentId } = useParams();
@@ -12,7 +12,7 @@ export function DownloadPage({ annex = false }: { annex?: boolean }) {
     }
     const start = async () => {
       if (annex) {
-        const detail = await apiRequest<{
+        const detail = await apiGet<{
           versions: Array<{ legislationId: string }>;
         }>(`/annexes/${attachmentId}`);
         if (detail.versions[0]?.legislationId !== id)

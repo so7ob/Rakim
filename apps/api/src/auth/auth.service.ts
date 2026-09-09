@@ -1,10 +1,11 @@
+import { CRUD_PERMISSION_CATALOG } from "../common/crud-permission-catalog.js";
 import {
   Inject,
   Injectable,
   UnauthorizedException,
   BadRequestException,
 } from "@nestjs/common";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { DataSource } from "typeorm";
 import { DATABASE } from "../database/database.module.js";
 import type { AuthUser } from "./auth.types.js";
@@ -13,6 +14,10 @@ import {
   CANONICAL_PERMISSION_CODES,
   LEGACY_PERMISSION_ALIASES,
 } from "../common/canonical-permission-catalog.js";
+
+// Session-bound token: concurrent status reads and other tabs must not invalidate forms.
+const csrfForToken = (token: string) =>
+  createHmac("sha256", token).update("ylp-csrf-v1").digest("base64url");
 
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -30,7 +35,7 @@ export class AuthService {
       `SELECT s.id,s.user_id userId
       FROM user_sessions s JOIN users u ON u.id=s.user_id
       WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>NOW(3)
-        AND u.is_active=1 LIMIT 1`,
+        AND u.is_active=1 AND u.deleted_at IS NULL LIMIT 1`,
       [digest(token)],
     )) as Array<{ id: string; userId: string }>;
     return rows[0] ?? null;
@@ -45,7 +50,7 @@ export class AuthService {
     const rows = (await this.db.query(
       `SELECT id,username,display_name displayName,password_hash passwordHash,
       is_active isActive,failed_login_count failedLoginCount,locked_until lockedUntil
-      FROM users WHERE username=? LIMIT 1`,
+      FROM users WHERE deleted_at IS NULL AND username=? LIMIT 1`,
       [username],
     )) as Array<Record<string, unknown>>;
     const account = rows[0];
@@ -76,7 +81,7 @@ export class AuthService {
       [account.id],
     );
     const token = randomBytes(32).toString("base64url");
-    const csrfToken = randomBytes(32).toString("base64url");
+    const csrfToken = csrfForToken(token);
     const sessionId = randomUUID();
     const hours = Math.min(
       24,
@@ -108,7 +113,7 @@ export class AuthService {
 
   async userById(id: string): Promise<AuthUser> {
     const users = await this.db.query(
-      "SELECT id,username,display_name displayName FROM users WHERE id=? AND is_active=1",
+      "SELECT id,username,display_name displayName FROM users WHERE deleted_at IS NULL AND id=? AND is_active=1",
       [id],
     );
     if (!users[0]) throw new UnauthorizedException("الحساب غير متاح.");
@@ -246,7 +251,12 @@ export class AuthService {
   }
 
   private canonicalTargets(code: string, legacy: boolean): string[] {
-    if (!legacy && CANONICAL_PERMISSION_CODES.has(code)) return [code];
+    if (
+      !legacy &&
+      (CANONICAL_PERMISSION_CODES.has(code) ||
+        CRUD_PERMISSION_CATALOG.some((item) => item.code === code))
+    )
+      return [code];
     return LEGACY_PERMISSION_ALIASES[code] ?? [];
   }
 
@@ -258,12 +268,12 @@ export class AuthService {
     await this.audit(actorId, "LOGOUT", "USER", actorId, "تسجيل خروج");
   }
 
-  async rotateCsrf(sessionId: string): Promise<string> {
-    const csrfToken = randomBytes(32).toString("base64url");
-    await this.db.query("UPDATE user_sessions SET csrf_hash=? WHERE id=?", [
-      digest(csrfToken),
-      sessionId,
-    ]);
+  async sessionCsrf(sessionId: string, token: string): Promise<string> {
+    const csrfToken = csrfForToken(token);
+    await this.db.query(
+      "UPDATE user_sessions SET csrf_hash=? WHERE id=? AND token_hash=? AND revoked_at IS NULL AND expires_at>NOW(3)",
+      [digest(csrfToken), sessionId, digest(token)],
+    );
     return csrfToken;
   }
 

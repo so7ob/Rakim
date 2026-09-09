@@ -1,3 +1,7 @@
+import { PUBLIC_INDEX_RECORD } from "../search/public-record-visibility.js";
+import { assertActiveReference } from "../admin/record-validation.js";
+import { requireExactPermission } from "../admin/lifecycle.service.js";
+import { BadRequestException, ConflictException } from "@nestjs/common";
 import { Inject, Injectable, NotFoundException } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
 import type { DataSource } from "typeorm";
@@ -20,14 +24,15 @@ export class LegislationsService {
     );
     const archived = query.archived === "1" || query.archived === "true";
     const where = [
+      "l.is_active=TRUE AND l.deleted_at IS NULL",
       archived
         ? `(l.status='ARCHIVED' OR l.legal_status IN ('REPEALED','PARTIALLY_REPEALED'))`
-        : `l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
+        : `l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
     ];
     const values: QueryValue[] = [];
     if (query.q?.trim()) {
       where.push(
-        `EXISTS (SELECT 1 FROM search_documents sd WHERE sd.legislation_id = l.id AND sd.text_normalized LIKE ?)`,
+        `EXISTS (SELECT 1 FROM search_documents sd WHERE sd.legislation_id = l.id AND (${PUBLIC_INDEX_RECORD}) AND sd.text_normalized LIKE ?)`,
       );
       values.push(`%${normalizeArabic(query.q)}%`);
     }
@@ -63,11 +68,11 @@ export class LegislationsService {
     }
     if (query.hasAmendments === "true")
       where.push(
-        "EXISTS (SELECT 1 FROM amendments am WHERE am.amended_legislation_id=l.id AND am.status='PUBLISHED')",
+        "EXISTS (SELECT 1 FROM amendments am WHERE am.amended_legislation_id=l.id AND am.is_active=TRUE AND am.deleted_at IS NULL AND am.status='PUBLISHED')",
       );
     if (query.hasAmendments === "false")
       where.push(
-        "NOT EXISTS (SELECT 1 FROM amendments am WHERE am.amended_legislation_id=l.id AND am.status='PUBLISHED')",
+        "NOT EXISTS (SELECT 1 FROM amendments am WHERE am.amended_legislation_id=l.id AND am.is_active=TRUE AND am.deleted_at IS NULL AND am.status='PUBLISHED')",
       );
     if (query.effect === "current")
       where.push(
@@ -96,9 +101,9 @@ export class LegislationsService {
              l.summary_ar summaryAr, l.legal_status legalStatus, l.verification_level verificationLevel,
              DATE_FORMAT(l.issue_date, '%Y-%m-%d') issueDate, DATE_FORMAT(l.effective_from, '%Y-%m-%d') effectiveFrom,
              lt.code typeCode, lt.name_ar typeName, au.code authorityCode, au.name_ar authorityName,
-             (SELECT COUNT(*) FROM articles a WHERE a.legislation_id=l.id) articleCount,
-             (SELECT COUNT(*) FROM amendments am WHERE am.amended_legislation_id=l.id AND am.status='PUBLISHED') amendmentCount,
-             (SELECT COUNT(*) FROM annexes ax WHERE ax.legislation_id=l.id AND ax.status='PUBLISHED') annexCount
+             (SELECT COUNT(*) FROM articles a WHERE a.is_active=TRUE AND a.deleted_at IS NULL AND a.legislation_id=l.id) articleCount,
+             (SELECT COUNT(*) FROM amendments am WHERE am.amended_legislation_id=l.id AND am.is_active=TRUE AND am.deleted_at IS NULL AND am.status='PUBLISHED') amendmentCount,
+             (SELECT COUNT(*) FROM annexes ax WHERE ax.legislation_id=l.id AND ax.is_active=TRUE AND ax.deleted_at IS NULL AND ax.status='PUBLISHED') annexCount
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id
       WHERE ${filterSql} ORDER BY ${order} LIMIT ? OFFSET ?`,
       [...values, pageSize, (page - 1) * pageSize],
@@ -106,21 +111,21 @@ export class LegislationsService {
     const [types, authorities, years, subjects] = await Promise.all([
       this.db.query(
         `SELECT lt.code,lt.name_ar name,COUNT(l.id) count FROM legislation_types lt
-         LEFT JOIN legislations l ON l.type_id=lt.id AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+         LEFT JOIN legislations l ON l.type_id=lt.id AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
          WHERE lt.is_active=1 GROUP BY lt.id,lt.code,lt.name_ar ORDER BY lt.name_ar`,
       ),
       this.db.query(
         `SELECT au.code,au.name_ar name,COUNT(l.id) count FROM authorities au
-         LEFT JOIN legislations l ON l.authority_id=au.id AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+         LEFT JOIN legislations l ON l.authority_id=au.id AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
          WHERE au.is_active=1 GROUP BY au.id,au.code,au.name_ar ORDER BY au.name_ar`,
       ),
       this.db.query(
-        `SELECT year, COUNT(*) count FROM legislations WHERE status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') GROUP BY year ORDER BY year DESC`,
+        `SELECT year, COUNT(*) count FROM legislations WHERE is_active=TRUE AND deleted_at IS NULL AND status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') GROUP BY year ORDER BY year DESC`,
       ),
       this.db.query(
         `SELECT s.code,s.name_ar name,COUNT(l.id) count FROM subjects s
          LEFT JOIN legislation_subjects ls ON ls.subject_id=s.id
-         LEFT JOIN legislations l ON l.id=ls.legislation_id AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+         LEFT JOIN legislations l ON l.id=ls.legislation_id AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
          WHERE s.is_active=1 GROUP BY s.id,s.code,s.name_ar ORDER BY s.name_ar`,
       ),
     ]);
@@ -137,8 +142,8 @@ export class LegislationsService {
     if (needle.length < 2) return [];
     return this.db.query(
       `SELECT DISTINCT l.id,l.title_ar titleAr,l.official_number officialNumber,l.year
-    FROM legislations l JOIN search_documents sd ON sd.legislation_id=l.id WHERE l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
-    AND sd.text_normalized LIKE ? ORDER BY CASE WHEN sd.title_ar LIKE ? THEN 0 ELSE 1 END,l.year DESC LIMIT 8`,
+    FROM legislations l JOIN search_documents sd ON sd.legislation_id=l.id WHERE l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+    AND (${PUBLIC_INDEX_RECORD}) AND sd.text_normalized LIKE ? ORDER BY CASE WHEN sd.title_ar LIKE ? THEN 0 ELSE 1 END,l.year DESC LIMIT 8`,
       [`%${needle}%`, `%${q}%`],
     );
   }
@@ -151,9 +156,9 @@ export class LegislationsService {
       l.title_ar legislationTitle,l.official_number legislationNumber,l.year legislationYear,
       sd.original_name sourceName,COUNT(ao.id) operationCount
       FROM amendments am JOIN legislations l ON l.id=am.amended_legislation_id
-      LEFT JOIN amendment_operations ao ON ao.amendment_id=am.id
+      LEFT JOIN amendment_operations ao ON ao.amendment_id=am.id AND ao.is_active=TRUE AND ao.deleted_at IS NULL
       LEFT JOIN source_documents sd ON sd.id=am.source_document_id
-      WHERE am.status='PUBLISHED' AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      WHERE am.is_active=TRUE AND am.deleted_at IS NULL AND am.status='PUBLISHED' AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
       GROUP BY am.id,am.title_ar,am.issue_date,am.effective_from,l.id,l.title_ar,l.official_number,l.year,sd.original_name
       ORDER BY am.effective_from DESC,am.issue_date DESC LIMIT ?`,
       [limit],
@@ -166,7 +171,7 @@ export class LegislationsService {
       `SELECT sd.storage_key storageKey,sd.original_name fileName,sd.media_type mediaType
        FROM legislation_source_documents lsd
        JOIN source_documents sd ON sd.id=lsd.source_document_id
-       WHERE lsd.legislation_id=? AND sd.extraction_status='REVIEWED'
+       WHERE lsd.legislation_id=? AND sd.is_active=TRUE AND sd.deleted_at IS NULL AND sd.extraction_status='REVIEWED'
        ORDER BY FIELD(lsd.source_role,'OFFICIAL_PDF','EXTRACTION','SUPPORTING'),
         lsd.created_at DESC LIMIT 1`,
       [id],
@@ -191,26 +196,26 @@ export class LegislationsService {
              DATE_FORMAT(l.last_reviewed_at,'%Y-%m-%d') lastReviewedAt, lt.name_ar typeName,
              au.name_ar authorityName, gi.issue_number gazetteIssue,
              (SELECT lv.preamble_text FROM legislation_versions lv WHERE lv.legislation_id=l.id AND lv.workflow_status='PUBLISHED' ORDER BY lv.version_no DESC LIMIT 1) preambleText,
-             (SELECT COUNT(*) FROM articles a WHERE a.legislation_id=l.id
+             (SELECT COUNT(*) FROM articles a WHERE a.is_active=TRUE AND a.deleted_at IS NULL AND a.legislation_id=l.id
                AND EXISTS (SELECT 1 FROM article_versions public_av
                  WHERE public_av.article_id=a.id
                    AND public_av.status IN ('PUBLISHED','REPEALED')
                    AND public_av.valid_from<=CURRENT_DATE())) articleCount,
-             (SELECT COUNT(*) FROM amendments am WHERE am.amended_legislation_id=l.id AND am.status='PUBLISHED') amendmentCount,
+             (SELECT COUNT(*) FROM amendments am WHERE am.amended_legislation_id=l.id AND am.is_active=TRUE AND am.deleted_at IS NULL AND am.status='PUBLISHED') amendmentCount,
              (SELECT COUNT(*) FROM annexes ax WHERE ax.legislation_id=l.id
-               AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+               AND ax.is_active=TRUE AND ax.deleted_at IS NULL AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
                AND EXISTS (SELECT 1 FROM annex_versions public_axv
                  WHERE public_axv.annex_id=ax.id AND public_axv.valid_from<=CURRENT_DATE())) annexCount,
              (SELECT COUNT(*) FROM legal_relations lr
                JOIN legislations public_source ON public_source.id=lr.source_legislation_id
                JOIN legislations public_target ON public_target.id=lr.target_legislation_id
                WHERE (lr.source_legislation_id=l.id OR lr.target_legislation_id=l.id)
-                 AND lr.review_status='REVIEWED'
-                 AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
-                 AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')) relationCount
+                 AND lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='REVIEWED'
+                 AND public_source.is_active=TRUE AND public_source.deleted_at IS NULL AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+                 AND public_target.is_active=TRUE AND public_target.deleted_at IS NULL AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')) relationCount
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id
       LEFT JOIN gazette_issues gi ON gi.id=l.gazette_issue_id
-      WHERE l.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
+      WHERE l.id=? AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
       [id],
     );
     if (!rows[0])
@@ -222,7 +227,7 @@ export class LegislationsService {
     await this.detail(id);
     return this.db.query(
       `SELECT id, parent_id parentId, node_type nodeType, label_ar labelAr, title_ar titleAr, sort_key sortKey
-      FROM structure_nodes WHERE legislation_id=? ORDER BY sort_key`,
+      FROM structure_nodes WHERE is_active=TRUE AND deleted_at IS NULL AND legislation_id=? ORDER BY sort_key`,
       [id],
     );
   }
@@ -245,7 +250,7 @@ export class LegislationsService {
              (SELECT COUNT(*) FROM article_versions future WHERE future.article_id=a.id
                AND future.status IN ('PUBLISHED','REPEALED') AND future.valid_from>? AND future.valid_from<=CURRENT_DATE()) futureCount
       FROM articles a JOIN article_versions av ON av.article_id=a.id
-      WHERE a.legislation_id=? AND av.status IN ('PUBLISHED','REPEALED')
+      WHERE a.is_active=TRUE AND a.deleted_at IS NULL AND a.legislation_id=? AND av.status IN ('PUBLISHED','REPEALED')
       AND av.valid_from <= ? AND (av.valid_to IS NULL OR av.valid_to > ?)
       ORDER BY a.sort_key`,
       [effectiveDate, effectiveDate, id, effectiveDate, effectiveDate],
@@ -261,10 +266,10 @@ export class LegislationsService {
       YEAR(am.effective_from) year,ao.id operationId,ao.operation_type operationType,ao.application_order applicationOrder,
       ao.citation_text citationText,a.id articleId,a.current_label articleLabel,amod.paragraph_locator paragraphLocator,
       amod.previous_text previousText,amod.new_text newText,sd.original_name sourceName
-      FROM amendments am JOIN amendment_operations ao ON ao.amendment_id=am.id
+      FROM amendments am JOIN amendment_operations ao ON ao.amendment_id=am.id AND ao.is_active=TRUE AND ao.deleted_at IS NULL
       LEFT JOIN article_modifications amod ON amod.operation_id=ao.id LEFT JOIN articles a ON a.id=amod.article_id
       JOIN source_documents sd ON sd.id=ao.source_document_id
-      WHERE am.amended_legislation_id=? AND am.status='PUBLISHED'
+      WHERE am.amended_legislation_id=? AND am.is_active=TRUE AND am.deleted_at IS NULL AND am.status='PUBLISHED'
       ORDER BY am.effective_from DESC,ao.application_order`,
       [id],
     )) as Array<Record<string, unknown>>;
@@ -321,10 +326,10 @@ export class LegislationsService {
     return this.db.query(
       `SELECT ax.id,ax.annex_type annexType,ax.title_ar titleAr,ax.status,
     av.id versionId,av.version_no versionNo,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,
-    af.id fileId,af.original_name fileName,af.media_type mediaType,af.byte_size byteSize,af.page_count pageCount,af.ocr_status ocrStatus,
+    COALESCE(af.id,sd.id) fileId,COALESCE(af.original_name,sd.original_name) fileName,COALESCE(af.media_type,sd.media_type) mediaType,COALESCE(af.byte_size,sd.byte_size) byteSize,COALESCE(af.page_count,sd.page_count) pageCount,af.ocr_status ocrStatus,
     av.structured_table_json structuredTable
-    FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id LEFT JOIN annex_files af ON af.annex_version_id=av.id
-    WHERE ax.legislation_id=? AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+    FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id JOIN source_documents sd ON sd.id=av.source_document_id AND sd.is_active=TRUE AND sd.deleted_at IS NULL LEFT JOIN annex_files af ON af.annex_version_id=av.id
+    WHERE ax.legislation_id=? AND ax.is_active=TRUE AND ax.deleted_at IS NULL AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
     AND av.valid_from<=CURRENT_DATE() ORDER BY av.valid_from DESC`,
       [id],
     );
@@ -344,16 +349,38 @@ export class LegislationsService {
     FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id
     LEFT JOIN source_documents sd ON sd.id=lr.source_document_id
     WHERE (lr.source_legislation_id=? OR lr.target_legislation_id=?)
-      AND lr.review_status='REVIEWED'
-      AND source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
-      AND target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      AND lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='REVIEWED'
+      AND source.is_active=TRUE AND source.deleted_at IS NULL AND source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      AND target.is_active=TRUE AND target.deleted_at IS NULL AND target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
     ORDER BY lr.effective_from DESC`,
       [id, id, id, id, id, id, id],
     );
   }
 
   async create(dto: CreateLegislationDto, actor: AuthUser) {
+    requireExactPermission(actor, "legislation.create");
+    if (!dto.titleAr.trim())
+      throw new BadRequestException("عنوان التشريع مطلوب.");
     return this.db.transaction(async (m) => {
+      await assertActiveReference(m, "legislation_types", dto.typeId);
+      await assertActiveReference(m, "authorities", dto.authorityId);
+      if (
+        (
+          await m.query(
+            "SELECT id FROM legislations WHERE type_id=? AND authority_id=? AND year=? AND official_number <=> ? AND title_ar=? AND deleted_at IS NULL LIMIT 1",
+            [
+              dto.typeId,
+              dto.authorityId,
+              dto.year,
+              dto.officialNumber || null,
+              dto.titleAr.trim(),
+            ],
+          )
+        ).length
+      )
+        throw new ConflictException(
+          "توجد مسودة مطابقة؛ تحقق من السجل الموجود قبل إضافة نسخة مكررة.",
+        );
       const id = randomUUID();
       await m.query(
         `INSERT INTO legislations
