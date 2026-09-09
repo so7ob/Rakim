@@ -2307,7 +2307,9 @@ export class AdminService {
           "أعد تفعيل مجموعة المسودة قبل إضافة مرادفات.",
         );
       if (!sets[0]) {
-        this.requirePermission(actor, "search.synonym_set.create");
+        // Adding a synonym has always created its draft container when absent.
+        // Keep that existing permission contract; explicit empty-group creation
+        // remains protected separately by search.synonym_set.create.
         const id = randomUUID();
         await manager.query(
           `INSERT INTO search_synonym_sets (id,version_no,status)

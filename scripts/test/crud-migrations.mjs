@@ -157,6 +157,23 @@ try {
     set.id,
     next.id,
   ]);
+  const synonymEditor = { ...actor, permissions: ["search.synonym.create"] };
+  await assert.rejects(() =>
+    admin.createSynonymSet(synonymEditor, "مجموعة فارغة بلا إذن"),
+  );
+  const firstTerm = await admin.addSynonym(
+    "مصطلح اختبار أول",
+    "مرادف اختبار أول",
+    synonymEditor,
+  );
+  assert.ok(
+    firstTerm.setId,
+    "The established synonym.create action creates its missing draft container",
+  );
+  await db.query("DELETE FROM search_synonyms WHERE id=?", [firstTerm.id]);
+  await db.query("DELETE FROM search_synonym_sets WHERE id=?", [
+    firstTerm.setId,
+  ]);
   // Only this disposable fixture is removed; audit evidence and actor remain.
 
   // Verify the refusal happens before any DDL / permission deletion.
