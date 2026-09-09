@@ -410,9 +410,9 @@ export class AmendmentsService {
         "UPDATE amendments SET status='PUBLISHED',published_at=NOW(3),revision=revision+1 WHERE id=?",
         [id],
       );
-      // This legal state transition belongs only to publication, never administrative lifecycle.
+      // Legal amendment does not change the publication workflow or administrative availability.
       await m.query(
-        "UPDATE legislations SET status='AMENDED',legal_status='AMENDED' WHERE id=?",
+        "UPDATE legislations SET legal_status='AMENDED' WHERE id=?",
         [doc.amended_legislation_id],
       );
       await m.query(

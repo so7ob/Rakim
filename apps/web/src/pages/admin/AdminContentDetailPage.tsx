@@ -1,3 +1,7 @@
+import {
+  LegislationStatus,
+  LegalStatusBadge,
+} from "../../components/admin/LegislationStatus";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
@@ -31,6 +35,7 @@ interface Detail {
   publication_date: string | null;
   repeal_date: string | null;
   legal_status: string;
+  is_active: boolean | number;
   verification_level: string;
   typeName?: string;
   versions: Array<{ preambleText: string | null }>;
@@ -204,7 +209,13 @@ export function AdminContentDetailPage() {
           { label: "التشريعات", to: "/ar/admin/content" },
           { label: law.title_ar },
         ]}
-        status={<StatusBadge status={law.status} />}
+        status={
+          <LegislationStatus
+            workflow={law.status}
+            legal={law.legal_status}
+            active={law.is_active}
+          />
+        }
         actions={
           tab === "general" && canEditMetadata ? (
             <button
@@ -468,6 +479,7 @@ export function AdminContentDetailPage() {
       <div className="admin-entity-actions">
         <LifecycleActions
           kind="legislations"
+          showStatus={false}
           id={law.id}
           label={law.title_ar}
           onDone={(action) => {
@@ -515,7 +527,10 @@ export function AdminContentDetailPage() {
                     (entry) => entry.id === law.authority_id,
                   )?.name || "—",
               },
-              { label: "الحالة القانونية", value: law.legal_status },
+              {
+                label: "الحالة القانونية",
+                value: <LegalStatusBadge status={law.legal_status} />,
+              },
               { label: "درجة التحقق", value: law.verification_level },
               {
                 label: "تاريخ الإصدار",
@@ -2119,8 +2134,10 @@ export function SourceEditor({
   legislationId,
   editable,
   done,
+  showLifecycle = true,
 }: {
   source: Detail["sources"][number];
+  showLifecycle?: boolean;
   legislationId?: string;
   editable: boolean;
   done: (message: string) => void;
@@ -2155,14 +2172,16 @@ export function SourceEditor({
           { label: "البصمة", value: source.sha256, wide: true },
         ]}
       />
-      <div className="admin-entity-actions">
-        <LifecycleActions
-          kind="sources"
-          id={source.id}
-          label={source.originalName}
-          onDone={() => done("حُدّثت حالة السجل.")}
-        />
-      </div>
+      {showLifecycle && (
+        <div className="admin-entity-actions">
+          <LifecycleActions
+            kind="sources"
+            id={source.id}
+            label={source.originalName}
+            onDone={() => done("حُدّثت حالة السجل.")}
+          />
+        </div>
+      )}
       {legislationId && auth.hasPermission("source.delete") && (
         <button
           className="link-button danger"

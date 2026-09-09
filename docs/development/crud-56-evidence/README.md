@@ -7,6 +7,8 @@
 - [إدارة أعداد الجريدة](gazettes-desktop.png).
 - [نافذة إضافة مصدر فوق طابور الاستيراد](import-add-dialog-desktop.png).
 - [نافذة إضافة وثيقة تعديل على الهاتف](amendment-add-dialog-mobile.png).
+- [فصل الحالة القانونية وسير العمل والحالة الإدارية مع ظهور الحذف](legislation-states-desktop.png).
+- [إجراءات المصدر ظاهرة فوق تفاصيل الاستيراد على الهاتف](source-actions-mobile.png).
 
 المصفوفة ونتائج الحفظ والصلاحيات والقيود: [crud-coverage.md](../../crud-coverage.md).
 

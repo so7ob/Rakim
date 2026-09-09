@@ -1,3 +1,8 @@
+import {
+  AdministrativeStatusBadge,
+  LegalStatusBadge,
+  LegislationWorkflowBadge,
+} from "../../components/admin/LegislationStatus";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
 import { Link, useSearchParams } from "react-router-dom";
@@ -15,6 +20,8 @@ interface ContentItem {
   officialNumber: string;
   year: number;
   status: string;
+  legalStatus: string;
+  isActive: boolean | number;
   typeName: string;
   authorityName: string;
   verificationLevel: string;
@@ -251,7 +258,7 @@ export function AdminContentPage() {
       <div
         className="workflow-filters"
         role="group"
-        aria-label="تصفية حالة العمل"
+        aria-label="تصفية سير العمل"
       >
         {[
           "",
@@ -281,7 +288,9 @@ export function AdminContentPage() {
               <tr>
                 <th>التشريع</th>
                 <th>النوع/الجهة</th>
-                <th>الحالة</th>
+                <th>الحالة القانونية</th>
+                <th>سير العمل</th>
+                <th>الحالة الإدارية</th>
                 <th>التحقق</th>
                 <th>الإجراءات</th>
               </tr>
@@ -305,7 +314,13 @@ export function AdminContentPage() {
                     <small>{item.authorityName}</small>
                   </td>
                   <td>
-                    <StatusBadge status={item.status} />
+                    <LegalStatusBadge status={item.legalStatus} />
+                  </td>
+                  <td>
+                    <LegislationWorkflowBadge status={item.status} />
+                  </td>
+                  <td>
+                    <AdministrativeStatusBadge active={item.isActive} />
                   </td>
                   <td>{item.verificationLevel}</td>
                   <td>
@@ -341,6 +356,7 @@ export function AdminContentPage() {
                         )}
                       <LifecycleActions
                         kind="legislations"
+                        showStatus={false}
                         id={item.id}
                         label={item.titleAr}
                         onDone={list.retry}

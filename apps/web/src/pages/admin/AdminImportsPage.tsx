@@ -1,3 +1,4 @@
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
@@ -158,75 +159,93 @@ export function AdminImportsPage() {
       ) : (
         <div className="admin-list">
           {imports.data?.map((item) => (
-            <details className="admin-card import-row" key={item.id}>
-              <summary>
-                <div>
-                  <strong>{item.originalName}</strong>
-                  <span>
-                    {item.detectedFormat} —{" "}
-                    {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
-                    {item.uploadedBy}
-                    {Number(item.attachmentCount) > 0 &&
-                      ` — PDF: ${item.referencePdfName}`}
-                  </span>
-                </div>
-                <StatusBadge status={item.status} />
-              </summary>
-              <div className="import-details">
-                <dl>
-                  <div>
-                    <dt>SHA-256</dt>
-                    <dd className="hash">{item.sha256}</dd>
-                  </div>
-                  <div>
-                    <dt>حالة الاستخراج</dt>
-                    <dd>{item.extractionStatus}</dd>
-                  </div>
-                  <div>
-                    <dt>ثقة OCR</dt>
-                    <dd>{item.ocrConfidence ?? "غير مطلوب"}</dd>
-                  </div>
-                </dl>
-                {auth.hasPermission("source.review") &&
-                  item.status === "READY_FOR_REVIEW" && (
-                    <ReviewImport id={item.id} done={imports.retry} />
-                  )}{" "}
-                {auth.hasPermission("source.draft.create") &&
-                  !item.legislationId &&
-                  ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
-                  refs.data && (
-                    <CreateDraft
-                      id={item.id}
-                      refs={refs.data}
-                      done={imports.retry}
-                    />
-                  )}{" "}
-                {item.legislationTitle && (
-                  <p>
-                    المسودة المرتبطة:{" "}
-                    <Link
-                      to={`/ar/admin/content/${item.legislationId}/structure`}
-                    >
-                      {item.legislationTitle}
-                    </Link>
-                  </p>
-                )}
-                <SourceEditor
-                  source={{
-                    ...item,
-                    id: item.sourceDocumentId,
-                    sourceRole: "EXTRACTION",
-                  }}
-                  editable={auth.hasPermission("source.update")}
-                  done={imports.retry}
-                />
-                <ImportPreview
-                  id={item.id}
-                  mediaType={item.mediaType}
-                  name={item.originalName}
+            <article className="admin-card" key={item.id}>
+              <div
+                className="admin-entity-actions"
+                role="group"
+                aria-label={`إجراءات المصدر ${item.originalName}`}
+              >
+                <span>الحالة الإدارية:</span>
+                <LifecycleActions
+                  kind="sources"
+                  id={item.sourceDocumentId}
+                  label={item.originalName}
+                  onDone={imports.retry}
                 />
               </div>
-            </details>
+              <details className="import-row">
+                <summary>
+                  <div>
+                    <strong>{item.originalName}</strong>
+                    <span>
+                      {item.detectedFormat} —{" "}
+                      {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
+                      {item.uploadedBy}
+                      {Number(item.attachmentCount) > 0 &&
+                        ` — PDF: ${item.referencePdfName}`}
+                    </span>
+                  </div>
+                  <span>
+                    حالة الاستيراد: <StatusBadge status={item.status} />
+                  </span>
+                </summary>
+                <div className="import-details">
+                  <dl>
+                    <div>
+                      <dt>SHA-256</dt>
+                      <dd className="hash">{item.sha256}</dd>
+                    </div>
+                    <div>
+                      <dt>حالة الاستخراج</dt>
+                      <dd>{item.extractionStatus}</dd>
+                    </div>
+                    <div>
+                      <dt>ثقة OCR</dt>
+                      <dd>{item.ocrConfidence ?? "غير مطلوب"}</dd>
+                    </div>
+                  </dl>
+                  {auth.hasPermission("source.review") &&
+                    item.status === "READY_FOR_REVIEW" && (
+                      <ReviewImport id={item.id} done={imports.retry} />
+                    )}{" "}
+                  {auth.hasPermission("source.draft.create") &&
+                    !item.legislationId &&
+                    ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
+                    refs.data && (
+                      <CreateDraft
+                        id={item.id}
+                        refs={refs.data}
+                        done={imports.retry}
+                      />
+                    )}{" "}
+                  {item.legislationTitle && (
+                    <p>
+                      المسودة المرتبطة:{" "}
+                      <Link
+                        to={`/ar/admin/content/${item.legislationId}/structure`}
+                      >
+                        {item.legislationTitle}
+                      </Link>
+                    </p>
+                  )}
+                  <SourceEditor
+                    source={{
+                      ...item,
+                      id: item.sourceDocumentId,
+                      sourceRole: "EXTRACTION",
+                    }}
+                    editable={auth.hasPermission("source.update")}
+                    showLifecycle={false}
+                    done={imports.retry}
+                  />
+                  <ImportPreview
+                    id={item.id}
+                    mediaType={item.mediaType}
+                    name={item.originalName}
+                  />
+                </div>
+              </details>
+            </article>
           ))}
         </div>
       )}

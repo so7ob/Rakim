@@ -117,7 +117,7 @@ describe("complete administrative lifecycle on MariaDB", () => {
       [id],
     );
   }
-  it("registers new permission definitions without automatically granting them", async () => {
+  it("keeps stored baseline grants unchanged; SUPER inheritance is resolved at runtime", async () => {
     const codes = CRUD_PERMISSION_CATALOG.map((p) => p.code);
     const grants = await db.query(
       `SELECT rp.permission_code FROM role_permissions rp JOIN roles r ON r.id=rp.role_id WHERE r.is_system=TRUE AND rp.permission_code IN (${codes.map(() => "?").join(",")})`,
@@ -331,9 +331,24 @@ describe("complete administrative lifecycle on MariaDB", () => {
     await expect(publicLaws.detail(id)).rejects.toThrow();
     expect(
       (
-        await db.query("SELECT legal_status FROM legislations WHERE id=?", [id])
-      )[0].legal_status,
-    ).toBe("IN_FORCE");
+        await db.query(
+          "SELECT status,legal_status,is_active FROM legislations WHERE id=?",
+          [id],
+        )
+      )[0],
+    ).toMatchObject({
+      status: "PUBLISHED",
+      legal_status: "IN_FORCE",
+      is_active: 0,
+    });
+    const disabledList = await admin.legislations({ q: marker });
+    expect(
+      disabledList.items.find((l: { id: string }) => l.id === id),
+    ).toMatchObject({
+      status: "PUBLISHED",
+      legalStatus: "IN_FORCE",
+      isActive: 0,
+    });
     await lifecycle.change(
       "legislations",
       id,
@@ -559,6 +574,18 @@ describe("complete administrative lifecycle on MariaDB", () => {
       ),
     ).rejects.toThrow();
     await amendments.publish(draft.id, publisher, "نشر جميع العناصر");
+    expect(
+      (
+        await db.query(
+          "SELECT status,legal_status,is_active FROM legislations WHERE id=?",
+          [id],
+        )
+      )[0],
+    ).toMatchObject({
+      status: "PUBLISHED",
+      legal_status: "AMENDED",
+      is_active: 1,
+    });
     await expect(
       amendments.publish(draft.id, publisher, "طلب نشر مكرر"),
     ).rejects.toThrow();

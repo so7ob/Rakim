@@ -1,3 +1,4 @@
+import { StatusBadge } from "../../components/StatusBadge";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
@@ -715,7 +716,9 @@ function PageEditor({
           <h3>{page.titleAr}</h3>
           <p dir="ltr">/{page.slug}</p>
         </div>
-        <span className="tag">{page.status}</span>
+        <span>
+          حالة النشر: <StatusBadge status={page.status} />
+        </span>
       </header>
       <EntityDetails
         items={[

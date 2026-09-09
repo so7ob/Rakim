@@ -558,7 +558,14 @@ test("authority ceiling blocks API privilege escalation and preserves role bound
   expect(status.user.permissions).not.toContain(
     "workflow_policy.overrides.manage",
   );
-  expect(superAuthUser.permissions).toHaveLength(75);
+  const activeCatalog = await (
+    await request.get("/api/v1/admin/permissions", {
+      headers: { cookie: superAdmin.cookie },
+    })
+  ).json();
+  expect([...superAuthUser.permissions].sort()).toEqual(
+    activeCatalog.permissions.map((item: { code: string }) => item.code).sort(),
+  );
   expect(superAuthUser.policyCapabilities).toEqual([]);
 });
 

@@ -118,7 +118,7 @@ export function AdminReferenceDataPage() {
                   <th>الاسم</th>
                   <th>الرمز</th>
                   {activeKind === "subjects" && <th>الموضوع الأب</th>}
-                  <th>الحالة</th>
+                  <th>الحالة الإدارية</th>
                   <th>الإجراءات</th>
                 </tr>
               </thead>
@@ -134,10 +134,11 @@ export function AdminReferenceDataPage() {
                     {activeKind === "subjects" && (
                       <td>{parentName(item.parentId)}</td>
                     )}
-                    <td>{item.isActive ? "فعال" : "معطل"}</td>
+                    <td>{item.isActive ? "فعال إدارياً" : "معطل إدارياً"}</td>
                     <td>
                       <LifecycleActions
                         kind={activeKind}
+                        showStatus={false}
                         id={item.id}
                         label={item.nameAr}
                         onDone={state.retry}

@@ -11,6 +11,7 @@ export function LifecycleActions({
   onDone,
   allowDelete = true,
   allowState = true,
+  showStatus = true,
 }: {
   kind: string;
   id: string;
@@ -18,6 +19,7 @@ export function LifecycleActions({
   onDone: (action?: "delete" | "enable" | "disable") => void;
   allowDelete?: boolean;
   allowState?: boolean;
+  showStatus?: boolean;
 }) {
   const auth = useAuth();
   const view = [
@@ -66,7 +68,7 @@ export function LifecycleActions({
         : "إعادة تفعيل";
   return (
     <>
-      {allowState && (
+      {allowState && showStatus && (
         <span className="tag">
           {record.isActive ? "فعال إدارياً" : "معطل إدارياً"}
         </span>
@@ -114,7 +116,7 @@ export function LifecycleActions({
               body: { action, reason },
             });
             setAction(null);
-            state.retry();
+            if (action !== "delete") state.retry();
             onDone(action);
           }}
         >

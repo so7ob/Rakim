@@ -1,4 +1,4 @@
-import { CRUD_PERMISSION_CATALOG } from "../common/crud-permission-catalog.js";
+import { EFFECTIVE_ROLE_GRANTS_SQL } from "../common/effective-role-grants.js";
 import {
   Inject,
   Injectable,
@@ -10,10 +10,7 @@ import type { DataSource } from "typeorm";
 import { DATABASE } from "../database/database.module.js";
 import type { AuthUser } from "./auth.types.js";
 import { hashPassword, verifyPassword } from "./password.js";
-import {
-  CANONICAL_PERMISSION_CODES,
-  LEGACY_PERMISSION_ALIASES,
-} from "../common/canonical-permission-catalog.js";
+import { LEGACY_PERMISSION_ALIASES } from "../common/canonical-permission-catalog.js";
 
 // Session-bound token: concurrent status reads and other tabs must not invalidate forms.
 const csrfForToken = (token: string) =>
@@ -129,7 +126,7 @@ export class AuthService {
           `SELECT rp.permission_code permissionCode,rp.scope_code scopeCode,
           r.code roleCode,r.name_ar roleName,r.permission_model_version modelVersion,
           pd.is_legacy isLegacy
-        FROM role_permissions rp JOIN user_roles ur ON ur.role_id=rp.role_id
+        FROM ${EFFECTIVE_ROLE_GRANTS_SQL} rp JOIN user_roles ur ON ur.role_id=rp.role_id
         JOIN roles r ON r.id=rp.role_id
         JOIN permission_definitions pd ON pd.code=rp.permission_code
         WHERE ur.user_id=? AND r.is_active=1 ORDER BY rp.permission_code,r.code`,
@@ -149,7 +146,7 @@ export class AuthService {
           pd.is_legacy isLegacy
         FROM user_permission_overrides upo
         JOIN permission_definitions pd ON pd.code=upo.permission_code
-        WHERE upo.user_id=? ORDER BY upo.permission_code`,
+        WHERE upo.user_id=? AND pd.is_active=TRUE ORDER BY upo.permission_code`,
           [id],
         ) as Promise<
           Array<{
@@ -181,10 +178,14 @@ export class AuthService {
       }
     >();
     for (const grant of roleGrants) {
-      if (grant.scopeCode !== "ALL") continue;
+      if (
+        grant.scopeCode !== "ALL" ||
+        (grant.isLegacy && Number(grant.modelVersion) >= 2)
+      )
+        continue;
       for (const code of this.canonicalTargets(
         grant.permissionCode,
-        Boolean(grant.isLegacy) && Number(grant.modelVersion) < 2,
+        Boolean(grant.isLegacy),
       )) {
         const existing = effective.get(code) ?? {
           code,
@@ -251,12 +252,7 @@ export class AuthService {
   }
 
   private canonicalTargets(code: string, legacy: boolean): string[] {
-    if (
-      !legacy &&
-      (CANONICAL_PERMISSION_CODES.has(code) ||
-        CRUD_PERMISSION_CATALOG.some((item) => item.code === code))
-    )
-      return [code];
+    if (!legacy) return [code];
     return LEGACY_PERMISSION_ALIASES[code] ?? [];
   }
 

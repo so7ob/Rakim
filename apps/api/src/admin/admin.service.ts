@@ -484,7 +484,9 @@ export class AdminService {
     const pageSize = Math.min(50, Math.max(1, Number(query.pageSize ?? 20)));
     const where = ["l.deleted_at IS NULL"];
     const values: Array<string | number> = [];
-    if (query.status) {
+    if (query.status === "PUBLISHED") {
+      where.push("l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')");
+    } else if (query.status) {
       where.push("l.status=?");
       values.push(query.status);
     }
@@ -498,7 +500,7 @@ export class AdminService {
     );
     const items = await this.db.query(
       `SELECT l.id,l.display_code displayCode,l.title_ar titleAr,l.official_number officialNumber,
-      l.year,l.status,l.legal_status legalStatus,l.verification_level verificationLevel,l.updated_at updatedAt,
+      l.year,l.status,l.is_active isActive,l.legal_status legalStatus,l.verification_level verificationLevel,l.updated_at updatedAt,
       lt.name_ar typeName,au.name_ar authorityName,
       (SELECT COUNT(*) FROM legislation_versions lv WHERE lv.legislation_id=l.id) versionCount
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id

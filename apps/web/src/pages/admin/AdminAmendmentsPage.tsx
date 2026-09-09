@@ -127,7 +127,9 @@ export function AdminAmendmentsPage() {
           {data.data?.map((doc) => (
             <article className="admin-card" key={doc.id}>
               <header>
-                <StatusBadge status={doc.status} />
+                <span>
+                  سير عمل الوثيقة: <StatusBadge status={doc.status} />
+                </span>
                 <h2>{doc.titleAr}</h2>
                 <p>
                   {doc.legislationTitle} — {doc.effectiveFrom}
