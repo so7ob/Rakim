@@ -49,8 +49,8 @@ export class AccessControlService {
     };
   }
 
-  async roles() {
-    return this.db
+  async roles(actor?: AuthUser) {
+    const roles = await this.db
       .query(`SELECT r.id,r.code,r.name_ar nameAr,r.description_ar descriptionAr,
       r.is_system isSystem,r.is_protected isProtected,r.authority_level authorityLevel,
       r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
@@ -59,9 +59,17 @@ export class AccessControlService {
       LEFT JOIN role_permissions rp ON rp.role_id=r.id
       LEFT JOIN permission_definitions pd ON pd.code=rp.permission_code AND pd.is_legacy=FALSE
       GROUP BY r.id ORDER BY r.is_system DESC,r.name_ar`);
+    if (!actor) return roles;
+    const actorLevel = await this.policy.authorityLevel(actor.id);
+    return roles.map((role: Record<string, unknown>) => ({
+      ...role,
+      canManage:
+        !Boolean(role.isProtected) &&
+        actorLevel > Number(role.authorityLevel ?? 0),
+    }));
   }
 
-  async role(id: string) {
+  async role(id: string, actor?: AuthUser) {
     const roles = await this.db.query(
       `SELECT id,code,name_ar nameAr,description_ar descriptionAr,is_system isSystem,
       is_protected isProtected,authority_level authorityLevel,
@@ -69,7 +77,14 @@ export class AccessControlService {
       [id],
     );
     if (!roles[0]) throw new NotFoundException("الدور غير موجود.");
-    return roles[0];
+    if (!actor) return roles[0];
+    const actorLevel = await this.policy.authorityLevel(actor.id);
+    return {
+      ...roles[0],
+      canManage:
+        !Boolean(roles[0].isProtected) &&
+        actorLevel > Number(roles[0].authorityLevel ?? 0),
+    };
   }
 
   async rolePermissions(id: string) {
@@ -274,15 +289,23 @@ export class AccessControlService {
     return { id, deleted: true };
   }
 
-  async user(id: string) {
+  async user(id: string, actor?: AuthUser) {
     const users = await this.db.query(
-      `SELECT id,username,display_name displayName,is_active isActive,
-      created_at createdAt,last_login_at lastLoginAt,failed_login_count failedLoginCount
-      FROM users WHERE id=?`,
+      `SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,
+      u.created_at createdAt,u.last_login_at lastLoginAt,u.failed_login_count failedLoginCount,
+      (SELECT COALESCE(MAX(r.authority_level),0) FROM user_roles ur
+       JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.is_active=TRUE) authorityLevel
+      FROM users u WHERE u.id=?`,
       [id],
     );
     if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
-    return users[0];
+    const { authorityLevel, ...user } = users[0];
+    if (!actor) return user;
+    const actorLevel = await this.policy.authorityLevel(actor.id);
+    return {
+      ...user,
+      canManage: actor.id !== id && actorLevel > Number(authorityLevel ?? 0),
+    };
   }
 
   async userRoles(id: string, actor: AuthUser) {

@@ -1447,13 +1447,20 @@ export class AdminService {
   async users(actor: AuthUser) {
     const rows = await this.db
       .query(`SELECT u.id,u.username,u.display_name displayName,u.is_active isActive,u.created_at createdAt,u.last_login_at lastLoginAt,
-      u.failed_login_count failedLoginCount,GROUP_CONCAT(r.code ORDER BY r.code) roles
+      u.failed_login_count failedLoginCount,GROUP_CONCAT(r.code ORDER BY r.code) roles,
+      COALESCE(MAX(CASE WHEN r.is_active=TRUE THEN r.authority_level ELSE 0 END),0) authorityLevel
       FROM users u LEFT JOIN user_roles ur ON ur.user_id=u.id LEFT JOIN roles r ON r.id=ur.role_id GROUP BY u.id ORDER BY u.username`);
     const canViewRoles = actor.permissions.includes("role.view");
-    return rows.map((user: Record<string, unknown>) => ({
-      ...user,
-      roles: canViewRoles ? user.roles : null,
-    }));
+    const actorLevel = await this.policy.authorityLevel(actor.id);
+    return rows.map((row: Record<string, unknown>) => {
+      const { authorityLevel, ...user } = row;
+      return {
+        ...user,
+        roles: canViewRoles ? user.roles : null,
+        canManage:
+          actor.id !== user.id && actorLevel > Number(authorityLevel ?? 0),
+      };
+    });
   }
 
   async roles(actor: AuthUser) {

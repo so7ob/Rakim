@@ -61,8 +61,10 @@ export class AccessControlController {
   @Get("permissions") @Permissions("permission.view") permissions() {
     return this.service.permissionCatalog();
   }
-  @Get("access-roles") @Permissions("role.view") roles() {
-    return this.service.roles();
+  @Get("access-roles") @Permissions("role.view") roles(
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.service.roles(request.user!);
   }
   @Post("access-roles") @Permissions("role.create") createRole(
     @Body() dto: RoleCreateDto,
@@ -73,8 +75,9 @@ export class AccessControlController {
   }
   @Get("access-roles/:id") @Permissions("role.view") role(
     @Param("id") id: string,
+    @Req() request: AuthenticatedRequest,
   ) {
-    return this.service.role(id);
+    return this.service.role(id, request.user!);
   }
   @Get("access-roles/:id/permissions")
   @Permissions("permission.view")
@@ -125,8 +128,9 @@ export class AccessControlController {
   }
   @Get("users/:id/access") @Permissions("user.view") user(
     @Param("id") id: string,
+    @Req() request: AuthenticatedRequest,
   ) {
-    return this.service.user(id);
+    return this.service.user(id, request.user!);
   }
   @Get("users/:id/roles") @Permissions("role.view") userRoles(
     @Param("id") id: string,
