@@ -118,9 +118,16 @@ export function AdminImportsPage() {
           { label: "الاستيراد والمصادر" },
         ]}
         actions={
-          <button className="button secondary" onClick={imports.retry}>
-            تحديث الحالات
-          </button>
+          <>
+            <button className="button secondary" onClick={imports.retry}>
+              تحديث الحالات
+            </button>
+            {tab === "queue" && auth.hasPermission("source.upload") && (
+              <Link className="button" to="/ar/admin/imports/upload">
+                + رفع مصدر
+              </Link>
+            )}
+          </>
         }
       />
       <AdminTabs

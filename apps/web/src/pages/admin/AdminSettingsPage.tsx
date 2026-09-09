@@ -684,13 +684,13 @@ function PageEditor({
               setEditing(true);
             }}
           >
-            تحرير الصفحة
+            تعديل الصفحة
           </button>
         </div>
       )}
       {editing && (
         <AdminDialog
-          title={`تحرير ${page.titleAr}`}
+          title={`تعديل ${page.titleAr}`}
           description="محرر موسع لمحتوى الصفحة العامة وأقسامها."
           size="large"
           dirty={dirty}

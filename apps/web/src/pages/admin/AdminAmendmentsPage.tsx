@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -98,6 +98,13 @@ export function AdminAmendmentsPage() {
           { label: "إدارة المحتوى" },
           { label: "التعديلات" },
         ]}
+        actions={
+          tab === "list" && auth.hasPermission("amendment.create") ? (
+            <Link className="button" to="/ar/admin/amendments/create">
+              + إنشاء تعديل
+            </Link>
+          ) : undefined
+        }
       />
       <AdminTabs
         label="إدارة التعديلات"

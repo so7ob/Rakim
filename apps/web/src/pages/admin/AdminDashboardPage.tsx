@@ -1,7 +1,9 @@
+import { useState } from "react";
 import { useApi } from "../../hooks/use-api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { SearchReindexAction } from "../../components/admin/SearchReindexAction";
 interface Dashboard {
   workflow: Array<{ status: string; count: number }>;
   imports: Array<{ status: string; count: number }>;
@@ -10,6 +12,7 @@ interface Dashboard {
 }
 export function AdminDashboardPage() {
   const { data, error, loading, retry } = useApi<Dashboard>("/admin/dashboard");
+  const [message, setMessage] = useState("");
   return (
     <section>
       <AdminPageHeader
@@ -18,11 +21,23 @@ export function AdminDashboardPage() {
         description="ملخص دورة المحتوى والاستيراد والمهام الخلفية."
         breadcrumbs={[{ label: "لوحة الإدارة" }]}
         actions={
-          <button className="button secondary" onClick={retry}>
-            تحديث
-          </button>
+          <>
+            <button className="button secondary" onClick={retry}>
+              تحديث
+            </button>
+            <SearchReindexAction
+              onSuccess={(count) =>
+                setMessage(`اكتملت إعادة بناء الفهرس لعدد ${count} سجل.`)
+              }
+            />
+          </>
         }
       />
+      {message && (
+        <p className="form-message" role="status">
+          {message}
+        </p>
+      )}
       {loading ? (
         <LoadingCards />
       ) : error ? (

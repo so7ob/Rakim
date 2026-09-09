@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { Navigate, useParams } from "react-router-dom";
+import { Navigate, useLocation, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
@@ -23,6 +23,7 @@ interface UserAccess {
   createdAt: string;
   lastLoginAt: string | null;
   failedLoginCount: number;
+  canManage: boolean;
 }
 interface UserRole {
   id: string;
@@ -82,6 +83,7 @@ interface Catalog {
 
 export function AdminUserDetailPage() {
   const { id = "", tab = "profile" } = useParams();
+  const location = useLocation();
   const auth = useAuth();
   const allowedTabs: Record<string, boolean> = {
     profile: true,
@@ -227,6 +229,9 @@ export function AdminUserDetailPage() {
           auth={auth}
           refresh={user.retry}
           message={setMessage}
+          openEdit={Boolean(
+            (location.state as { openEdit?: boolean } | null)?.openEdit,
+          )}
         />
       )}
       {tab === "roles" && (
@@ -282,6 +287,7 @@ export function AdminUserDetailPage() {
                         type="checkbox"
                         checked={selectedRoles.has(role.code)}
                         disabled={
+                          !data.canManage ||
                           !auth.hasPermission("user.roles.manage") ||
                           !assignable ||
                           role.isProtected
@@ -313,7 +319,7 @@ export function AdminUserDetailPage() {
                   );
                 })}
               </div>
-              {auth.hasPermission("user.roles.manage") && (
+              {data.canManage && auth.hasPermission("user.roles.manage") && (
                 <div className="permission-savebar">
                   <label>
                     سبب التغيير
@@ -356,12 +362,12 @@ export function AdminUserDetailPage() {
                 mode="user"
                 userOverrides={selectedOverrides}
                 onUserOverrideChange={
-                  auth.hasPermission("user.permissions.manage")
+                  data.canManage && auth.hasPermission("user.permissions.manage")
                     ? setOverrides
                     : undefined
                 }
               />
-              {auth.hasPermission("user.permissions.manage") && (
+              {data.canManage && auth.hasPermission("user.permissions.manage") && (
                 <form
                   className="permission-savebar"
                   onSubmit={async (event) => {
@@ -478,7 +484,7 @@ export function AdminUserDetailPage() {
                     <th>آخر نشاط</th>
                     <th>تنتهي</th>
                     <th>الحالة</th>
-                    <th></th>
+                    <th>الإجراءات</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -503,6 +509,7 @@ export function AdminUserDetailPage() {
                       <td>
                         {!session.revokedAt &&
                           !session.expired &&
+                          data.canManage &&
                           auth.hasPermission("user.sessions.revoke") && (
                             <button
                               className="button secondary danger"
@@ -547,20 +554,24 @@ function ProfileTab({
   auth,
   refresh,
   message,
+  openEdit,
 }: {
   user: UserAccess;
   auth: ReturnType<typeof useAuth>;
   refresh: () => void;
   message: (value: string) => void;
+  openEdit: boolean;
 }) {
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(
+    openEdit && user.canManage && auth.hasPermission("user.update"),
+  );
   const [resetting, setResetting] = useState(false);
   const [changingState, setChangingState] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
-  const canChangeState = auth.hasPermission(
-    user.isActive ? "user.disable" : "user.enable",
-  );
+  const canChangeState =
+    user.canManage &&
+    auth.hasPermission(user.isActive ? "user.disable" : "user.enable");
   return (
     <div className="admin-detail-grid">
       <section className="admin-card">
@@ -571,7 +582,7 @@ function ProfileTab({
           { label: "تاريخ الإنشاء", value: new Date(user.createdAt).toLocaleString("ar-YE") },
           { label: "الحالة", value: user.isActive ? "نشط" : "معطل" },
         ]} />
-        {auth.hasPermission("user.update") && (
+        {user.canManage && auth.hasPermission("user.update") && (
           <div className="admin-entity-actions">
             <button type="button" className="button secondary" onClick={() => setEditing(true)}>تعديل الملف</button>
           </div>
@@ -590,12 +601,12 @@ function ProfileTab({
             {user.isActive ? "تعطيل الحساب" : "تفعيل الحساب"}
           </button>
         )}
-        {auth.hasPermission("user.reset_password") && (
+        {user.canManage && auth.hasPermission("user.reset_password") && (
           <button type="button" className="button secondary" onClick={() => setResetting(true)}>إعادة تعيين كلمة المرور</button>
         )}
         </div>
       </section>
-      {editing && (
+      {editing && user.canManage && auth.hasPermission("user.update") && (
         <AdminDialog title="تعديل الملف الشخصي" onClose={() => setEditing(false)}>
         <form
           className="edit-form"
@@ -632,7 +643,7 @@ function ProfileTab({
         </form>
         </AdminDialog>
       )}
-      {resetting && auth.hasPermission("user.reset_password") && (
+      {resetting && user.canManage && auth.hasPermission("user.reset_password") && (
         <AdminDialog title="إعادة تعيين كلمة المرور" description="سيبطل الخادم جميع جلسات المستخدم بعد نجاح العملية." onClose={() => setResetting(false)}>
           <form
             className="edit-form"
@@ -664,7 +675,7 @@ function ProfileTab({
           </form>
         </AdminDialog>
       )}
-      {changingState && (
+      {changingState && canChangeState && (
         <ConfirmDialog
           title={`${user.isActive ? "تعطيل" : "تفعيل"} الحساب؟`}
           description={user.isActive ? "سيمنع المستخدم من الدخول وتبطل جلساته وفق سياسة الخادم." : "سيتمكن المستخدم من تسجيل الدخول مجددًا."}

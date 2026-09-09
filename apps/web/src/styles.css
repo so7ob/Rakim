@@ -5067,6 +5067,14 @@ main .reference-annexes .annex-download {
 .admin-entity-details dd { margin: 0; color: var(--color-navy); font-weight: 700; overflow-wrap: anywhere; white-space: pre-wrap; }
 .admin-entity-detail-wide { grid-column: 1 / -1; }
 .admin-entity-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin-top: 16px; }
+.admin-row-actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+.admin-row-actions .button,
+.admin-row-actions .link-button { white-space: nowrap; }
+.admin-row-highlight { animation: admin-row-highlight 2.8s ease-out; }
+@keyframes admin-row-highlight {
+  from { background: rgb(228 242 235 / .95); }
+  to { background: transparent; }
+}
 .admin-list-card { border: 1px solid #e0e6e9; border-radius: 13px; padding: 16px; background: #fff; }
 .admin-list-card > header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
 .admin-list-card > header h3 { margin: 0 0 4px; color: var(--color-navy); }

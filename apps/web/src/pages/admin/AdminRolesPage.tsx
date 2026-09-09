@@ -4,6 +4,8 @@ import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminDialog } from "../../components/admin/AdminDialog";
+import { AdminRowActions } from "../../components/admin/AdminRowActions";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 
@@ -13,6 +15,8 @@ export interface AccessRole {
   nameAr: string;
   descriptionAr: string | null;
   isSystem: boolean | number;
+  isProtected: boolean | number;
+  canManage?: boolean;
   isActive: boolean | number;
   userCount: number;
   permissionCount: number;
@@ -27,6 +31,7 @@ export function AdminRolesPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState("");
   const [submitting, setSubmitting] = useState(false);
+  const [deleting, setDeleting] = useState<AccessRole | null>(null);
   const visible = roles.data?.filter((role) =>
     `${role.nameAr} ${role.code} ${role.descriptionAr ?? ""}`
       .toLowerCase()
@@ -46,7 +51,9 @@ export function AdminRolesPage() {
       setCreating(false);
       roles.retry();
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "تعذر إنشاء الدور.");
+      setCreateError(
+        error instanceof Error ? error.message : "تعذر إنشاء الدور.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -64,7 +71,11 @@ export function AdminRolesPage() {
         ]}
         actions={
           auth.hasPermission("role.create") ? (
-            <button type="button" className="button" onClick={() => setCreating(true)}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => setCreating(true)}
+            >
               + إنشاء دور
             </button>
           ) : undefined
@@ -78,7 +89,11 @@ export function AdminRolesPage() {
       {creating && auth.hasPermission("role.create") && (
         <AdminDialog title="إنشاء دور مخصص" onClose={() => setCreating(false)}>
           <form className="edit-form" onSubmit={create}>
-            {createError && <p className="form-error" role="alert">{createError}</p>}
+            {createError && (
+              <p className="form-error" role="alert">
+                {createError}
+              </p>
+            )}
             <div className="form-columns">
               <label>
                 اسم الدور
@@ -103,8 +118,17 @@ export function AdminRolesPage() {
               <input name="reason" required minLength={3} />
             </label>
             <div className="admin-entity-actions">
-              <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={submitting}>إلغاء</button>
-              <button className="button" disabled={submitting}>{submitting ? "جار الإنشاء…" : "إنشاء الدور"}</button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={submitting}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={submitting}>
+                {submitting ? "جار الإنشاء…" : "إنشاء الدور"}
+              </button>
             </div>
           </form>
         </AdminDialog>
@@ -140,7 +164,7 @@ export function AdminRolesPage() {
                 <th>المستخدمون</th>
                 <th>الصلاحيات</th>
                 <th>الحالة</th>
-                <th></th>
+                <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -159,18 +183,59 @@ export function AdminRolesPage() {
                   <td>{Number(role.permissionCount)}</td>
                   <td>{role.isActive ? "فعال" : "معطل"}</td>
                   <td>
-                    <Link
-                      className="button secondary"
-                      to={`/ar/admin/roles/${role.id}/general`}
-                    >
-                      فتح
-                    </Link>
+                    <AdminRowActions label={`إجراءات الدور ${role.nameAr}`}>
+                      <Link
+                        className="button secondary"
+                        to={`/ar/admin/roles/${role.id}/general`}
+                      >
+                        عرض
+                      </Link>
+                      {role.canManage &&
+                        auth.hasPermission("role.update") && (
+                          <Link
+                            className="link-button"
+                            to={`/ar/admin/roles/${role.id}/general`}
+                            state={{ openEdit: true }}
+                          >
+                            تعديل
+                          </Link>
+                        )}
+                      {role.canManage &&
+                        !role.isSystem &&
+                        Number(role.userCount) === 0 &&
+                        auth.hasPermission("role.delete") && (
+                          <button
+                            type="button"
+                            className="link-button danger"
+                            onClick={() => setDeleting(role)}
+                          >
+                            حذف
+                          </button>
+                        )}
+                    </AdminRowActions>
                   </td>
                 </tr>
               ))}
             </tbody>
           </table>
         </div>
+      )}
+      {deleting && (
+        <ConfirmDialog
+          title={`حذف الدور ${deleting.nameAr}؟`}
+          description="لن يمكن استعادة الدور. لا يظهر هذا الإجراء للأدوار المحمية أو النظامية أو المسندة إلى مستخدمين."
+          confirmLabel="حذف الدور"
+          onClose={() => setDeleting(null)}
+          onConfirm={async () => {
+            await apiRequest(`/admin/access-roles/${deleting.id}`, {
+              method: "DELETE",
+              body: { reason: "حذف دور مخصص غير مسند من قائمة الأدوار" },
+            });
+            setDeleting(null);
+            setMessage("حُذف الدور المخصص.");
+            roles.retry();
+          }}
+        />
       )}
     </section>
   );

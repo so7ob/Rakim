@@ -1,4 +1,5 @@
-import { useParams } from "react-router-dom";
+import { Link, useParams } from "react-router-dom";
+import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
 import {
@@ -16,6 +17,7 @@ interface Catalog {
 
 export function AdminPermissionsPage() {
   const { tab = "matrix" } = useParams();
+  const auth = useAuth();
   const catalog = useApi<Catalog>("/admin/permissions");
   return (
     <section>
@@ -28,6 +30,13 @@ export function AdminPermissionsPage() {
           { label: "المستخدمون والوصول" },
           { label: "الصلاحيات" },
         ]}
+        actions={
+          auth.hasPermission("role.view") ? (
+            <Link className="button secondary" to="/ar/admin/roles">
+              إدارة الأدوار والمنح
+            </Link>
+          ) : undefined
+        }
       />
       <AdminTabs
         label="استعراض الصلاحيات"
