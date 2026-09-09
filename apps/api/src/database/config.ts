@@ -1,3 +1,4 @@
+import { RecoveryEditRevisions1700000000017 } from "./migrations/1700000000017-recovery-edit-revisions.js";
 import { ReferenceLifecycle1700000000016 } from "./migrations/1700000000016-reference-lifecycle.js";
 import "reflect-metadata";
 import { config } from "dotenv";
@@ -59,6 +60,7 @@ export const createDataSource = () =>
       MultiSourceImports1700000000014,
       AdministrativeLifecycle1700000000015,
       ReferenceLifecycle1700000000016,
+      RecoveryEditRevisions1700000000017,
     ],
     migrationsTableName: "schema_migrations",
   });

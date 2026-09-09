@@ -1,3 +1,4 @@
+import { useEditConflict } from "./useEditConflict";
 import { useRef, useState, type FormEvent } from "react";
 import { apiRequest } from "../../api";
 import { AdminDialog } from "./AdminDialog";
@@ -19,7 +20,9 @@ export function RecordFormDialog({
   buildBody,
   onClose,
   onDone,
+  editRevision,
 }: {
+  editRevision?: number;
   title: string;
   path: string;
   method?: string;
@@ -29,6 +32,7 @@ export function RecordFormDialog({
   onClose: () => void;
   onDone: () => void;
 }) {
+  const conflict = useEditConflict(editRevision);
   const [saving, setSaving] = useState(false),
     [dirty, setDirty] = useState(false),
     [error, setError] = useState("");
@@ -39,7 +43,8 @@ export function RecordFormDialog({
     pending.current = true;
     setSaving(true);
     setError("");
-    const f = new FormData(e.currentTarget);
+    const formElement = e.currentTarget;
+    const f = new FormData(formElement);
     const values = Object.fromEntries(
       fields.map((field) => [
         field.name,
@@ -51,11 +56,18 @@ export function RecordFormDialog({
     try {
       await apiRequest(path, {
         method,
-        body: buildBody ? buildBody(values) : { ...values, ...extra },
+        body: buildBody
+          ? buildBody(values)
+          : {
+              ...values,
+              ...extra,
+              ...(editRevision ? { editRevision: conflict.revision } : {}),
+            },
       });
       setDirty(false);
       onDone();
     } catch (e) {
+      conflict.capture(e, values, formElement, () => setError(""));
       setError(e instanceof Error ? e.message : "تعذر الحفظ.");
     } finally {
       pending.current = false;
@@ -75,6 +87,7 @@ export function RecordFormDialog({
         onSubmit={submit}
         onChange={() => setDirty(true)}
       >
+        {conflict.notice}
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -100,6 +113,7 @@ export function RecordFormDialog({
                 </select>
               ) : field.type === "textarea" ? (
                 <textarea
+                  aria-label={field.label}
                   name={field.name}
                   defaultValue={field.value ?? ""}
                   required={field.required}
@@ -108,6 +122,7 @@ export function RecordFormDialog({
                 />
               ) : (
                 <input
+                  aria-label={field.label}
                   name={field.name}
                   type={field.type ?? "text"}
                   defaultValue={field.value ?? ""}
@@ -118,7 +133,7 @@ export function RecordFormDialog({
             </label>
           ))}
         </fieldset>
-        <button className="button" disabled={saving}>
+        <button className="button" disabled={saving || conflict.hasConflict}>
           {saving ? "جار الحفظ…" : "حفظ"}
         </button>
       </form>

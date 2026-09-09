@@ -143,6 +143,7 @@ describe("complete administrative lifecycle on MariaDB", () => {
       {
         code: "T_" + marker.slice(0, 8),
         nameAr: "موضوع بعد التعديل",
+        editRevision: 1,
         isActive: true,
       },
       actor,
@@ -180,6 +181,7 @@ describe("complete administrative lifecycle on MariaDB", () => {
         {
           code: "T_" + marker.slice(0, 8),
           nameAr: "دورة",
+          editRevision: 2,
           isActive: true,
           parentId: child.id,
         },
@@ -682,6 +684,7 @@ describe("complete administrative lifecycle on MariaDB", () => {
       {
         eyebrowAr: "",
         titleAr: "صفحة محدثة",
+        editRevision: 1,
         introAr: "مقدمة",
         sections: [
           { title: "أول", body: "نص أول" },
@@ -961,7 +964,11 @@ describe("complete administrative lifecycle on MariaDB", () => {
     };
     const g = await admin.saveGazette(input, actor);
     gazettes.push(g.id);
-    await admin.saveGazette({ ...input, publisher: "ناشر معدل" }, actor, g.id);
+    await admin.saveGazette(
+      { ...input, publisher: "ناشر معدل", editRevision: 1 },
+      actor,
+      g.id,
+    );
     expect(
       (await admin.gazettes()).find((x: { id: string }) => x.id === g.id)
         .publisher,
@@ -1166,6 +1173,7 @@ describe("complete administrative lifecycle on MariaDB", () => {
         "RESOLVED",
         "حلت المشكلة الاختبارية",
         actor,
+        "OPEN",
       );
       expect(
         (

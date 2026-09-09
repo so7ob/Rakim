@@ -1,3 +1,4 @@
+import { assertSchemaCompatible } from "../../../../scripts/database/schema-contract.mjs";
 import { createDataSource } from "./config.js";
 
 async function main() {
@@ -12,11 +13,16 @@ async function main() {
           applied: applied.map((item) => item.name),
         }),
       );
+    } else if (command === "check") {
+      await assertSchemaCompatible((sql) => db.query(sql));
+      console.log("DATABASE_SCHEMA_COMPATIBLE");
     } else if (command === "revert") {
       await db.undoLastMigration({ transaction: "each" });
       console.log(JSON.stringify({ event: "migration.reverted" }));
     } else {
-      throw new Error("الاستخدام: npm run db:migrate أو npm run db:revert");
+      throw new Error(
+        "الاستخدام: npm run db:migrate أو npm run db:revert أو npm run db:check",
+      );
     }
   } finally {
     await db.destroy();

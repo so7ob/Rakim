@@ -69,6 +69,9 @@ export class ApiExceptionFilter implements ExceptionFilter {
       statusCode: status,
       message,
       error: status === 500 ? "INTERNAL_ERROR" : "REQUEST_ERROR",
+      ...(typeof raw === "object" && raw !== null && "conflict" in raw
+        ? { conflict: raw.conflict }
+        : {}),
       timestamp: new Date().toISOString(),
     });
   }

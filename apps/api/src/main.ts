@@ -28,7 +28,9 @@ async function bootstrap() {
         if (value.resetAt <= now) buckets.delete(address);
       }
     }
-    const key = request.ip || request.socket.remoteAddress || "local";
+    const recovery = request.path.startsWith("/api/v1/auth/password-recovery");
+    const requestLimit = recovery ? Math.min(limit, 10) : limit;
+    const key = `${recovery ? "recovery:" : ""}${request.ip || request.socket.remoteAddress || "local"}`;
     const current = buckets.get(key);
     const bucket =
       !current || current.resetAt <= now
@@ -36,13 +38,13 @@ async function bootstrap() {
         : current;
     bucket.count += 1;
     buckets.set(key, bucket);
-    response.setHeader("RateLimit-Limit", limit);
+    response.setHeader("RateLimit-Limit", requestLimit);
     response.setHeader(
       "RateLimit-Remaining",
-      Math.max(0, limit - bucket.count),
+      Math.max(0, requestLimit - bucket.count),
     );
     response.setHeader("RateLimit-Reset", Math.ceil(bucket.resetAt / 1000));
-    if (bucket.count > limit) {
+    if (bucket.count > requestLimit) {
       response.status(429).json({
         statusCode: 429,
         message: "طلبات كثيرة؛ أعد المحاولة بعد قليل.",

@@ -1,3 +1,4 @@
+import { useEditConflict } from "../../components/admin/useEditConflict";
 import { AdminGazettesPage } from "./AdminGazettesPage";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
@@ -12,6 +13,7 @@ import { ReferenceDataTabs } from "../../components/admin/ReferenceDataTabs";
 
 interface Item {
   id: string;
+  editRevision: number;
   code: string;
   nameAr: string;
   isActive: boolean;
@@ -181,11 +183,13 @@ function ReferenceDialog({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const conflict = useEditConflict(item?.editRevision);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     setSubmitting(true);
     setError("");
     try {
@@ -196,6 +200,7 @@ function ReferenceDialog({
         {
           ...(item ? { method: "PATCH" } : {}),
           body: {
+            ...(item ? { editRevision: conflict.revision } : {}),
             code: form.get("code"),
             nameAr: form.get("nameAr"),
             parentId: form.get("parentId"),
@@ -208,6 +213,11 @@ function ReferenceDialog({
         item ? "حُفظ عنصر القائمة المرجعية." : "أضيف عنصر القائمة المرجعية.",
       );
     } catch (reason) {
+      conflict.capture(
+        reason,
+        { ...Object.fromEntries(form), isActive: form.has("isActive") },
+        formElement,
+      );
       setError(reason instanceof Error ? reason.message : "تعذر حفظ العنصر.");
       setSubmitting(false);
     }
@@ -221,6 +231,7 @@ function ReferenceDialog({
       onClose={onClose}
     >
       <form className="edit-form" onSubmit={submit}>
+        {conflict.notice}
         {error && (
           <p className="form-error" role="alert">
             {error}
@@ -277,7 +288,10 @@ function ReferenceDialog({
           >
             إلغاء
           </button>
-          <button className="button" disabled={submitting}>
+          <button
+            className="button"
+            disabled={submitting || conflict.hasConflict}
+          >
             {submitting ? "جار الحفظ…" : item ? "حفظ" : "إضافة"}
           </button>
         </div>

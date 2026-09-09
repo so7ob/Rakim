@@ -1,3 +1,5 @@
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
+import { AdminRecoveryPage } from "./pages/admin/AdminRecoveryPage";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useEffect } from "react";
 import { Layout } from "./components/Layout";
@@ -50,6 +52,7 @@ export function App() {
       <Route path="/ar" element={<Layout />}>
         <Route index element={<HomePage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="reset-password" element={<ResetPasswordPage />} />
         <Route path="forgot-password" element={<ForgotPasswordPage />} />
         <Route path="legislations" element={<LegislationsPage />} />
         <Route
@@ -226,6 +229,14 @@ export function App() {
               element={
                 <RequirePermission anyOf={["user.view"]}>
                   <AdminUsersPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="users/recovery"
+              element={
+                <RequirePermission anyOf={["user.reset_password"]}>
+                  <AdminRecoveryPage />
                 </RequirePermission>
               }
             />

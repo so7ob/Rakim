@@ -1,6 +1,8 @@
+import { assertEditRevision } from "../common/edit-revision.js";
 import { requireExactPermission } from "../admin/lifecycle.service.js";
 import {
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Inject,
   Injectable,
@@ -51,25 +53,30 @@ export class SiteService {
   async adminState() {
     const [settings, navigation, pages] = await Promise.all([
       this.db.query(
-        `SELECT setting_key settingKey,group_code groupCode,label_ar labelAr,input_type inputType,value_json valueJson,is_public isPublic,updated_at updatedAt
+        `SELECT edit_revision editRevision,setting_key settingKey,group_code groupCode,label_ar labelAr,input_type inputType,value_json valueJson,is_public isPublic,updated_at updatedAt
          FROM platform_settings WHERE group_code<>'WORKFLOW' ORDER BY group_code,setting_key`,
       ),
       this.db.query(
-        `SELECT id,location,label_ar labelAr,path,sort_order sortOrder,is_visible isVisible,updated_at updatedAt FROM navigation_items WHERE deleted_at IS NULL ORDER BY location,sort_order,id`,
+        `SELECT id,edit_revision editRevision,location,label_ar labelAr,path,sort_order sortOrder,is_visible isVisible,updated_at updatedAt FROM navigation_items WHERE deleted_at IS NULL ORDER BY location,sort_order,id`,
       ),
       this.db.query(
-        `SELECT id,slug,eyebrow_ar eyebrowAr,title_ar titleAr,intro_ar introAr,sections_json sections,status,updated_at updatedAt FROM public_pages WHERE deleted_at IS NULL ORDER BY slug`,
+        `SELECT id,edit_revision editRevision,slug,eyebrow_ar eyebrowAr,title_ar titleAr,intro_ar introAr,sections_json sections,status,updated_at updatedAt FROM public_pages WHERE deleted_at IS NULL ORDER BY slug`,
       ),
     ]);
     return {
       settings: settings.map((item: Record<string, unknown>) => ({
         ...item,
+        editRevision: Number(item.editRevision),
         value: this.parseJson(item.valueJson),
         valueJson: undefined,
       })),
-      navigation,
+      navigation: navigation.map((item: Record<string, unknown>) => ({
+        ...item,
+        editRevision: Number(item.editRevision),
+      })),
       pages: pages.map((item: Record<string, unknown>) => ({
         ...item,
+        editRevision: Number(item.editRevision),
         sections: this.parseJson(item.sections),
       })),
     };
@@ -79,12 +86,13 @@ export class SiteService {
     values: Record<string, SettingValue>,
     actor: AuthUser,
     reason: string,
+    editRevisions?: Record<string, number>,
   ) {
     const keys = Object.keys(values);
     if (!keys.length) throw new BadRequestException("لم ترسل إعدادات للحفظ.");
     return this.db.transaction(async (manager) => {
       const rows = await manager.query(
-        `SELECT setting_key settingKey,group_code groupCode,input_type inputType,value_json valueJson FROM platform_settings WHERE setting_key IN (${keys.map(() => "?").join(",")}) FOR UPDATE`,
+        `SELECT edit_revision editRevision,setting_key settingKey,group_code groupCode,input_type inputType,value_json valueJson FROM platform_settings WHERE setting_key IN (${keys.map(() => "?").join(",")}) FOR UPDATE`,
         keys,
       );
       if (rows.length !== keys.length)
@@ -97,6 +105,43 @@ export class SiteService {
         throw new BadRequestException(
           "تدار سياسات سير العمل حصريًا من واجهة سياسات سير العمل.",
         );
+      for (const row of rows) {
+        if (
+          !actor.permissions.includes(
+            this.settingPermission(String(row.groupCode)),
+          )
+        )
+          throw new ForbiddenException("لا تملك صلاحية تعديل هذه الإعدادات.");
+        if (
+          !Number.isSafeInteger(editRevisions?.[row.settingKey]) ||
+          Number(editRevisions?.[row.settingKey]) < 1
+        )
+          throw new BadRequestException("نسخة التحرير مطلوبة؛ حدّث الإعدادات.");
+      }
+      if (
+        rows.some(
+          (row: { settingKey: string; editRevision: number }) =>
+            Number(editRevisions?.[row.settingKey]) !==
+            Number(row.editRevision),
+        )
+      )
+        throw new ConflictException({
+          message: "تغيرت إعدادات هذا القسم؛ راجع الفروق قبل الحفظ.",
+          conflict: {
+            current: Object.fromEntries(
+              rows.map((row: { settingKey: string; valueJson: unknown }) => [
+                row.settingKey,
+                this.parseJson(row.valueJson),
+              ]),
+            ),
+            revision: Object.fromEntries(
+              rows.map((row: { settingKey: string; editRevision: number }) => [
+                row.settingKey,
+                Number(row.editRevision),
+              ]),
+            ),
+          },
+        });
       const before: Record<string, unknown> = {};
       for (const row of rows) {
         const key = String(row.settingKey);
@@ -171,6 +216,7 @@ export class SiteService {
   async updateNavigation(
     id: string,
     input: {
+      editRevision?: number;
       location: "HEADER" | "FOOTER";
       labelAr: string;
       path: string;
@@ -189,6 +235,13 @@ export class SiteService {
         [id],
       );
       if (!rows[0]) throw new NotFoundException("رابط التنقل غير موجود.");
+      assertEditRevision(input.editRevision, rows[0], {
+        location: rows[0].location,
+        labelAr: rows[0].label_ar,
+        path: rows[0].path,
+        sortOrder: rows[0].sort_order,
+        isVisible: Boolean(rows[0].is_visible),
+      });
       await manager.query(
         `UPDATE navigation_items SET location=?,label_ar=?,path=?,sort_order=?,is_visible=? WHERE id=?`,
         [
@@ -271,6 +324,7 @@ export class SiteService {
   async updatePage(
     id: string,
     input: {
+      editRevision?: number;
       eyebrowAr: string;
       titleAr: string;
       introAr: string;
@@ -302,6 +356,13 @@ export class SiteService {
         [id],
       );
       if (!rows[0]) throw new NotFoundException("صفحة المحتوى غير موجودة.");
+      assertEditRevision(input.editRevision, rows[0], {
+        eyebrowAr: rows[0].eyebrow_ar ?? "",
+        titleAr: rows[0].title_ar,
+        introAr: rows[0].intro_ar ?? "",
+        sections: this.parseJson(rows[0].sections_json),
+        status: rows[0].status,
+      });
       if (rows[0].status !== "DRAFT" && input.status === "DRAFT")
         throw new BadRequestException(
           "لا يدعم نموذج الصلاحيات الحالي سحب نشر صفحة أو استعادة صفحة مؤرشفة إلى مسودة.",

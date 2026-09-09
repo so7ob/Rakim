@@ -14,7 +14,8 @@
     "db:migrate": "tsx src/database/cli.ts migrate",
     "db:revert": "tsx src/database/cli.ts revert",
     "seed": "tsx src/database/seed.ts",
-    "reindex": "tsx src/database/reindex.ts"
+    "reindex": "tsx src/database/reindex.ts",
+    "db:check": "tsx src/database/cli.ts check"
   },
   "dependencies": {
     "@nestjs/common": "12.0.1",

@@ -33,7 +33,8 @@
     "seed": "npm run seed -w @ylp/api",
     "reindex": "npm run reindex -w @ylp/api",
     "backup": "bash scripts/backup/backup.sh",
-    "restore:check": "bash scripts/restore/restore-check.sh"
+    "restore:check": "bash scripts/restore/restore-check.sh",
+    "db:check": "npm run db:check -w @ylp/api"
   },
   "devDependencies": {
     "@axe-core/playwright": "4.13.0",

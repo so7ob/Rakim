@@ -1,0 +1,50 @@
+[
+  {
+    "name": "recovery-review",
+    "width": 1440,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "edit-conflict",
+    "width": 1440,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "decision-reason",
+    "width": 1440,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "decision-history",
+    "width": 1440,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "recovery-review",
+    "width": 390,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "edit-conflict",
+    "width": 390,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "decision-reason",
+    "width": 390,
+    "overflow": 0,
+    "errors": []
+  },
+  {
+    "name": "decision-history",
+    "width": 390,
+    "overflow": 0,
+    "errors": []
+  }
+]

@@ -9,6 +9,10 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly conflict?: {
+      current: Record<string, unknown>;
+      revision: number | Record<string, number>;
+    },
   ) {
     super(message);
   }
@@ -41,6 +45,10 @@ export async function apiGet<T>(
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string | string[];
+      conflict?: {
+        current: Record<string, unknown>;
+        revision: number | Record<string, number>;
+      };
     } | null;
     const message = Array.isArray(body?.message)
       ? body.message.join("، ")
@@ -91,13 +99,21 @@ async function sendApiRequest<T>(
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string | string[];
+      conflict?: {
+        current: Record<string, unknown>;
+        revision: number | Record<string, number>;
+      };
     } | null;
     const message = Array.isArray(body?.message)
       ? body.message.join("، ")
       : typeof body?.message === "object"
         ? JSON.stringify(body.message)
         : body?.message;
-    throw new ApiError(message ?? "تعذر تنفيذ الطلب.", response.status);
+    throw new ApiError(
+      message ?? "تعذر تنفيذ الطلب.",
+      response.status,
+      body?.conflict,
+    );
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;

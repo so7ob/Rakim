@@ -89,6 +89,7 @@ class UpdateDraftDto {
   @IsString() @Length(3, 1000) reason!: string;
 }
 class GazetteDto {
+  @IsOptional() @IsInt() @Min(1) editRevision?: number;
   @IsString() @Length(1, 80) issueNumber!: string;
   @IsOptional() @IsString() publicationDate?: string;
   @IsOptional() @IsString() @Length(0, 200) publisher?: string;
@@ -156,6 +157,7 @@ class QualityResolutionDto {
   @IsString() @Length(3, 1000) note!: string;
 }
 class ReportStateDto {
+  @IsIn(["OPEN", "TRIAGED"]) expectedStatus!: string;
   @IsIn(["TRIAGED", "RESOLVED", "REJECTED"]) status!:
     "TRIAGED" | "RESOLVED" | "REJECTED";
   @IsString() @Length(3, 1000) reason!: string;
@@ -258,6 +260,7 @@ class UpdateRelationDto {
   @IsString() @Length(3, 1000) reason!: string;
 }
 class ReferenceItemDto {
+  @IsOptional() @IsInt() @Min(1) editRevision?: number;
   @IsString() @Length(2, 60) code!: string;
   @IsString() @Length(1, 200) nameAr!: string;
   @IsBoolean() isActive!: boolean;
@@ -661,10 +664,22 @@ export class AdminController {
   deleteSynonym(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
     return this.service.deleteSynonym(id, request.user!);
   }
+  @Get("quality/:id/history") @Permissions("quality.view") qualityHistory(
+    @Param("id") id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.decisionHistory("quality", id, req.user!);
+  }
+  @Get("reports/:id/history") @Permissions("report.view") reportHistory(
+    @Param("id") id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.decisionHistory("reports", id, req.user!);
+  }
   @Get("quality")
   @Permissions("quality.view")
-  quality() {
-    return this.service.quality();
+  quality(@Query("status") status?: string) {
+    return this.service.quality(status);
   }
   @Patch("quality/:id")
   @Permissions("quality.resolve")
@@ -687,7 +702,13 @@ export class AdminController {
     @Body() dto: ReportStateDto,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.service.updateReport(id, dto.status, dto.reason, request.user!);
+    return this.service.updateReport(
+      id,
+      dto.status,
+      dto.reason,
+      request.user!,
+      dto.expectedStatus,
+    );
   }
   @Post("reindex")
   @Permissions("search.index.rebuild")

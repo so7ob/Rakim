@@ -11,6 +11,7 @@ import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 interface Gazette {
   id: string;
+  editRevision: number;
   issueNumber: string;
   publicationDate: string | null;
   publisher: string | null;
@@ -105,6 +106,7 @@ export function AdminGazettesPage({
       )}
       {editing && (
         <RecordFormDialog
+          editRevision={item?.editRevision}
           title={item ? `تعديل العدد ${item.issueNumber}` : "إضافة عدد جريدة"}
           path={`/admin/gazette-issues${item ? `/${item.id}` : ""}`}
           method={item ? "PATCH" : "POST"}

@@ -1,3 +1,4 @@
+import { useEditConflict } from "../../components/admin/useEditConflict";
 import { StatusBadge } from "../../components/StatusBadge";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
@@ -16,6 +17,7 @@ import { AdminDialog } from "../../components/admin/AdminDialog";
 import { EntityDetails } from "../../components/admin/EntityDetails";
 
 interface Setting {
+  editRevision: number;
   settingKey: string;
   groupCode: string;
   labelAr: string;
@@ -23,6 +25,7 @@ interface Setting {
   value: string | boolean;
 }
 interface NavigationItem {
+  editRevision: number;
   id: string;
   location: "HEADER" | "FOOTER";
   labelAr: string;
@@ -31,6 +34,7 @@ interface NavigationItem {
   isVisible: boolean;
 }
 interface ContentPage {
+  editRevision: number;
   id: string;
   slug: string;
   eyebrowAr: string;
@@ -310,6 +314,9 @@ function SettingsGroupForm({
   saved: () => Promise<void>;
   failed: (message: string) => void;
 }) {
+  const conflict = useEditConflict(
+    Object.fromEntries(settings.map((s) => [s.settingKey, s.editRevision])),
+  );
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   if (!editable)
@@ -338,7 +345,8 @@ function SettingsGroupForm({
       onInput={() => setDirty(true)}
       onSubmit={async (event) => {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
+        const formElement = event.currentTarget;
+        const form = new FormData(formElement);
         const values = Object.fromEntries(
           settings.map((setting) => [
             setting.settingKey,
@@ -351,11 +359,16 @@ function SettingsGroupForm({
         try {
           await apiRequest("/admin/site/settings", {
             method: "PATCH",
-            body: { values, reason: form.get("reason") },
+            body: {
+              values,
+              editRevisions: conflict.revision,
+              reason: form.get("reason"),
+            },
           });
           setDirty(false);
           await saved();
         } catch (error) {
+          conflict.capture(error, values, formElement);
           failed(
             error instanceof Error ? error.message : "تعذر حفظ الإعدادات.",
           );
@@ -365,6 +378,7 @@ function SettingsGroupForm({
       }}
     >
       <h2>{groupLabels[group] ?? group}</h2>
+      {conflict.notice}
       <div className="settings-grid">
         {settings.map((setting) => (
           <SettingField
@@ -378,7 +392,10 @@ function SettingsGroupForm({
         سبب التغيير
         <input name="reason" required placeholder="سبب يظهر في سجل التدقيق" />
       </label>
-      <button className="button" disabled={!dirty || saving}>
+      <button
+        className="button"
+        disabled={!dirty || saving || conflict.hasConflict}
+      >
         {saving ? "جار الحفظ…" : "حفظ هذا القسم"}
       </button>
       <UnsavedChangesGuard active={dirty && !saving} />
@@ -447,6 +464,7 @@ function NavigationEditor({
   editable: boolean;
   done: (x: string) => void;
 }) {
+  const conflict = useEditConflict(item.editRevision);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -496,13 +514,15 @@ function NavigationEditor({
             className="edit-form"
             onSubmit={async (event) => {
               event.preventDefault();
-              const f = new FormData(event.currentTarget);
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
               setSaving(true);
               setError("");
               try {
                 await apiRequest(`/admin/site/navigation/${item.id}`, {
                   method: "PATCH",
                   body: {
+                    editRevision: conflict.revision,
                     location: f.get("location"),
                     labelAr: f.get("labelAr"),
                     path: f.get("path"),
@@ -514,6 +534,15 @@ function NavigationEditor({
                 setEditing(false);
                 done("حُفظ رابط التنقل.");
               } catch (error) {
+                conflict.capture(
+                  error,
+                  {
+                    ...Object.fromEntries(f),
+                    sortOrder: Number(f.get("sortOrder")),
+                    isVisible: f.has("isVisible"),
+                  },
+                  formElement,
+                );
                 setError(
                   error instanceof Error ? error.message : "تعذر الحفظ.",
                 );
@@ -522,6 +551,7 @@ function NavigationEditor({
               }
             }}
           >
+            {conflict.notice}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -574,7 +604,10 @@ function NavigationEditor({
               >
                 إلغاء
               </button>
-              <button className="button" disabled={saving}>
+              <button
+                className="button"
+                disabled={saving || conflict.hasConflict}
+              >
                 {saving ? "جار الحفظ…" : "حفظ الرابط"}
               </button>
             </div>
@@ -698,6 +731,7 @@ function PageEditor({
   canArchive: boolean;
   done: (x: string) => void;
 }) {
+  const conflict = useEditConflict(page.editRevision);
   const [sections, setSections] = useState(page.sections);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -767,13 +801,15 @@ function PageEditor({
             onInput={() => setDirty(true)}
             onSubmit={async (event) => {
               event.preventDefault();
-              const f = new FormData(event.currentTarget);
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
               setSaving(true);
               setError("");
               try {
                 await apiRequest(`/admin/site/pages/${page.id}`, {
                   method: "PATCH",
                   body: {
+                    editRevision: conflict.revision,
                     eyebrowAr: f.get("eyebrowAr"),
                     titleAr: f.get("titleAr"),
                     introAr: f.get("introAr"),
@@ -786,6 +822,13 @@ function PageEditor({
                 setEditing(false);
                 done("حُفظت الصفحة العامة.");
               } catch (error) {
+                conflict.capture(
+                  error,
+                  { ...Object.fromEntries(f), sections },
+                  formElement,
+                  (merged) =>
+                    setSections(merged.sections as ContentPage["sections"]),
+                );
                 setError(
                   error instanceof Error ? error.message : "تعذر حفظ الصفحة.",
                 );
@@ -794,6 +837,7 @@ function PageEditor({
               }
             }}
           >
+            {conflict.notice}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -891,7 +935,10 @@ function PageEditor({
               >
                 إلغاء
               </button>
-              <button className="button" disabled={saving}>
+              <button
+                className="button"
+                disabled={saving || conflict.hasConflict}
+              >
                 {saving ? "جار الحفظ…" : "حفظ الصفحة"}
               </button>
             </div>

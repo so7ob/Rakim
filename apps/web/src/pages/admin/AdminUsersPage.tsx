@@ -1,3 +1,4 @@
+import { UserManagementTabs } from "../../components/admin/UserManagementTabs";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
@@ -136,6 +137,7 @@ export function AdminUsersPage() {
           ) : undefined
         }
       />
+      <UserManagementTabs />
       {message && (
         <p role="status" className="form-message">
           {message}

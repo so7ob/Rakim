@@ -177,6 +177,11 @@ test("platform settings and full legislation metadata are manageable with audite
     headers: { cookie: system.cookie, "x-csrf-token": system.csrfToken },
     data: {
       values: { "branding.site_name": siteName },
+      editRevisions: {
+        "branding.site_name": state.settings.find(
+          (x: { settingKey: string }) => x.settingKey === "branding.site_name",
+        ).editRevision,
+      },
       reason: "اختبار حفظ إعدادات المنصة",
     },
   });
@@ -194,6 +199,12 @@ test("platform settings and full legislation metadata are manageable with audite
         },
         data: {
           values: { "branding.site_name": siteName },
+          editRevisions: {
+            "branding.site_name": state.settings.find(
+              (x: { settingKey: string }) =>
+                x.settingKey === "branding.site_name",
+            ).editRevision,
+          },
           reason: "اختبار رفض صلاحية الإعدادات",
         },
       })
@@ -313,10 +324,8 @@ test("system administrator can open the platform settings editor", async ({
       headers: { cookie: system.cookie },
     })
   ).json();
-  const protectedAdmin = accessUsers.find((item: { roles: string | null }) =>
-    String(item.roles ?? "")
-      .split(",")
-      .includes("SUPER"),
+  const protectedAdmin = accessUsers.find(
+    (item: { username: string }) => item.username === "super",
   );
   const superAdmin = await login(request, protectedAdmin.username);
   const privilegedState = await (
@@ -398,10 +407,8 @@ test("authority ceiling blocks API privilege escalation and preserves role bound
       headers: { cookie: system.cookie },
     })
   ).json();
-  const superUser = users.find((item: { roles: string | null }) =>
-    String(item.roles ?? "")
-      .split(",")
-      .includes("SUPER"),
+  const superUser = users.find(
+    (item: { username: string }) => item.username === "super",
   );
   const roles = await (
     await request.get("/api/v1/admin/access-roles", {
