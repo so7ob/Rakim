@@ -38,18 +38,8 @@ const groups: NavigationGroup[] = [
         permission: "amendment.view",
       },
       {
-        to: "/ar/admin/reference-data/types",
-        label: "أنواع التشريعات",
-        permission: "reference.view",
-      },
-      {
-        to: "/ar/admin/reference-data/subjects",
-        label: "التصنيفات والموضوعات",
-        permission: "reference.view",
-      },
-      {
-        to: "/ar/admin/reference-data/authorities",
-        label: "الجهات",
+        to: "/ar/admin/reference-data",
+        label: "القوائم المرجعية",
         permission: "reference.view",
       },
     ],
