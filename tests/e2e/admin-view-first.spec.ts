@@ -80,7 +80,19 @@ test("custom roles move through create, view, edit, and confirmed delete", async
   await create.getByLabel("الرمز").fill(`VIEW_FIRST_${suffix}`);
   await create.getByLabel("الوصف").fill("دور مؤقت لاختبار دورة الإدارة");
   await create.getByLabel("سبب الإنشاء").fill("اختبار إنشاء الدور");
+  const createResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/admin/access-roles") &&
+      response.request().method() === "POST",
+  );
+  const refreshResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/admin/access-roles") &&
+      response.request().method() === "GET",
+  );
   await create.getByRole("button", { name: "إنشاء الدور" }).click();
+  expect((await createResponse).ok()).toBeTruthy();
+  expect((await refreshResponse).ok()).toBeTruthy();
   const row = page.getByRole("row").filter({ hasText: roleName });
   await expect(row).toBeVisible();
   await row.getByRole("link", { name: "فتح" }).click();
