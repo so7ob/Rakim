@@ -2,9 +2,12 @@ import { expect, test } from "@playwright/test";
 
 const password = "DevOnly!ChangeMe2026";
 
-async function login(page: import("@playwright/test").Page) {
+async function login(
+  page: import("@playwright/test").Page,
+  username = "super",
+) {
   await page.goto("/ar/login");
-  await page.getByLabel("اسم المستخدم").fill("super");
+  await page.getByLabel("اسم المستخدم").fill(username);
   await page.getByLabel("كلمة المرور").fill(password);
   await page.getByRole("button", { name: "تسجيل الدخول" }).click();
   await expect(page).toHaveURL(/\/ar\/admin$/);
@@ -63,6 +66,117 @@ test("reference data uses view rows with add and edit dialogs", async ({
   ).toBeVisible();
 });
 
+test("legislation list exposes authorized create and direct edit actions", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  await login(page);
+  await page.goto("/ar/admin/content");
+
+  await page.getByRole("button", { name: "+ إضافة تشريع" }).click();
+  const add = page.getByRole("dialog", { name: "إضافة مسودة تشريع" });
+  await add.getByRole("button", { name: "إنشاء المسودة" }).click();
+  await expect(add).toBeVisible();
+
+  const suffix = Date.now();
+  const title = `مسودة تشريع E2E ${suffix}`;
+  await add.getByLabel("عنوان التشريع").fill(title);
+  await add.getByRole("button", { name: "إغلاق النافذة" }).click();
+  const discard = page.getByRole("alertdialog", { name: "إغلاق دون حفظ؟" });
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "متابعة التحرير" }).click();
+  await expect(add.getByLabel("عنوان التشريع")).toHaveValue(title);
+  await add.getByLabel("النوع").selectOption({ index: 1 });
+  await add.getByLabel("الجهة").selectOption({ index: 1 });
+  await add.getByLabel("الرقم الرسمي").fill(`E2E-${suffix}`);
+  const createResponse = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/legislations") &&
+      response.request().method() === "POST",
+  );
+  await add.getByRole("button", { name: "إنشاء المسودة" }).click();
+  expect((await createResponse).status()).toBe(201);
+  await expect(add).toBeHidden();
+
+  const row = page.getByRole("row").filter({ hasText: title });
+  await expect(row).toBeVisible();
+  const actions = row.getByRole("group", {
+    name: `إجراءات التشريع ${title}`,
+  });
+  await expect(actions.getByRole("link", { name: "عرض" })).toBeVisible();
+  await actions.getByRole("link", { name: "تعديل" }).click();
+  await expect(
+    page.getByRole("dialog", { name: "تعديل بيانات التشريع" }),
+  ).toBeVisible();
+});
+
+test("legislation create remains hidden and API-forbidden without permission", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  await login(page, "content_manager");
+  await page.goto("/ar/admin/content");
+  await expect(page.getByRole("button", { name: "+ إضافة تشريع" })).toHaveCount(
+    0,
+  );
+
+  const authResponse = await page.request.get("/api/v1/auth/status");
+  const auth = (await authResponse.json()) as { csrfToken: string };
+  const denied = await page.request.post("/api/v1/legislations", {
+    headers: { "x-csrf-token": auth.csrfToken },
+    data: {
+      titleAr: "محاولة إنشاء غير مصرح بها",
+      typeId: "00000000-0000-4000-8000-000000000001",
+      authorityId: "00000000-0000-4000-8000-000000000002",
+      year: 2026,
+    },
+  });
+  expect(denied.status()).toBe(403);
+});
+
+test("system administrator can reach the protected search rebuild action", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  await login(page, "system_admin");
+  await page.getByRole("button", { name: "إعادة بناء الفهرس" }).click();
+  const confirmation = page.getByRole("dialog", {
+    name: "إعادة بناء فهرس البحث؟",
+  });
+  await expect(confirmation).toBeVisible();
+  await confirmation.getByRole("button", { name: "إلغاء" }).click();
+  await page.getByRole("button", { name: "إعادة بناء الفهرس" }).click();
+  const response = page.waitForResponse(
+    (item) =>
+      item.url().endsWith("/api/v1/admin/reindex") &&
+      item.request().method() === "POST",
+  );
+  await page
+    .getByRole("dialog", { name: "إعادة بناء فهرس البحث؟" })
+    .getByRole("button", { name: "بدء إعادة البناء" })
+    .click();
+  expect((await response).ok()).toBeTruthy();
+  await expect(page.getByRole("status")).toContainText(
+    "اكتملت إعادة بناء الفهرس",
+  );
+
+  await page.goto("/ar/admin/roles");
+  const protectedRole = page.getByRole("row").filter({ hasText: "SUPER" });
+  await expect(protectedRole.getByRole("link", { name: "تعديل" })).toHaveCount(
+    0,
+  );
+  await page.goto("/ar/admin/users");
+  const protectedUser = page
+    .getByRole("row")
+    .filter({ hasText: "super" });
+  await expect(protectedUser.getByRole("link", { name: "تعديل" })).toHaveCount(
+    0,
+  );
+  await expect(
+    protectedUser.getByRole("button", { name: "تعطيل" }),
+  ).toHaveCount(0);
+});
+
 test("custom roles move through create, view, edit, and confirmed delete", async ({
   page,
 }, testInfo) => {
@@ -95,7 +209,7 @@ test("custom roles move through create, view, edit, and confirmed delete", async
   expect((await refreshResponse).ok()).toBeTruthy();
   const row = page.getByRole("row").filter({ hasText: roleName });
   await expect(row).toBeVisible();
-  await row.getByRole("link", { name: "فتح" }).click();
+  await row.getByRole("link", { name: "عرض" }).click();
   await expect(
     page.locator(".admin-card input, .admin-card textarea, .admin-card select"),
   ).toHaveCount(0);
@@ -123,13 +237,15 @@ test("custom roles move through create, view, edit, and confirmed delete", async
     .getByRole("navigation", { name: "تفاصيل الدور" })
     .getByRole("link", { name: "عام" })
     .click();
-  await page.getByRole("button", { name: "حذف الدور المخصص" }).click();
+  await page.goto("/ar/admin/roles");
+  const updatedRow = page.getByRole("row").filter({ hasText: updatedName });
+  await updatedRow.getByRole("button", { name: "حذف" }).click();
   const confirmation = page.getByRole("dialog", {
     name: `حذف الدور ${updatedName}؟`,
   });
   await confirmation.getByRole("button", { name: "إلغاء" }).click();
-  await expect(page).toHaveURL(/\/general$/);
-  await page.getByRole("button", { name: "حذف الدور المخصص" }).click();
+  await expect(updatedRow).toBeVisible();
+  await updatedRow.getByRole("button", { name: "حذف" }).click();
   await page
     .getByRole("dialog", { name: `حذف الدور ${updatedName}؟` })
     .getByRole("button", { name: "حذف الدور" })
@@ -146,7 +262,17 @@ test("user profiles are read-only until an authorized action opens a dialog", as
   test.skip(testInfo.project.name !== "desktop-1440");
   await login(page);
   await page.goto("/ar/admin/users");
-  await page.getByRole("link", { name: "فتح" }).first().click();
+  const row = page.locator("tbody tr").filter({ hasNotText: "super" }).first();
+  const stateAction = row.getByRole("button", { name: /تعطيل|تفعيل/ });
+  await expect(stateAction).toBeVisible();
+  await stateAction.click();
+  const stateConfirmation = page.getByRole("dialog", { name: /حساب/ });
+  await expect(stateConfirmation).toBeVisible();
+  await stateConfirmation.getByRole("button", { name: "إلغاء" }).click();
+  await row.getByRole("link", { name: "تعديل" }).click();
+  const dialog = page.getByRole("dialog", { name: "تعديل الملف الشخصي" });
+  await expect(dialog.getByLabel("الاسم الظاهر")).not.toHaveValue("");
+  await dialog.getByRole("button", { name: "إلغاء" }).click();
   await expect(
     page.locator(".admin-card input, .admin-card textarea, .admin-card select"),
   ).toHaveCount(0);
@@ -154,10 +280,6 @@ test("user profiles are read-only until an authorized action opens a dialog", as
     path: testInfo.outputPath("user-profile-view-first.png"),
     fullPage: true,
   });
-  await page.getByRole("button", { name: "تعديل الملف" }).click();
-  const dialog = page.getByRole("dialog", { name: "تعديل الملف الشخصي" });
-  await expect(dialog.getByLabel("الاسم الظاهر")).not.toHaveValue("");
-  await dialog.getByRole("button", { name: "إلغاء" }).click();
   await expect(dialog).toBeHidden();
 });
 
@@ -257,8 +379,8 @@ test("settings entities are view first and large page edits warn before discard"
   const pageCard = page.locator(".admin-list-card").first();
   await expect(pageCard).toBeVisible();
   await expect(pageCard.locator("input, textarea, select")).toHaveCount(0);
-  await pageCard.getByRole("button", { name: "تحرير الصفحة" }).click();
-  const editor = page.getByRole("dialog", { name: /تحرير/ });
+  await pageCard.getByRole("button", { name: "تعديل الصفحة" }).click();
+  const editor = page.getByRole("dialog", { name: /تعديل/ });
   const title = editor.getByLabel("عنوان الصفحة");
   await title.fill(`${await title.inputValue()} اختبار غير محفوظ`);
   await editor.getByRole("button", { name: "إغلاق النافذة" }).click();

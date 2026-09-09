@@ -91,7 +91,7 @@ test("legal content stays View First and its edit dialog fits mobile RTL", async
   test.skip(testInfo.project.name !== "mobile-390");
   await loginAsSystemAdministrator(page, "super");
   await page.goto("/ar/admin/content");
-  await page.getByRole("link", { name: "فتح" }).first().click();
+  await page.getByRole("link", { name: "عرض" }).first().click();
   await page.getByRole("link", { name: "البيانات العامة" }).click();
   await expect(page.locator(".admin-card input")).toHaveCount(0);
   await page.getByRole("button", { name: "تعديل البيانات" }).click();

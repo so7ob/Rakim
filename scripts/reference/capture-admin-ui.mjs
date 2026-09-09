@@ -148,10 +148,10 @@ try {
       }
       if (name === "settings-pages") {
         await page
-          .getByRole("button", { name: "تحرير الصفحة" })
+          .getByRole("button", { name: "تعديل الصفحة" })
           .first()
           .click();
-        const dialog = page.getByRole("dialog", { name: /تحرير/ });
+        const dialog = page.getByRole("dialog", { name: /تعديل/ });
         await dialog.waitFor();
         await page.screenshot({
           path: join(output, `${viewport.label}-settings-page-editor.png`),
@@ -160,6 +160,28 @@ try {
         manifest.captures.push({
           viewport: viewport.label,
           page: "settings-page-editor",
+          path,
+          overflowPixels: await page.evaluate(
+            () =>
+              document.documentElement.scrollWidth -
+              document.documentElement.clientWidth,
+          ),
+        });
+        await dialog.getByRole("button", { name: "إغلاق النافذة" }).click();
+      }
+      if (name === "legislations") {
+        await page.getByRole("button", { name: "+ إضافة تشريع" }).click();
+        const dialog = page.getByRole("dialog", {
+          name: "إضافة مسودة تشريع",
+        });
+        await dialog.waitFor();
+        await page.screenshot({
+          path: join(output, `${viewport.label}-legislation-add-dialog.png`),
+          animations: "disabled",
+        });
+        manifest.captures.push({
+          viewport: viewport.label,
+          page: "legislation-add-dialog",
           path,
           overflowPixels: await page.evaluate(
             () =>

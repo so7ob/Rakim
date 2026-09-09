@@ -11,14 +11,17 @@
 | `PermissionExplorer` | catalog وrole/user permission matrices | بقي محررًا متخصصًا؛ أضيف تأكيد Design System للمجموعات الحرجة |
 | `AdminPageHeader` | عنوان ووصف وbreadcrumbs/status/actions | استُخدم دون إنشاء headers محلية جديدة |
 | `AdminTabs` | IA ثابتة للمسارات الفرعية | تبويبات الإعدادات والمحتوى والوصول، مع إخفاء التبويب غير المصرح |
+| `AdminRowActions` | تجميع إجراءات الصف المصرح بها | `role="group"` واسم وصول مرتبط بالكيان؛ استُخدم في التشريعات والمستخدمين والأدوار |
+| `SearchReindexAction` | مدخل موحد للعملية التشغيلية `search.index.rebuild` | يخفي نفسه دون الصلاحية ويطلب تأكيدًا ويبقي خطأ الخادم داخل الحوار |
 | `StatePanel` (`LoadingCards`, `ErrorPanel`) | حالات التحميل والخطأ | يحافظ على نمط feedback الموحد وretry |
 
 ## مواضع التطبيق
 
-- `AdminContentDetailPage`: `EntityDetails` و`AdminDialog` لبيانات التشريع والمواد والبنية والملاحق والعلاقات والمصادر.
+- `AdminContentPage` و`AdminContentDetailPage`: Add dialog لمسودة التشريع، و`AdminRowActions` للعرض/التعديل/الأرشفة، و`EntityDetails` و`AdminDialog` لبيانات التشريع والمواد والبنية والملاحق والعلاقات والمصادر.
 - `AdminReferenceDataPage`: جدول قراءة وحوار واحد قابل لإعادة الاستخدام للإضافة والتعديل.
-- `AdminRolesPage` و`AdminRoleDetailPage`: Add/Edit وdelete confirmation.
-- `AdminUsersPage` و`AdminUserDetailPage`: Add/Edit/reset وحوارات state/session.
+- `AdminRolesPage` و`AdminRoleDetailPage`: Add/Edit وdelete confirmation؛ صارت U/D متاحة أيضًا من صف القائمة عندما يسمح Lifecycle.
+- `AdminUsersPage` و`AdminUserDetailPage`: Add/Edit/reset وحوارات state/session؛ صف القائمة يعرض تعديلًا وتعطيلًا/تفعيلًا مباشرًا.
+- `AdminDashboardPage` و`AdminSynonymsPage`: `SearchReindexAction` للعملية التشغيلية المحمية.
 - `AdminSynonymsPage`: Add وdelete/activate confirmations.
 - `AdminSettingsPage`: قراءة كيانات التنقل والصفحات أولًا؛ dialogs للتنقل ومحرر كبير dirty للصفحات؛ تبقى sections للإعدادات المستمرة.
 
