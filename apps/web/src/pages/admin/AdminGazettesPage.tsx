@@ -3,7 +3,10 @@ import { useAuth } from "../../auth/AuthContext";
 import { useApi } from "../../hooks/use-api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
-import { AdminTabs } from "../../components/admin/AdminTabs";
+import {
+  ReferenceDataTabs,
+  type ReferenceDataCounts,
+} from "../../components/admin/ReferenceDataTabs";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 interface Gazette {
@@ -13,13 +16,11 @@ interface Gazette {
   publisher: string | null;
   notes: string | null;
 }
-export const referenceTabs = [
-  { label: "أنواع التشريعات", to: "/ar/admin/reference-data/types" },
-  { label: "التصنيفات والموضوعات", to: "/ar/admin/reference-data/subjects" },
-  { label: "الجهات", to: "/ar/admin/reference-data/authorities" },
-  { label: "أعداد الجريدة", to: "/ar/admin/reference-data/gazettes" },
-];
-export function AdminGazettesPage() {
+export function AdminGazettesPage({
+  counts,
+}: {
+  counts?: ReferenceDataCounts;
+}) {
   const auth = useAuth(),
     data = useApi<Gazette[]>("/admin/gazette-issues");
   const [editing, setEditing] = useState<Gazette | "create" | null>(null);
@@ -37,7 +38,7 @@ export function AdminGazettesPage() {
           ) : undefined
         }
       />
-      <AdminTabs label="أنواع القوائم المرجعية" items={referenceTabs} />
+      <ReferenceDataTabs counts={counts} />
       {data.loading ? (
         <LoadingCards />
       ) : data.error ? (

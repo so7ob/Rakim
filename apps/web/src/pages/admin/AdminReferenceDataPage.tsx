@@ -8,7 +8,7 @@ import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
-import { AdminTabs } from "../../components/admin/AdminTabs";
+import { ReferenceDataTabs } from "../../components/admin/ReferenceDataTabs";
 
 interface Item {
   id: string;
@@ -39,7 +39,14 @@ export function AdminReferenceDataPage() {
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState<Item | null>(null);
   const [creating, setCreating] = useState(false);
-  if (kind === "gazettes") return <AdminGazettesPage />;
+  const counts = state.data
+    ? {
+        types: state.data.types.length,
+        subjects: state.data.subjects.length,
+        authorities: state.data.authorities.length,
+      }
+    : undefined;
+  if (kind === "gazettes") return <AdminGazettesPage counts={counts} />;
   if (state.loading) return <LoadingCards />;
   if (state.error || !state.data)
     return (
@@ -78,27 +85,7 @@ export function AdminReferenceDataPage() {
           ) : undefined
         }
       />
-      <AdminTabs
-        label="أنواع القوائم المرجعية"
-        items={[
-          { label: "أعداد الجريدة", to: "/ar/admin/reference-data/gazettes" },
-          {
-            label: "أنواع التشريعات",
-            to: "/ar/admin/reference-data/types",
-            count: state.data.types.length,
-          },
-          {
-            label: "التصنيفات والموضوعات",
-            to: "/ar/admin/reference-data/subjects",
-            count: state.data.subjects.length,
-          },
-          {
-            label: "الجهات",
-            to: "/ar/admin/reference-data/authorities",
-            count: state.data.authorities.length,
-          },
-        ]}
-      />
+      <ReferenceDataTabs counts={counts} />
       {message && (
         <p role="status" className="form-message">
           {message}
