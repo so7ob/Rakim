@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from "react";
-import { useParams } from "react-router-dom";
+import { useLocation, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -101,6 +101,7 @@ interface Detail {
 }
 export function AdminContentDetailPage() {
   const { id, tab = "general" } = useParams();
+  const location = useLocation();
   const auth = useAuth();
   const item = useApi<Detail>(
     id
@@ -110,7 +111,9 @@ export function AdminContentDetailPage() {
       : null,
   );
   const [msg, setMsg] = useState("");
-  const [metadataOpen, setMetadataOpen] = useState(false);
+  const [metadataOpen, setMetadataOpen] = useState(() =>
+    Boolean((location.state as { openEdit?: boolean } | null)?.openEdit),
+  );
   const [metadataDirty, setMetadataDirty] = useState(false);
   const [metadataSaving, setMetadataSaving] = useState(false);
   const [selectedStructureId, setSelectedStructureId] = useState<string | null>(

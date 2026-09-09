@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { Navigate, useNavigate, useParams } from "react-router-dom";
+import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
@@ -22,6 +22,7 @@ interface RoleDetail {
   descriptionAr: string | null;
   isSystem: boolean;
   isProtected?: boolean;
+  canManage?: boolean;
   isActive: boolean;
   updatedAt: string;
 }
@@ -49,6 +50,7 @@ export function AdminRoleDetailPage() {
   const { id = "", tab = "general" } = useParams();
   const auth = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const tabAllowed =
     (
       {
@@ -75,7 +77,9 @@ export function AdminRoleDetailPage() {
   );
   const [selection, setSelection] = useState<Map<string, string> | null>(null);
   const [message, setMessage] = useState("");
-  const [editing, setEditing] = useState(false);
+  const [editing, setEditing] = useState(() =>
+    Boolean((location.state as { openEdit?: boolean } | null)?.openEdit),
+  );
   const [deleting, setDeleting] = useState(false);
   const [saving, setSaving] = useState(false);
   const [editError, setEditError] = useState("");
@@ -124,7 +128,7 @@ export function AdminRoleDetailPage() {
         }
         actions={
           tab === "general" &&
-          !data.isProtected &&
+          data.canManage &&
           auth.hasPermission("role.update") ? (
             <button type="button" className="button" onClick={() => setEditing(true)}>
               تعديل الدور
@@ -183,7 +187,7 @@ export function AdminRoleDetailPage() {
             { label: "آخر تحديث", value: new Date(data.updatedAt).toLocaleString("ar-YE") },
           ]} />
           {!data.isSystem &&
-            !data.isProtected &&
+            data.canManage &&
             auth.hasPermission("role.delete") && (
               <button type="button" className="link-button danger" onClick={() => setDeleting(true)}>
                 حذف الدور المخصص
@@ -191,7 +195,7 @@ export function AdminRoleDetailPage() {
             )}
         </section>
       )}
-      {editing && (
+      {editing && data.canManage && auth.hasPermission("role.update") && (
         <AdminDialog title={`تعديل ${data.nameAr}`} onClose={() => setEditing(false)}>
           <form
             className="edit-form"
@@ -276,13 +280,13 @@ export function AdminRoleDetailPage() {
                 mode="role"
                 roleSelection={selected}
                 onRoleChange={
-                  !data.isProtected &&
+                  data.canManage &&
                   auth.hasPermission("role.permissions.manage")
                     ? setSelection
                     : undefined
                 }
               />
-              {!data.isProtected &&
+              {data.canManage &&
                 auth.hasPermission("role.permissions.manage") && (
                   <form
                     className="permission-savebar"

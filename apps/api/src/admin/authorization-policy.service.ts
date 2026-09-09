@@ -188,6 +188,10 @@ export class AuthorizationPolicyService {
     return Math.max(10, Math.min(100, level - 1));
   }
 
+  authorityLevel(userId: string): Promise<number> {
+    return this.actorAuthority(this.db.manager, userId);
+  }
+
   private async assertRequestedRolesAssignable(
     manager: EntityManager,
     actor: AuthUser,

@@ -7,6 +7,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { SearchReindexAction } from "../../components/admin/SearchReindexAction";
 interface Synonym {
   setId: string;
   versionNo: number;
@@ -88,30 +89,57 @@ export function AdminSynonymsPage() {
           { label: "قاموس المرادفات" },
         ]}
         actions={
-          canCreate ? (
-            <button type="button" className="button" onClick={() => setCreating(true)}>
-              + إضافة مرادف
-            </button>
-          ) : undefined
+          <>
+            <SearchReindexAction
+              onSuccess={(count) =>
+                setMsg(`اكتملت إعادة بناء الفهرس لعدد ${count} سجل.`)
+              }
+            />
+            {canCreate && (
+              <button
+                type="button"
+                className="button"
+                onClick={() => setCreating(true)}
+              >
+                + إضافة مرادف
+              </button>
+            )}
+          </>
         }
       />
       {creating && canCreate && (
-        <AdminDialog title="إضافة مرادف إلى المسودة" onClose={() => setCreating(false)}>
-        <form className="edit-form" onSubmit={submit}>
-          {submitError && <p className="form-error" role="alert">{submitError}</p>}
-          <label>
-            المصطلح
-            <input name="term" required />
-          </label>
-          <label>
-            المرادف
-            <input name="synonym" required />
-          </label>
-          <div className="admin-entity-actions">
-            <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={submitting}>إلغاء</button>
-            <button className="button" disabled={submitting}>{submitting ? "جار الإضافة…" : "إضافة لمسودة"}</button>
-          </div>
-        </form>
+        <AdminDialog
+          title="إضافة مرادف إلى المسودة"
+          onClose={() => setCreating(false)}
+        >
+          <form className="edit-form" onSubmit={submit}>
+            {submitError && (
+              <p className="form-error" role="alert">
+                {submitError}
+              </p>
+            )}
+            <label>
+              المصطلح
+              <input name="term" required />
+            </label>
+            <label>
+              المرادف
+              <input name="synonym" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={submitting}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={submitting}>
+                {submitting ? "جار الإضافة…" : "إضافة لمسودة"}
+              </button>
+            </div>
+          </form>
         </AdminDialog>
       )}
       {msg && (
@@ -149,7 +177,7 @@ export function AdminSynonymsPage() {
                 <th>الحالة</th>
                 <th>المصطلح</th>
                 <th>المرادف</th>
-                <th></th>
+                <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>

@@ -7,6 +7,7 @@ import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { AdminRowActions } from "../../components/admin/AdminRowActions";
 
 interface User {
   id: string;
@@ -16,6 +17,7 @@ interface User {
   createdAt: string;
   lastLoginAt: string | null;
   roles: string | null;
+  canManage: boolean;
 }
 interface Role {
   id: string;
@@ -40,6 +42,14 @@ export function AdminUsersPage() {
   const [createError, setCreateError] = useState("");
   const [submitting, setSubmitting] = useState(false);
   const [bulkAction, setBulkAction] = useState<boolean | null>(null);
+  const [stateTarget, setStateTarget] = useState<User | null>(null);
+  const canChangeAnyState =
+    auth.hasPermission("user.enable") || auth.hasPermission("user.disable");
+  const canChangeState = (user: User) =>
+    user.canManage &&
+    (user.isActive
+      ? auth.hasPermission("user.disable")
+      : auth.hasPermission("user.enable"));
   const filtered = useMemo(
     () =>
       (users.data ?? []).filter((user) => {
@@ -54,6 +64,7 @@ export function AdminUsersPage() {
     [users.data, query, status, role],
   );
   const visible = filtered.slice((page - 1) * pageSize, page * pageSize);
+  const actionableVisible = visible.filter(canChangeState);
   const refresh = () => {
     users.retry();
     roles.retry();
@@ -77,7 +88,9 @@ export function AdminUsersPage() {
       setCreating(false);
       refresh();
     } catch (error) {
-      setCreateError(error instanceof Error ? error.message : "تعذر إنشاء الحساب.");
+      setCreateError(
+        error instanceof Error ? error.message : "تعذر إنشاء الحساب.",
+      );
     } finally {
       setSubmitting(false);
     }
@@ -112,7 +125,11 @@ export function AdminUsersPage() {
         ]}
         actions={
           auth.hasPermission("user.create") ? (
-            <button type="button" className="button" onClick={() => setCreating(true)}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => setCreating(true)}
+            >
               + إنشاء حساب
             </button>
           ) : undefined
@@ -126,7 +143,11 @@ export function AdminUsersPage() {
       {creating && auth.hasPermission("user.create") && (
         <AdminDialog title="إنشاء حساب جديد" onClose={() => setCreating(false)}>
           <form className="edit-form" onSubmit={create}>
-            {createError && <p className="form-error" role="alert">{createError}</p>}
+            {createError && (
+              <p className="form-error" role="alert">
+                {createError}
+              </p>
+            )}
             <div className="form-columns">
               <label>
                 اسم المستخدم
@@ -162,8 +183,17 @@ export function AdminUsersPage() {
               ))}
             </fieldset>
             <div className="admin-entity-actions">
-              <button type="button" className="button secondary" onClick={() => setCreating(false)} disabled={submitting}>إلغاء</button>
-              <button className="button" disabled={submitting}>{submitting ? "جار الإنشاء…" : "إنشاء الحساب"}</button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={submitting}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={submitting}>
+                {submitting ? "جار الإنشاء…" : "إنشاء الحساب"}
+              </button>
             </div>
           </form>
         </AdminDialog>
@@ -261,50 +291,59 @@ export function AdminUsersPage() {
             <table>
               <thead>
                 <tr>
-                  <th>
-                    <input
-                      type="checkbox"
-                      aria-label="تحديد الصفحة"
-                      checked={visible.every((user) => selected.has(user.id))}
-                      onChange={(event) =>
-                        setSelected((current) => {
-                          const next = new Set(current);
-                          visible.forEach((user) =>
-                            event.target.checked
-                              ? next.add(user.id)
-                              : next.delete(user.id),
-                          );
-                          return next;
-                        })
-                      }
-                    />
-                  </th>
+                  {canChangeAnyState && (
+                    <th>
+                      <input
+                        type="checkbox"
+                        aria-label="تحديد الصفحة"
+                        checked={
+                          actionableVisible.length > 0 &&
+                          actionableVisible.every((user) => selected.has(user.id))
+                        }
+                        onChange={(event) =>
+                          setSelected((current) => {
+                            const next = new Set(current);
+                            actionableVisible.forEach((user) =>
+                              event.target.checked
+                                ? next.add(user.id)
+                                : next.delete(user.id),
+                            );
+                            return next;
+                          })
+                        }
+                      />
+                    </th>
+                  )}
                   <th>المستخدم</th>
                   <th>الأدوار</th>
                   <th>تاريخ الإنشاء</th>
                   <th>آخر دخول</th>
                   <th>الحالة</th>
-                  <th></th>
+                  <th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
                 {visible.map((user) => (
                   <tr key={user.id}>
-                    <td>
-                      <input
-                        type="checkbox"
-                        aria-label={`تحديد ${user.displayName}`}
-                        checked={selected.has(user.id)}
-                        onChange={(event) =>
-                          setSelected((current) => {
-                            const next = new Set(current);
-                            if (event.target.checked) next.add(user.id);
-                            else next.delete(user.id);
-                            return next;
-                          })
-                        }
-                      />
-                    </td>
+                    {canChangeAnyState && (
+                      <td>
+                        {canChangeState(user) && (
+                          <input
+                            type="checkbox"
+                            aria-label={`تحديد ${user.displayName}`}
+                            checked={selected.has(user.id)}
+                            onChange={(event) =>
+                              setSelected((current) => {
+                                const next = new Set(current);
+                                if (event.target.checked) next.add(user.id);
+                                else next.delete(user.id);
+                                return next;
+                              })
+                            }
+                          />
+                        )}
+                      </td>
+                    )}
                     <td>
                       <strong>{user.displayName}</strong>
                       <small>{user.username}</small>
@@ -326,12 +365,46 @@ export function AdminUsersPage() {
                       </span>
                     </td>
                     <td>
-                      <Link
-                        className="button secondary"
-                        to={`/ar/admin/users/${user.id}/profile`}
+                      <AdminRowActions
+                        label={`إجراءات المستخدم ${user.displayName}`}
                       >
-                        فتح
-                      </Link>
+                        <Link
+                          className="button secondary"
+                          to={`/ar/admin/users/${user.id}/profile`}
+                        >
+                          عرض
+                        </Link>
+                        {user.canManage && auth.hasPermission("user.update") && (
+                          <Link
+                            className="link-button"
+                            to={`/ar/admin/users/${user.id}/profile`}
+                            state={{ openEdit: true }}
+                          >
+                            تعديل
+                          </Link>
+                        )}
+                        {user.canManage &&
+                          (user.isActive
+                            ? auth.hasPermission("user.disable") &&
+                              user.id !== auth.user?.id && (
+                                <button
+                                  type="button"
+                                  className="link-button danger"
+                                  onClick={() => setStateTarget(user)}
+                                >
+                                  تعطيل
+                                </button>
+                              )
+                            : auth.hasPermission("user.enable") && (
+                                <button
+                                  type="button"
+                                  className="link-button"
+                                  onClick={() => setStateTarget(user)}
+                                >
+                                  تفعيل
+                                </button>
+                              ))}
+                      </AdminRowActions>
                     </td>
                   </tr>
                 ))}
@@ -361,11 +434,41 @@ export function AdminUsersPage() {
       {bulkAction !== null && (
         <ConfirmDialog
           title={`${bulkAction ? "تفعيل" : "تعطيل"} ${selected.size} حساب؟`}
-          description={bulkAction ? "ستستعيد الحسابات المحددة إمكانية تسجيل الدخول." : "سيمنع تسجيل الدخول وتبطل الجلسات وفق سياسة الخادم."}
+          description={
+            bulkAction
+              ? "ستستعيد الحسابات المحددة إمكانية تسجيل الدخول."
+              : "سيمنع تسجيل الدخول وتبطل الجلسات وفق سياسة الخادم."
+          }
           confirmLabel={bulkAction ? "تفعيل الحسابات" : "تعطيل الحسابات"}
           destructive={!bulkAction}
           onClose={() => setBulkAction(null)}
           onConfirm={() => bulkState(bulkAction)}
+        />
+      )}
+      {stateTarget && (
+        <ConfirmDialog
+          title={`${stateTarget.isActive ? "تعطيل" : "تفعيل"} حساب ${stateTarget.displayName}؟`}
+          description={
+            stateTarget.isActive
+              ? "سيُمنع تسجيل الدخول وتُبطل الجلسات النشطة لهذا الحساب."
+              : "سيستعيد الحساب إمكانية تسجيل الدخول وفق أدواره وصلاحياته الحالية."
+          }
+          confirmLabel={stateTarget.isActive ? "تعطيل الحساب" : "تفعيل الحساب"}
+          destructive={Boolean(stateTarget.isActive)}
+          onClose={() => setStateTarget(null)}
+          onConfirm={async () => {
+            const active = !Boolean(stateTarget.isActive);
+            await apiRequest(`/admin/users/${stateTarget.id}/state`, {
+              method: "PATCH",
+              body: {
+                active,
+                reason: `${active ? "تفعيل" : "تعطيل"} الحساب من قائمة المستخدمين`,
+              },
+            });
+            setMessage(`تم ${active ? "تفعيل" : "تعطيل"} الحساب.`);
+            setStateTarget(null);
+            users.retry();
+          }}
         />
       )}
     </section>
