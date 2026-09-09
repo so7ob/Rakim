@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { chromium } from "playwright";
 
 const baseUrl = process.env.VISUAL_BASE_URL ?? "http://127.0.0.1:5173";
-const username = process.env.VISUAL_ADMIN_USERNAME ?? "system_admin";
+const username = process.env.VISUAL_ADMIN_USERNAME ?? "super";
 const password = process.env.VISUAL_ADMIN_PASSWORD ?? "DevOnly!ChangeMe2026";
 const output = resolve("artifacts/admin-ui");
 const viewports = [
@@ -13,13 +13,31 @@ const viewports = [
 ];
 const pages = [
   ["dashboard", "/ar/admin"],
+  ["no-permission", "/ar/admin/no-permission"],
+  ["imports-queue", "/ar/admin/imports/queue"],
+  ["imports-upload", "/ar/admin/imports/upload"],
+  ["legislations", "/ar/admin/content"],
+  ["amendments-list", "/ar/admin/amendments/list"],
+  ["amendments-create", "/ar/admin/amendments/create"],
+  ["audit", "/ar/admin/audit"],
+  ["reports", "/ar/admin/reports"],
   ["users", "/ar/admin/users"],
   ["roles", "/ar/admin/roles"],
   ["permission-matrix", "/ar/admin/permissions/matrix"],
+  ["permission-resources", "/ar/admin/permissions/resources"],
+  ["permission-roles", "/ar/admin/permissions/roles"],
+  ["permission-sensitive", "/ar/admin/permissions/sensitive"],
+  ["synonyms", "/ar/admin/synonyms"],
+  ["quality", "/ar/admin/quality"],
   ["settings-general", "/ar/admin/settings/general"],
+  ["settings-appearance", "/ar/admin/settings/appearance"],
+  ["settings-navigation", "/ar/admin/settings/navigation"],
+  ["settings-legislation", "/ar/admin/settings/legislation"],
   ["workflow-policies", "/ar/admin/settings/workflow"],
-  ["legislations", "/ar/admin/content"],
-  ["imports", "/ar/admin/imports/queue"],
+  ["settings-pages", "/ar/admin/settings/pages"],
+  ["reference-types", "/ar/admin/reference-data/types"],
+  ["reference-subjects", "/ar/admin/reference-data/subjects"],
+  ["reference-authorities", "/ar/admin/reference-data/authorities"],
 ];
 const manifest = {
   capturedAt: new Date().toISOString(),
@@ -41,6 +59,8 @@ try {
     const consoleErrors = [];
     const failedRequests = [];
     const externalRequests = [];
+    const httpErrors = [];
+    let currentAdminPath = "/ar/login";
     page.on("console", (message) => {
       if (message.type() === "error") consoleErrors.push(message.text());
     });
@@ -54,6 +74,14 @@ try {
       if (error === "net::ERR_ABORTED") return;
       failedRequests.push({ url: request.url(), error });
     });
+    page.on("response", (response) => {
+      if (response.status() >= 400)
+        httpErrors.push({
+          page: currentAdminPath,
+          url: response.url(),
+          status: response.status(),
+        });
+    });
 
     await page.goto(`${baseUrl}/ar/login`, { waitUntil: "networkidle" });
     await page.getByLabel("اسم المستخدم").fill(username);
@@ -62,8 +90,9 @@ try {
     await page.getByRole("heading", { name: "لوحة الإدارة" }).waitFor();
 
     for (const [name, path] of pages) {
+      currentAdminPath = path;
       await page.goto(`${baseUrl}${path}`, { waitUntil: "networkidle" });
-      if (name === "imports") {
+      if (name === "imports-queue") {
         const firstImport = page.locator("details.import-row").first();
         if (await firstImport.count())
           await firstImport.locator(":scope > summary").click();
@@ -91,6 +120,55 @@ try {
             document.documentElement.clientWidth,
         ),
       });
+      if (name === "settings-navigation") {
+        await page
+          .getByRole("button", { name: "تعديل الرابط" })
+          .first()
+          .click();
+        const dialog = page.getByRole("dialog", { name: /تعديل رابط/ });
+        await dialog.waitFor();
+        await page.screenshot({
+          path: join(
+            output,
+            `${viewport.label}-settings-navigation-dialog.png`,
+          ),
+          animations: "disabled",
+        });
+        manifest.captures.push({
+          viewport: viewport.label,
+          page: "settings-navigation-dialog",
+          path,
+          overflowPixels: await page.evaluate(
+            () =>
+              document.documentElement.scrollWidth -
+              document.documentElement.clientWidth,
+          ),
+        });
+        await dialog.getByRole("button", { name: "إلغاء" }).click();
+      }
+      if (name === "settings-pages") {
+        await page
+          .getByRole("button", { name: "تحرير الصفحة" })
+          .first()
+          .click();
+        const dialog = page.getByRole("dialog", { name: /تحرير/ });
+        await dialog.waitFor();
+        await page.screenshot({
+          path: join(output, `${viewport.label}-settings-page-editor.png`),
+          animations: "disabled",
+        });
+        manifest.captures.push({
+          viewport: viewport.label,
+          page: "settings-page-editor",
+          path,
+          overflowPixels: await page.evaluate(
+            () =>
+              document.documentElement.scrollWidth -
+              document.documentElement.clientWidth,
+          ),
+        });
+        await dialog.getByRole("button", { name: "إغلاق النافذة" }).click();
+      }
     }
 
     manifest.captures.push({
@@ -98,6 +176,7 @@ try {
       diagnostics: true,
       consoleErrors,
       failedRequests,
+      httpErrors,
       externalRequests: [...new Set(externalRequests)],
     });
     await context.close();
@@ -111,5 +190,5 @@ await writeFile(
   JSON.stringify(manifest, null, 2),
 );
 console.log(
-  `Captured ${pages.length * viewports.length} administration views.`,
+  `Captured ${manifest.captures.filter((item) => item.path).length} administration views.`,
 );

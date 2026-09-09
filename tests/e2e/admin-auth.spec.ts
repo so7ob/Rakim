@@ -243,9 +243,14 @@ test("system administrator can open the platform settings editor", async ({
   await expect(
     page.getByRole("heading", { name: "الصفحات العامة" }),
   ).toBeVisible();
-  expect(await page.locator(".draft-article").count()).toBeGreaterThanOrEqual(
+  expect(await page.locator(".admin-list-card").count()).toBeGreaterThanOrEqual(
     10,
   );
+  await expect(
+    page.locator(
+      ".admin-list-card input, .admin-list-card textarea, .admin-list-card select",
+    ),
+  ).toHaveCount(0);
   await page.getByRole("link", { name: "سياسات سير العمل" }).first().click();
   await expect(
     page.getByRole("heading", { name: "سياسات وضوابط سير العمل" }),
