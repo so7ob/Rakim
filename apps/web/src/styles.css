@@ -5050,6 +5050,7 @@ main .reference-annexes .annex-download {
 .admin-page-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 
 .admin-dialog-small { width: min(100%, 520px); }
+.admin-dialog-discard-backdrop { z-index: 1300; }
 .admin-dialog-large { width: min(100%, 1180px); }
 .admin-dialog > header { align-items: flex-start; }
 .admin-dialog > header p { margin: 5px 0 0; color: var(--color-muted); }

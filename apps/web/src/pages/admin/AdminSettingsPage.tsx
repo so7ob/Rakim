@@ -9,6 +9,8 @@ import { WorkflowPoliciesEditor } from "./WorkflowPoliciesEditor";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
 import { UnsavedChangesGuard } from "../../components/admin/UnsavedChangesGuard";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { EntityDetails } from "../../components/admin/EntityDetails";
 
 interface Setting {
   settingKey: string;
@@ -262,6 +264,26 @@ function SettingsGroupForm({
 }) {
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  if (!editable)
+    return (
+      <section className="admin-card">
+        <h2>{groupLabels[group] ?? group}</h2>
+        <p className="form-warning">
+          هذه الإعدادات متاحة للعرض فقط وفق صلاحيات حسابك.
+        </p>
+        <EntityDetails
+          items={settings.map((setting) => ({
+            label: setting.labelAr,
+            value:
+              setting.inputType === "BOOLEAN"
+                ? Boolean(setting.value)
+                  ? "مفعّل"
+                  : "غير مفعّل"
+                : String(setting.value) || "—",
+          }))}
+        />
+      </section>
+    );
   return (
     <form
       className="admin-card settings-form"
@@ -304,17 +326,13 @@ function SettingsGroupForm({
           />
         ))}
       </div>
-      {editable && (
-        <label>
-          سبب التغيير
-          <input name="reason" required placeholder="سبب يظهر في سجل التدقيق" />
-        </label>
-      )}
-      {editable && (
-        <button className="button" disabled={!dirty || saving}>
-          {saving ? "جار الحفظ…" : "حفظ هذا القسم"}
-        </button>
-      )}
+      <label>
+        سبب التغيير
+        <input name="reason" required placeholder="سبب يظهر في سجل التدقيق" />
+      </label>
+      <button className="button" disabled={!dirty || saving}>
+        {saving ? "جار الحفظ…" : "حفظ هذا القسم"}
+      </button>
       <UnsavedChangesGuard active={dirty && !saving} />
     </form>
   );
@@ -381,134 +399,233 @@ function NavigationEditor({
   editable: boolean;
   done: (x: string) => void;
 }) {
+  const [editing, setEditing] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>
-        {item.labelAr} — {item.location}
-      </summary>
+    <article className="admin-list-card">
+      <header>
+        <div>
+          <h3>{item.labelAr}</h3>
+          <p dir="ltr">{item.path}</p>
+        </div>
+        <span className="tag">{item.isVisible ? "ظاهر" : "مخفي"}</span>
+      </header>
+      <EntityDetails
+        items={[
+          {
+            label: "الموضع",
+            value: item.location === "HEADER" ? "الترويسة" : "التذييل",
+          },
+          { label: "الترتيب", value: item.sortOrder },
+        ]}
+      />
       {editable && (
-        <form
-          onSubmit={async (event) => {
-            event.preventDefault();
-            const f = new FormData(event.currentTarget);
-            try {
-              await apiRequest(`/admin/site/navigation/${item.id}`, {
-                method: "PATCH",
-                body: {
-                  location: f.get("location"),
-                  labelAr: f.get("labelAr"),
-                  path: f.get("path"),
-                  sortOrder: Number(f.get("sortOrder")),
-                  isVisible: f.has("isVisible"),
-                  reason: f.get("reason"),
-                },
-              });
-              done("حُفظ رابط التنقل.");
-            } catch (error) {
-              done(error instanceof Error ? error.message : "تعذر الحفظ.");
-            }
-          }}
-        >
-          <div className="form-columns">
-            <label>
-              الموضع
-              <select name="location" defaultValue={item.location}>
-                <option>HEADER</option>
-                <option>FOOTER</option>
-              </select>
-            </label>
-            <label>
-              النص
-              <input name="labelAr" defaultValue={item.labelAr} required />
-            </label>
-            <label>
-              المسار
-              <input name="path" defaultValue={item.path} required />
-            </label>
-            <label>
-              الترتيب
-              <input
-                name="sortOrder"
-                type="number"
-                min="0"
-                defaultValue={item.sortOrder}
-              />
-            </label>
-            <label className="setting-toggle">
-              <input
-                name="isVisible"
-                type="checkbox"
-                defaultChecked={item.isVisible}
-              />
-              ظاهر
-            </label>
-          </div>
-          <label>
-            سبب التغيير
-            <input name="reason" required />
-          </label>
-          <button className="button secondary">حفظ الرابط</button>
-        </form>
+        <div className="admin-entity-actions">
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => setEditing(true)}
+          >
+            تعديل الرابط
+          </button>
+        </div>
       )}
-    </details>
+      {editing && (
+        <AdminDialog
+          title={`تعديل رابط ${item.labelAr}`}
+          onClose={() => setEditing(false)}
+        >
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const f = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/site/navigation/${item.id}`, {
+                  method: "PATCH",
+                  body: {
+                    location: f.get("location"),
+                    labelAr: f.get("labelAr"),
+                    path: f.get("path"),
+                    sortOrder: Number(f.get("sortOrder")),
+                    isVisible: f.has("isVisible"),
+                    reason: f.get("reason"),
+                  },
+                });
+                setEditing(false);
+                done("حُفظ رابط التنقل.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                الموضع
+                <select name="location" defaultValue={item.location}>
+                  <option>HEADER</option>
+                  <option>FOOTER</option>
+                </select>
+              </label>
+              <label>
+                النص
+                <input name="labelAr" defaultValue={item.labelAr} required />
+              </label>
+              <label>
+                المسار
+                <input name="path" defaultValue={item.path} required />
+              </label>
+              <label>
+                الترتيب
+                <input
+                  name="sortOrder"
+                  type="number"
+                  min="0"
+                  defaultValue={item.sortOrder}
+                />
+              </label>
+              <label className="setting-toggle">
+                <input
+                  name="isVisible"
+                  type="checkbox"
+                  defaultChecked={item.isVisible}
+                />
+                ظاهر
+              </label>
+            </div>
+            <label>
+              سبب التغيير
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ الرابط"}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
+      )}
+    </article>
   );
 }
 
 function NewNavigation({ done }: { done: (x: string) => void }) {
+  const [creating, setCreating] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   return (
-    <details className="draft-article">
-      <summary>+ إضافة رابط جديد</summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const formElement = event.currentTarget;
-          const f = new FormData(formElement);
-          try {
-            await apiRequest("/admin/site/navigation", {
-              body: {
-                location: f.get("location"),
-                labelAr: f.get("labelAr"),
-                path: f.get("path"),
-                sortOrder: Number(f.get("sortOrder")),
-                isVisible: true,
-                reason: f.get("reason"),
-              },
-            });
-            done("أضيف رابط التنقل.");
-            formElement.reset();
-          } catch (error) {
-            done(error instanceof Error ? error.message : "تعذرت الإضافة.");
-          }
-        }}
+    <div className="admin-entity-actions">
+      <button
+        type="button"
+        className="button"
+        onClick={() => setCreating(true)}
       >
-        <div className="form-columns">
-          <label>
-            الموضع
-            <select name="location">
-              <option>HEADER</option>
-              <option>FOOTER</option>
-            </select>
-          </label>
-          <label>
-            النص
-            <input name="labelAr" required />
-          </label>
-          <label>
-            المسار
-            <input name="path" placeholder="/ar/..." required />
-          </label>
-          <label>
-            الترتيب
-            <input name="sortOrder" type="number" min="0" defaultValue="50" />
-          </label>
-        </div>
-        <label>
-          سبب الإضافة
-          <input name="reason" required />
-        </label>
-        <button className="button">إضافة الرابط</button>
-      </form>
-    </details>
+        + إضافة رابط جديد
+      </button>
+      {creating && (
+        <AdminDialog title="إضافة رابط تنقل" onClose={() => setCreating(false)}>
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest("/admin/site/navigation", {
+                  body: {
+                    location: f.get("location"),
+                    labelAr: f.get("labelAr"),
+                    path: f.get("path"),
+                    sortOrder: Number(f.get("sortOrder")),
+                    isVisible: true,
+                    reason: f.get("reason"),
+                  },
+                });
+                setCreating(false);
+                done("أضيف رابط التنقل.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذرت الإضافة.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
+              <label>
+                الموضع
+                <select name="location">
+                  <option>HEADER</option>
+                  <option>FOOTER</option>
+                </select>
+              </label>
+              <label>
+                النص
+                <input name="labelAr" required />
+              </label>
+              <label>
+                المسار
+                <input name="path" placeholder="/ar/..." required />
+              </label>
+              <label>
+                الترتيب
+                <input
+                  name="sortOrder"
+                  type="number"
+                  min="0"
+                  defaultValue="50"
+                />
+              </label>
+            </div>
+            <label>
+              سبب الإضافة
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الإضافة…" : "إضافة الرابط"}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
+      )}
+    </div>
   );
 }
 
@@ -526,132 +643,195 @@ function PageEditor({
   done: (x: string) => void;
 }) {
   const [sections, setSections] = useState(page.sections);
+  const [editing, setEditing] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
   const canSaveCurrentStatus =
     page.status === "DRAFT"
       ? canUpdate
       : page.status === "PUBLISHED"
         ? canUpdate && canPublish
         : canUpdate && canArchive;
-  if (!canSaveCurrentStatus)
-    return (
-      <details className="draft-article">
-        <summary>
-          {page.titleAr} — /{page.slug}
-        </summary>
-        <p>{page.introAr || "لا توجد مقدمة."}</p>
-        <span className="tag">{page.status}</span>
-      </details>
-    );
   return (
-    <details className="draft-article">
-      <summary>
-        {page.titleAr} — /{page.slug}
-      </summary>
-      <form
-        onSubmit={async (event) => {
-          event.preventDefault();
-          const f = new FormData(event.currentTarget);
-          try {
-            await apiRequest(`/admin/site/pages/${page.id}`, {
-              method: "PATCH",
-              body: {
-                eyebrowAr: f.get("eyebrowAr"),
-                titleAr: f.get("titleAr"),
-                introAr: f.get("introAr"),
-                sections,
-                status: f.get("status"),
-                reason: f.get("reason"),
-              },
-            });
-            done("حُفظت الصفحة العامة.");
-          } catch (error) {
-            done(error instanceof Error ? error.message : "تعذر حفظ الصفحة.");
-          }
-        }}
-      >
-        <div className="form-columns">
-          <label>
-            العنوان الأعلى
-            <input name="eyebrowAr" defaultValue={page.eyebrowAr} />
-          </label>
-          <label>
-            عنوان الصفحة
-            <input name="titleAr" defaultValue={page.titleAr} required />
-          </label>
-          <label>
-            الحالة
-            <select name="status" defaultValue={page.status}>
-              {page.status === "DRAFT" && <option>DRAFT</option>}
-              {(page.status === "PUBLISHED" || canPublish) && (
-                <option>PUBLISHED</option>
-              )}
-              {(page.status === "ARCHIVED" || canArchive) && (
-                <option>ARCHIVED</option>
-              )}
-            </select>
-          </label>
+    <article className="admin-list-card">
+      <header>
+        <div>
+          <h3>{page.titleAr}</h3>
+          <p dir="ltr">/{page.slug}</p>
         </div>
-        <label>
-          المقدمة
-          <textarea name="introAr" defaultValue={page.introAr} />
-        </label>
-        <div className="page-section-editor">
-          {sections.map((section, index) => (
-            <div key={index}>
+        <span className="tag">{page.status}</span>
+      </header>
+      <EntityDetails
+        items={[
+          { label: "العنوان الأعلى", value: page.eyebrowAr || "—" },
+          { label: "عدد الأقسام", value: page.sections.length },
+          {
+            label: "المقدمة",
+            value: page.introAr || "لا توجد مقدمة.",
+            wide: true,
+          },
+        ]}
+      />
+      {canSaveCurrentStatus && (
+        <div className="admin-entity-actions">
+          <button
+            type="button"
+            className="button secondary"
+            onClick={() => {
+              setSections(page.sections);
+              setDirty(false);
+              setEditing(true);
+            }}
+          >
+            تحرير الصفحة
+          </button>
+        </div>
+      )}
+      {editing && (
+        <AdminDialog
+          title={`تحرير ${page.titleAr}`}
+          description="محرر موسع لمحتوى الصفحة العامة وأقسامها."
+          size="large"
+          dirty={dirty}
+          onClose={() => setEditing(false)}
+        >
+          <form
+            className="edit-form"
+            onInput={() => setDirty(true)}
+            onSubmit={async (event) => {
+              event.preventDefault();
+              const f = new FormData(event.currentTarget);
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/site/pages/${page.id}`, {
+                  method: "PATCH",
+                  body: {
+                    eyebrowAr: f.get("eyebrowAr"),
+                    titleAr: f.get("titleAr"),
+                    introAr: f.get("introAr"),
+                    sections,
+                    status: f.get("status"),
+                    reason: f.get("reason"),
+                  },
+                });
+                setDirty(false);
+                setEditing(false);
+                done("حُفظت الصفحة العامة.");
+              } catch (error) {
+                setError(
+                  error instanceof Error ? error.message : "تعذر حفظ الصفحة.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="form-columns">
               <label>
-                عنوان القسم
-                <input
-                  value={section.title}
-                  onChange={(e) =>
-                    setSections((old) =>
-                      old.map((x, i) =>
-                        i === index ? { ...x, title: e.target.value } : x,
-                      ),
-                    )
-                  }
-                />
+                العنوان الأعلى
+                <input name="eyebrowAr" defaultValue={page.eyebrowAr} />
               </label>
               <label>
-                النص
-                <textarea
-                  value={section.body}
-                  onChange={(e) =>
-                    setSections((old) =>
-                      old.map((x, i) =>
-                        i === index ? { ...x, body: e.target.value } : x,
-                      ),
-                    )
-                  }
-                />
+                عنوان الصفحة
+                <input name="titleAr" defaultValue={page.titleAr} required />
               </label>
+              <label>
+                الحالة
+                <select name="status" defaultValue={page.status}>
+                  {page.status === "DRAFT" && <option>DRAFT</option>}
+                  {(page.status === "PUBLISHED" || canPublish) && (
+                    <option>PUBLISHED</option>
+                  )}
+                  {(page.status === "ARCHIVED" || canArchive) && (
+                    <option>ARCHIVED</option>
+                  )}
+                </select>
+              </label>
+            </div>
+            <label>
+              المقدمة
+              <textarea name="introAr" defaultValue={page.introAr} />
+            </label>
+            <div className="page-section-editor">
+              {sections.map((section, index) => (
+                <div key={index}>
+                  <label>
+                    عنوان القسم
+                    <input
+                      value={section.title}
+                      onChange={(e) =>
+                        setSections((old) =>
+                          old.map((x, i) =>
+                            i === index ? { ...x, title: e.target.value } : x,
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    النص
+                    <textarea
+                      value={section.body}
+                      onChange={(e) =>
+                        setSections((old) =>
+                          old.map((x, i) =>
+                            i === index ? { ...x, body: e.target.value } : x,
+                          ),
+                        )
+                      }
+                    />
+                  </label>
+                  <button
+                    type="button"
+                    className="link-button danger"
+                    disabled={sections.length === 1}
+                    onClick={() => {
+                      setDirty(true);
+                      setSections((old) => old.filter((_, i) => i !== index));
+                    }}
+                  >
+                    حذف القسم
+                  </button>
+                </div>
+              ))}
+            </div>
+            <button
+              type="button"
+              className="button secondary"
+              onClick={() => {
+                setDirty(true);
+                setSections((old) => [...old, { title: "قسم جديد", body: "" }]);
+              }}
+            >
+              إضافة قسم
+            </button>
+            <label>
+              سبب التغيير
+              <input name="reason" required />
+            </label>
+            <div className="admin-entity-actions">
               <button
                 type="button"
-                className="link-button danger"
-                disabled={sections.length === 1}
-                onClick={() =>
-                  setSections((old) => old.filter((_, i) => i !== index))
-                }
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
               >
-                حذف القسم
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ الصفحة"}
               </button>
             </div>
-          ))}
-        </div>
-        <button
-          type="button"
-          className="button secondary"
-          onClick={() =>
-            setSections((old) => [...old, { title: "قسم جديد", body: "" }])
-          }
-        >
-          إضافة قسم
-        </button>
-        <label>
-          سبب التغيير
-          <input name="reason" required />
-        </label>
-        <button className="button">حفظ الصفحة</button>
-      </form>
-    </details>
+          </form>
+        </AdminDialog>
+      )}
+    </article>
   );
 }

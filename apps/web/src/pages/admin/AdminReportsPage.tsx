@@ -42,7 +42,7 @@ export function AdminReportsPage() {
         eyebrow="ملاحظات الجمهور والباحثين"
         description="فرز البلاغات المرتبطة بالمحتوى ومتابعة معالجتها."
         breadcrumbs={[
-          { label: "لوحة التحكم", to: "/admin" },
+          { label: "لوحة التحكم", to: "/ar/admin" },
           { label: "الحوكمة" },
           { label: "البلاغات" },
         ]}
