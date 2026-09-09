@@ -59,6 +59,7 @@
 - Playwright: desktop 1440، tablet 1024، mobile 390، mobile 320.
 - Visual capture: **26 وجهة ثابتة** × 3 أحجام، مع **9 لقطات dialog/editor إضافية** = 87.
 - فُحصت يدويًا لقطتا حوار إضافة التشريع على 1440 و390، وقائمتا المستخدمين والأدوار بعد إضافة إجراءات الصف، إضافةً إلى صفحات التنقل والصفحات العامة وحوار تعديل الرابط والمحرر الكبير؛ لا قص في الصفحة، الجداول قابلة للتمرير داخل حاويتها، الحقول والأزرار مقروءة، والـmodal body قابل للتمرير.
+- لقطات PR #55 المنتقاة: [`54-legislations-desktop.png`](screenshots/54-legislations-desktop.png)، [`54-users-desktop.png`](screenshots/54-users-desktop.png)، و[`54-legislation-add-mobile.png`](screenshots/54-legislation-add-mobile.png).
 - manifest النهائي: أقصى `overflowPixels = 0`، ولا أخطاء console/network/HTTP أو طلبات خارجية.
 
 ## قيود مقصودة
