@@ -50,7 +50,7 @@ export function AdminQualityPage() {
         eyebrow="بوابة ما قبل النشر"
         description="مراجعة مشكلات الاكتمال والاتساق قبل النشر."
         breadcrumbs={[
-          { label: "لوحة التحكم", to: "/admin" },
+          { label: "لوحة التحكم", to: "/ar/admin" },
           { label: "الحوكمة" },
           { label: "جودة البيانات" },
         ]}

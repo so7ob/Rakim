@@ -3,6 +3,7 @@ import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { UnsavedChangesGuard } from "../../components/admin/UnsavedChangesGuard";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 import { useAuth } from "../../auth/AuthContext";
 
 interface WorkflowPolicy {
@@ -48,6 +49,7 @@ export function WorkflowPoliciesEditor() {
   const [policyDirty, setPolicyDirty] = useState(false);
   const [overridesDirty, setOverridesDirty] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [pendingCode, setPendingCode] = useState("");
 
   if (state.loading) return <LoadingCards />;
   if (state.error || !state.data)
@@ -61,6 +63,14 @@ export function WorkflowPoliciesEditor() {
   const activeCode = selectedCode || state.data.policies[0]?.code || "";
   const policy = state.data.policies.find((item) => item.code === activeCode);
   if (!policy) return null;
+
+  const selectPolicy = (code: string) => {
+    setSelectedCode(code);
+    setPolicyDirty(false);
+    setOverridesDirty(false);
+    setMessage("");
+    setPendingCode("");
+  };
 
   const savePolicy = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
@@ -140,17 +150,11 @@ export function WorkflowPoliciesEditor() {
             aria-controls={`policy-panel-${item.code}`}
             tabIndex={item.code === policy.code ? 0 : -1}
             onClick={() => {
-              if (
-                (policyDirty || overridesDirty) &&
-                !window.confirm(
-                  "لديك تغييرات غير محفوظة. هل تريد الانتقال إلى سياسة أخرى؟",
-                )
-              )
+              if (policyDirty || overridesDirty) {
+                setPendingCode(item.code);
                 return;
-              setSelectedCode(item.code);
-              setPolicyDirty(false);
-              setOverridesDirty(false);
-              setMessage("");
+              }
+              selectPolicy(item.code);
             }}
           >
             <span>{index + 1}</span>
@@ -262,6 +266,15 @@ export function WorkflowPoliciesEditor() {
         <p className="form-message" role="status">
           {message}
         </p>
+      )}
+      {pendingCode && (
+        <ConfirmDialog
+          title="الانتقال دون حفظ؟"
+          description="لديك تغييرات غير محفوظة في هذه السياسة. ستفقدها إذا انتقلت إلى سياسة أخرى."
+          confirmLabel="انتقال دون حفظ"
+          onClose={() => setPendingCode("")}
+          onConfirm={() => selectPolicy(pendingCode)}
+        />
       )}
     </section>
   );

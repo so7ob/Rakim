@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import { ConfirmDialog } from "./ConfirmDialog";
 
 export interface PermissionItem {
   code: string;
@@ -72,6 +73,9 @@ export function PermissionExplorer({
   const [query, setQuery] = useState("");
   const [sensitivity, setSensitivity] = useState("");
   const [closed, setClosed] = useState<Set<string>>(new Set());
+  const [criticalGroup, setCriticalGroup] = useState<PermissionItem[] | null>(
+    null,
+  );
   const filtered = useMemo(
     () =>
       permissions.filter((item) => {
@@ -95,18 +99,19 @@ export function PermissionExplorer({
     return result;
   }, [filtered]);
 
-  const toggleRoleGroup = (items: PermissionItem[], selected: boolean) => {
-    if (
-      selected &&
-      items.some((item) => item.sensitivity === "CRITICAL") &&
-      !window.confirm("تتضمن المجموعة صلاحيات حرجة. هل تريد منحها؟")
-    )
-      return;
+  const applyRoleGroup = (items: PermissionItem[], selected: boolean) => {
     const next = new Map(roleSelection);
     for (const item of items)
       if (selected) next.set(item.code, "ALL");
       else next.delete(item.code);
     onRoleChange?.(next);
+  };
+  const toggleRoleGroup = (items: PermissionItem[], selected: boolean) => {
+    if (selected && items.some((item) => item.sensitivity === "CRITICAL")) {
+      setCriticalGroup(items);
+      return;
+    }
+    applyRoleGroup(items, selected);
   };
 
   return (
@@ -215,6 +220,19 @@ export function PermissionExplorer({
             </section>
           );
         })
+      )}
+      {criticalGroup && (
+        <ConfirmDialog
+          title="منح مجموعة تتضمن صلاحيات حرجة؟"
+          description="راجع الصلاحيات الحساسة في المجموعة قبل حفظ الدور. لن يطبق التغيير على الخادم حتى تضغط حفظ صلاحيات الدور."
+          confirmLabel="منح المجموعة"
+          destructive={false}
+          onClose={() => setCriticalGroup(null)}
+          onConfirm={() => {
+            applyRoleGroup(criticalGroup, true);
+            setCriticalGroup(null);
+          }}
+        />
       )}
     </section>
   );

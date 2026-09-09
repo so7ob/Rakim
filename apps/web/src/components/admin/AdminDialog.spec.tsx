@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AdminDialog } from "./AdminDialog";
 import { ConfirmDialog } from "./ConfirmDialog";
@@ -15,7 +21,11 @@ describe("AdminDialog", () => {
     trigger.focus();
     const onClose = vi.fn();
     const { unmount } = render(
-      <AdminDialog title="تعديل الجهة" description="حدّث بيانات الجهة" onClose={onClose}>
+      <AdminDialog
+        title="تعديل الجهة"
+        description="حدّث بيانات الجهة"
+        onClose={onClose}
+      >
         <label>
           الاسم
           <input />
@@ -36,17 +46,21 @@ describe("AdminDialog", () => {
 
   it("warns before discarding meaningful unsaved changes", () => {
     const onClose = vi.fn();
-    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
     render(
       <AdminDialog title="تعديل مادة" dirty onClose={onClose}>
         <textarea aria-label="النص" />
       </AdminDialog>,
     );
     fireEvent.click(screen.getByRole("button", { name: "إغلاق النافذة" }));
-    expect(confirm).toHaveBeenCalledWith(
-      "لديك تغييرات غير محفوظة. هل تريد إغلاق النافذة؟",
-    );
+    expect(
+      screen.getByRole("alertdialog", { name: "إغلاق دون حفظ؟" }),
+    ).toBeVisible();
     expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole("button", { name: "متابعة التحرير" }));
+    expect(screen.queryByRole("alertdialog")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "إغلاق النافذة" }));
+    fireEvent.click(screen.getByRole("button", { name: "إغلاق دون حفظ" }));
+    expect(onClose).toHaveBeenCalledOnce();
   });
 });
 
