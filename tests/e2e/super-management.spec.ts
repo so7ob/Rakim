@@ -119,15 +119,7 @@ test("SUPER can delete in all eight management pages and create public pages wit
     "gazette_issues",
   );
   await page.goto("/ar/admin/reference-data/gazettes");
-  await remove(
-    page,
-    page.locator("article").filter({
-      has: page.getByRole("heading", {
-        name: `العدد ${issueNumber}`,
-        exact: true,
-      }),
-    }),
-  );
+  await remove(page, page.getByRole("row").filter({ hasText: issueNumber }));
 
   const refs = await (
     await page.request.get("/api/v1/admin/references")

@@ -2,7 +2,7 @@ import { useState } from "react";
 import { useAuth } from "../../auth/AuthContext";
 import { useApi } from "../../hooks/use-api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
-import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { ReferenceDataHeader } from "../../components/admin/ReferenceDataHeader";
 import {
   ReferenceDataTabs,
   type ReferenceDataCounts,
@@ -15,6 +15,7 @@ interface Gazette {
   publicationDate: string | null;
   publisher: string | null;
   notes: string | null;
+  isActive: boolean;
 }
 export function AdminGazettesPage({
   counts,
@@ -27,13 +28,15 @@ export function AdminGazettesPage({
   const item = typeof editing === "object" ? editing : null;
   return (
     <section>
-      <AdminPageHeader
-        title="أعداد الجريدة"
-        description="أعداد مرجعية مشتركة بين التشريعات؛ يمنع حذف العدد المستخدم ويظل تاريخه محفوظاً."
+      <ReferenceDataHeader
         actions={
           auth.hasPermission("reference.create") ? (
-            <button className="button" onClick={() => setEditing("create")}>
-              + إضافة عدد
+            <button
+              type="button"
+              className="button"
+              onClick={() => setEditing("create")}
+            >
+              + إضافة إلى أعداد الجريدة
             </button>
           ) : undefined
         }
@@ -44,33 +47,61 @@ export function AdminGazettesPage({
       ) : data.error ? (
         <ErrorPanel message={data.error.message} retry={data.retry} />
       ) : (
-        <div className="admin-list">
-          {data.data?.map((g) => (
-            <article className="admin-list-card" key={g.id}>
-              <h2>العدد {g.issueNumber}</h2>
-              <p>
-                {g.publicationDate ?? "تاريخ غير محدد"} — {g.publisher ?? ""}
-              </p>
-              <p>{g.notes}</p>
-              <div className="admin-entity-actions">
-                {auth.hasPermission("reference.update") && (
-                  <button
-                    className="button secondary"
-                    onClick={() => setEditing(g)}
-                  >
-                    تعديل العدد
-                  </button>
-                )}
-                <LifecycleActions
-                  kind="gazettes"
-                  id={g.id}
-                  label={`العدد ${g.issueNumber}`}
-                  onDone={data.retry}
-                />
-              </div>
-            </article>
-          ))}
-        </div>
+        <section className="admin-card">
+          <h2>أعداد الجريدة</h2>
+          {!data.data?.length ? (
+            <div className="admin-empty-inline">
+              لا توجد عناصر في هذه القائمة.
+            </div>
+          ) : (
+            <div className="admin-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>رقم العدد</th>
+                    <th>تاريخ النشر</th>
+                    <th>الناشر</th>
+                    <th>الحالة الإدارية</th>
+                    <th>الإجراءات</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.data.map((g) => (
+                    <tr key={g.id}>
+                      <td>
+                        <strong>{g.issueNumber}</strong>
+                        {g.notes && <small>{g.notes}</small>}
+                      </td>
+                      <td>{g.publicationDate ?? "—"}</td>
+                      <td>{g.publisher || "—"}</td>
+                      <td>{g.isActive ? "فعال إدارياً" : "معطل إدارياً"}</td>
+                      <td>
+                        <LifecycleActions
+                          kind="gazettes"
+                          showStatus={false}
+                          id={g.id}
+                          label={`العدد ${g.issueNumber}`}
+                          onDone={data.retry}
+                        />
+                        {auth.hasPermission("reference.update") ? (
+                          <button
+                            type="button"
+                            className="button secondary"
+                            onClick={() => setEditing(g)}
+                          >
+                            تعديل
+                          </button>
+                        ) : (
+                          "عرض فقط"
+                        )}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </section>
       )}
       {editing && (
         <RecordFormDialog

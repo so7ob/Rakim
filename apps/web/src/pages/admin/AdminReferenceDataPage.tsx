@@ -7,7 +7,7 @@ import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { AdminDialog } from "../../components/admin/AdminDialog";
-import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { ReferenceDataHeader } from "../../components/admin/ReferenceDataHeader";
 import { ReferenceDataTabs } from "../../components/admin/ReferenceDataTabs";
 
 interface Item {
@@ -64,15 +64,7 @@ export function AdminReferenceDataPage() {
   };
   return (
     <section>
-      <AdminPageHeader
-        eyebrow="قواميس قابلة للإدارة"
-        title="القوائم المرجعية"
-        description="الأنواع والجهات والموضوعات المستخدمة في نماذج التشريعات ومرشحات البحث."
-        breadcrumbs={[
-          { label: "لوحة الإدارة", to: "/ar/admin" },
-          { label: "إدارة المحتوى" },
-          { label: "القوائم المرجعية" },
-        ]}
+      <ReferenceDataHeader
         actions={
           auth.hasPermission("reference.create") ? (
             <button
