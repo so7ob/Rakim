@@ -1,8 +1,9 @@
+import { AdminDialog } from "../../components/admin/AdminDialog";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 import { SourceEditor } from "./AdminContentDetailPage";
-import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -76,10 +77,16 @@ interface ImportAnalysis {
 export function AdminImportsPage() {
   const { tab = "queue" } = useParams();
   const auth = useAuth();
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const closeUpload = () => {
+    setCreating(false);
+    if (tab === "upload")
+      navigate("/ar/admin/imports/queue", { replace: true });
+  };
   const imports = useApi<ImportItem[]>("/imports");
   const refs = useApi<Refs>("/admin/references");
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
   const hasPendingImport = imports.data?.some(
     (item) =>
       ["UPLOADED", "QUEUED", "PROCESSING"].includes(item.status) ||
@@ -90,34 +97,12 @@ export function AdminImportsPage() {
     const timer = window.setInterval(imports.retry, 2_000);
     return () => window.clearInterval(timer);
   }, [hasPendingImport, imports.retry]);
-  const upload = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formElement = e.currentTarget;
-    setBusy(true);
-    setMessage("");
-    try {
-      const body = new FormData(formElement);
-      await apiRequest("/imports", { body });
-      setMessage(
-        body.get("referencePdf") instanceof File &&
-          (body.get("referencePdf") as File).size > 0
-          ? "تم رفع ملف النص ونسخة PDF معًا، ووُضع النص في طابور الاستخراج."
-          : "تم رفع المصدر ووضعه في طابور الاستخراج.",
-      );
-      formElement.reset();
-      imports.retry();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تعذر الرفع.");
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <section>
       <AdminPageHeader
         eyebrow="المصدر منفصل عن النص"
         title="الاستيراد والمصادر"
-        description="راقب طابور المصادر أو ارفع مصدرًا جديدًا في تبويب مستقل."
+        description="راقب طابور المصادر وأضف ملفات النص والمرفقات من نافذة الإضافة."
         breadcrumbs={[
           { label: "لوحة الإدارة", to: "/ar/admin" },
           { label: "إدارة المحتوى" },
@@ -128,10 +113,14 @@ export function AdminImportsPage() {
             <button className="button secondary" onClick={imports.retry}>
               تحديث الحالات
             </button>
-            {tab === "queue" && auth.hasPermission("source.upload") && (
-              <Link className="button" to="/ar/admin/imports/upload">
-                + رفع مصدر
-              </Link>
+            {auth.hasPermission("source.upload") && (
+              <button
+                type="button"
+                className="button"
+                onClick={() => setCreating(true)}
+              >
+                + إضافة مصدر
+              </button>
             )}
           </>
         }
@@ -144,18 +133,160 @@ export function AdminImportsPage() {
             to: "/ar/admin/imports/queue",
             count: imports.data?.length,
           },
-          ...(auth.hasPermission("source.upload")
-            ? [{ label: "رفع مصدر", to: "/ar/admin/imports/upload" }]
-            : []),
         ]}
       />
-      {tab === "upload" && auth.hasPermission("source.upload") && (
-        <form className="admin-card upload-form" onSubmit={upload}>
-          <h2>رفع مصادر تشريع واحد</h2>
-          <p className="form-hint">
-            استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية
-            للمقارنة والتنزيل من صفحة التشريع.
+      {message && (
+        <p role="status" className="form-message">
+          {message}
+        </p>
+      )}
+      {(creating || tab === "upload") &&
+        auth.hasPermission("source.upload") && (
+          <UploadSourceDialog
+            onClose={closeUpload}
+            onDone={(successMessage) => {
+              closeUpload();
+              setMessage(successMessage);
+              imports.retry();
+            }}
+          />
+        )}
+      {imports.loading ? (
+        <LoadingCards />
+      ) : imports.error ? (
+        <ErrorPanel message={imports.error.message} retry={imports.retry} />
+      ) : (
+        <div className="admin-list">
+          {imports.data?.map((item) => (
+            <details className="admin-card import-row" key={item.id}>
+              <summary>
+                <div>
+                  <strong>{item.originalName}</strong>
+                  <span>
+                    {item.detectedFormat} —{" "}
+                    {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
+                    {item.uploadedBy}
+                    {Number(item.attachmentCount) > 0 &&
+                      ` — PDF: ${item.referencePdfName}`}
+                  </span>
+                </div>
+                <StatusBadge status={item.status} />
+              </summary>
+              <div className="import-details">
+                <dl>
+                  <div>
+                    <dt>SHA-256</dt>
+                    <dd className="hash">{item.sha256}</dd>
+                  </div>
+                  <div>
+                    <dt>حالة الاستخراج</dt>
+                    <dd>{item.extractionStatus}</dd>
+                  </div>
+                  <div>
+                    <dt>ثقة OCR</dt>
+                    <dd>{item.ocrConfidence ?? "غير مطلوب"}</dd>
+                  </div>
+                </dl>
+                {auth.hasPermission("source.review") &&
+                  item.status === "READY_FOR_REVIEW" && (
+                    <ReviewImport id={item.id} done={imports.retry} />
+                  )}{" "}
+                {auth.hasPermission("source.draft.create") &&
+                  !item.legislationId &&
+                  ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
+                  refs.data && (
+                    <CreateDraft
+                      id={item.id}
+                      refs={refs.data}
+                      done={imports.retry}
+                    />
+                  )}{" "}
+                {item.legislationTitle && (
+                  <p>
+                    المسودة المرتبطة:{" "}
+                    <Link
+                      to={`/ar/admin/content/${item.legislationId}/structure`}
+                    >
+                      {item.legislationTitle}
+                    </Link>
+                  </p>
+                )}
+                <SourceEditor
+                  source={{
+                    ...item,
+                    id: item.sourceDocumentId,
+                    sourceRole: "EXTRACTION",
+                  }}
+                  editable={auth.hasPermission("source.update")}
+                  done={imports.retry}
+                />
+                <ImportPreview
+                  id={item.id}
+                  mediaType={item.mediaType}
+                  name={item.originalName}
+                />
+              </div>
+            </details>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+function UploadSourceDialog({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef(false);
+  const upload = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending.current) return;
+    const body = new FormData(event.currentTarget);
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await apiRequest("/imports", { body });
+      setDirty(false);
+      onDone(
+        body.get("referencePdf") instanceof File &&
+          (body.get("referencePdf") as File).size > 0
+          ? "تم رفع ملف النص ونسخة PDF معًا، ووُضع النص في طابور الاستخراج."
+          : "تم رفع المصدر ووضعه في طابور الاستخراج.",
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر رفع المصدر.");
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <AdminDialog
+      title="إضافة مصدر"
+      description="استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية للمقارنة والتنزيل من صفحة التشريع."
+      dirty={dirty && !busy}
+      onClose={() => {
+        if (!pending.current) onClose();
+      }}
+    >
+      <form
+        className="edit-form"
+        onSubmit={upload}
+        onChange={() => setDirty(true)}
+      >
+        {error && (
+          <p role="alert" className="form-error">
+            {error}
           </p>
+        )}
+        <fieldset className="admin-fieldset edit-form" disabled={busy}>
           <label>
             ملف النص للاستخراج
             <input
@@ -177,99 +308,15 @@ export function AdminImportsPage() {
               placeholder="مثال: أرشيف الجريدة الرسمية"
             />
           </label>
-          <button className="button" disabled={busy}>
-            {busy ? "جار الرفع…" : "رفع وبدء الاستخراج"}
-          </button>
-          {message && (
-            <p role="status" className="form-message">
-              {message}
-            </p>
-          )}
-        </form>
-      )}
-      {tab === "queue" &&
-        (imports.loading ? (
-          <LoadingCards />
-        ) : imports.error ? (
-          <ErrorPanel message={imports.error.message} retry={imports.retry} />
-        ) : (
-          <div className="admin-list">
-            {imports.data?.map((item) => (
-              <details className="admin-card import-row" key={item.id}>
-                <summary>
-                  <div>
-                    <strong>{item.originalName}</strong>
-                    <span>
-                      {item.detectedFormat} —{" "}
-                      {(Number(item.byteSize) / 1024).toFixed(1)} ك.ب —{" "}
-                      {item.uploadedBy}
-                      {Number(item.attachmentCount) > 0 &&
-                        ` — PDF: ${item.referencePdfName}`}
-                    </span>
-                  </div>
-                  <StatusBadge status={item.status} />
-                </summary>
-                <div className="import-details">
-                  <dl>
-                    <div>
-                      <dt>SHA-256</dt>
-                      <dd className="hash">{item.sha256}</dd>
-                    </div>
-                    <div>
-                      <dt>حالة الاستخراج</dt>
-                      <dd>{item.extractionStatus}</dd>
-                    </div>
-                    <div>
-                      <dt>ثقة OCR</dt>
-                      <dd>{item.ocrConfidence ?? "غير مطلوب"}</dd>
-                    </div>
-                  </dl>
-                  {auth.hasPermission("source.review") &&
-                    item.status === "READY_FOR_REVIEW" && (
-                      <ReviewImport id={item.id} done={imports.retry} />
-                    )}{" "}
-                  {auth.hasPermission("source.draft.create") &&
-                    !item.legislationId &&
-                    ["READY_FOR_REVIEW", "REVIEWED"].includes(item.status) &&
-                    refs.data && (
-                      <CreateDraft
-                        id={item.id}
-                        refs={refs.data}
-                        done={imports.retry}
-                      />
-                    )}{" "}
-                  {item.legislationTitle && (
-                    <p>
-                      المسودة المرتبطة:{" "}
-                      <Link
-                        to={`/ar/admin/content/${item.legislationId}/structure`}
-                      >
-                        {item.legislationTitle}
-                      </Link>
-                    </p>
-                  )}
-                  <SourceEditor
-                    source={{
-                      ...item,
-                      id: item.sourceDocumentId,
-                      sourceRole: "EXTRACTION",
-                    }}
-                    editable={auth.hasPermission("source.update")}
-                    done={imports.retry}
-                  />
-                  <ImportPreview
-                    id={item.id}
-                    mediaType={item.mediaType}
-                    name={item.originalName}
-                  />
-                </div>
-              </details>
-            ))}
-          </div>
-        ))}
-    </section>
+        </fieldset>
+        <button className="button" disabled={busy}>
+          {busy ? "جار الرفع…" : "إضافة وبدء الاستخراج"}
+        </button>
+      </form>
+    </AdminDialog>
   );
 }
+
 function ImportPreview({
   id,
   mediaType,

@@ -5,6 +5,8 @@
 - [وثيقة بثلاثة عناصر مستقلة بعد تحرير الثاني](amendment-elements-desktop.png).
 - [مادة معطلة إدارياً على عرض 320px، مع بقاء حالة المسودة مستقلة](disabled-article-mobile.png).
 - [إدارة أعداد الجريدة](gazettes-desktop.png).
+- [نافذة إضافة مصدر فوق طابور الاستيراد](import-add-dialog-desktop.png).
+- [نافذة إضافة وثيقة تعديل على الهاتف](amendment-add-dialog-mobile.png).
 
 المصفوفة ونتائج الحفظ والصلاحيات والقيود: [crud-coverage.md](../../crud-coverage.md).
 

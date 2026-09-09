@@ -71,6 +71,12 @@ export function AdminAmendmentsPage() {
     auth = useAuth(),
     navigate = useNavigate();
   const data = useApi<Document[]>("/admin/amendments");
+  const [creating, setCreating] = useState(false);
+  const closeCreate = () => {
+    setCreating(false);
+    if (tab === "create")
+      navigate("/ar/admin/amendments/list", { replace: true });
+  };
   const [editing, setEditing] = useState<Document | null>(null),
     [message, setMessage] = useState("");
   const [confirmation, setConfirmation] = useState<{
@@ -85,11 +91,8 @@ export function AdminAmendmentsPage() {
         eyebrow="مسودة ← مراجعة مستقلة ← نشر"
         description="تُحفظ عناصر الوثيقة معاً، ويطبّق نشرها في معاملة واحدة مع حفظ النصوص السابقة."
         actions={
-          tab === "list" && auth.hasPermission("amendment.create") ? (
-            <button
-              className="button"
-              onClick={() => navigate("/ar/admin/amendments/create")}
-            >
+          auth.hasPermission("amendment.create") ? (
+            <button className="button" onClick={() => setCreating(true)}>
               + إضافة وثيقة تعديل
             </button>
           ) : undefined
@@ -97,132 +100,120 @@ export function AdminAmendmentsPage() {
       />
       <AdminTabs
         label="تبويبات وثائق التعديل"
-        items={[
-          { label: "الوثائق", to: "/ar/admin/amendments/list" },
-          ...(auth.hasPermission("amendment.create")
-            ? [{ label: "إضافة وثيقة", to: "/ar/admin/amendments/create" }]
-            : []),
-        ]}
+        items={[{ label: "الوثائق", to: "/ar/admin/amendments/list" }]}
       />
       {message && (
         <p role="status" className="form-message">
           {message}
         </p>
       )}
-      {tab === "create" && auth.hasPermission("amendment.create") && (
-        <AmendmentForm
-          onDone={() => {
-            setMessage("حُفظت وثيقة التعديل وعناصرها.");
-            data.retry();
-            navigate("/ar/admin/amendments/list");
-          }}
-        />
-      )}
-      {tab === "list" &&
-        (data.loading ? (
-          <LoadingCards />
-        ) : data.error ? (
-          <ErrorPanel message={data.error.message} retry={data.retry} />
-        ) : (
-          <div className="admin-list">
-            {data.data?.map((doc) => (
-              <article className="admin-card" key={doc.id}>
-                <header>
-                  <StatusBadge status={doc.status} />
-                  <h2>{doc.titleAr}</h2>
-                  <p>
-                    {doc.legislationTitle} — {doc.effectiveFrom}
-                  </p>
-                  <p>المصدر: {doc.sourceName}</p>
-                </header>
-                <div className="admin-entity-actions">
-                  <LifecycleActions
-                    kind="amendments"
-                    id={doc.id}
-                    label={doc.titleAr}
-                    onDone={data.retry}
-                  />
-                  {doc.status === "DRAFT" &&
-                    auth.hasPermission("amendment.update") && (
-                      <button
-                        className="button secondary"
-                        onClick={() => setEditing(doc)}
-                      >
-                        تعديل الوثيقة وعناصرها
-                      </button>
-                    )}
-                  {doc.isActive &&
-                    ((doc.status === "DRAFT" &&
-                      auth.hasPermission("amendment.review")) ||
-                      (doc.status === "REVIEWED" &&
-                        auth.hasPermission("amendment.publish"))) && (
-                      <button
-                        className="button"
-                        onClick={() => {
-                          setReason("");
-                          setConfirmation({
-                            document: doc,
-                            action:
-                              doc.status === "DRAFT" ? "review" : "publish",
-                          });
-                        }}
-                      >
-                        {doc.status === "DRAFT"
-                          ? "اعتماد المراجعة"
-                          : "نشر وتطبيق جميع العناصر"}
-                      </button>
-                    )}
-                </div>
-                <h3>عناصر الوثيقة ({doc.operations.length})</h3>
-                {doc.operations.map((op, index) => (
-                  <section className="admin-list-card" key={op.id}>
-                    <h4>
-                      {index + 1}. {labels[op.operationType]} — المادة{" "}
-                      {op.operationType === "ADD"
-                        ? op.newLabel
-                        : op.articleLabel}
-                    </h4>
-                    <p>{op.citationText}</p>
-                    {op.replacementFrom && (
-                      <p>العبارة الأصلية: {op.replacementFrom}</p>
-                    )}
-                    {op.newText && (
-                      <details>
-                        <summary>النص المقترح</summary>
-                        <p className="legal-text compact">{op.newText}</p>
-                      </details>
-                    )}
-                    {op.id && (
-                      <div className="admin-entity-actions">
-                        <LifecycleActions
-                          kind="amendment-operations"
-                          id={op.id}
-                          label={`عنصر ${index + 1} من ${doc.titleAr}`}
-                          onDone={data.retry}
-                        />
-                      </div>
-                    )}
-                  </section>
-                ))}
-              </article>
-            ))}
-          </div>
-        ))}
-      {editing && (
-        <AdminDialog
-          title={`تعديل ${editing.titleAr}`}
-          size="large"
-          onClose={() => setEditing(null)}
-        >
-          <AmendmentForm
-            document={editing}
+      {(creating || tab === "create") &&
+        auth.hasPermission("amendment.create") && (
+          <AmendmentFormDialog
+            onClose={closeCreate}
             onDone={() => {
-              setEditing(null);
+              setMessage("حُفظت وثيقة التعديل وعناصرها.");
               data.retry();
-              setMessage("حُفظت الوثيقة دون فقد عناصرها الأخرى.");
+              closeCreate();
             }}
           />
-        </AdminDialog>
+        )}
+      {data.loading ? (
+        <LoadingCards />
+      ) : data.error ? (
+        <ErrorPanel message={data.error.message} retry={data.retry} />
+      ) : (
+        <div className="admin-list">
+          {data.data?.map((doc) => (
+            <article className="admin-card" key={doc.id}>
+              <header>
+                <StatusBadge status={doc.status} />
+                <h2>{doc.titleAr}</h2>
+                <p>
+                  {doc.legislationTitle} — {doc.effectiveFrom}
+                </p>
+                <p>المصدر: {doc.sourceName}</p>
+              </header>
+              <div className="admin-entity-actions">
+                <LifecycleActions
+                  kind="amendments"
+                  id={doc.id}
+                  label={doc.titleAr}
+                  onDone={data.retry}
+                />
+                {doc.status === "DRAFT" &&
+                  auth.hasPermission("amendment.update") && (
+                    <button
+                      className="button secondary"
+                      onClick={() => setEditing(doc)}
+                    >
+                      تعديل الوثيقة وعناصرها
+                    </button>
+                  )}
+                {doc.isActive &&
+                  ((doc.status === "DRAFT" &&
+                    auth.hasPermission("amendment.review")) ||
+                    (doc.status === "REVIEWED" &&
+                      auth.hasPermission("amendment.publish"))) && (
+                    <button
+                      className="button"
+                      onClick={() => {
+                        setReason("");
+                        setConfirmation({
+                          document: doc,
+                          action: doc.status === "DRAFT" ? "review" : "publish",
+                        });
+                      }}
+                    >
+                      {doc.status === "DRAFT"
+                        ? "اعتماد المراجعة"
+                        : "نشر وتطبيق جميع العناصر"}
+                    </button>
+                  )}
+              </div>
+              <h3>عناصر الوثيقة ({doc.operations.length})</h3>
+              {doc.operations.map((op, index) => (
+                <section className="admin-list-card" key={op.id}>
+                  <h4>
+                    {index + 1}. {labels[op.operationType]} — المادة{" "}
+                    {op.operationType === "ADD" ? op.newLabel : op.articleLabel}
+                  </h4>
+                  <p>{op.citationText}</p>
+                  {op.replacementFrom && (
+                    <p>العبارة الأصلية: {op.replacementFrom}</p>
+                  )}
+                  {op.newText && (
+                    <details>
+                      <summary>النص المقترح</summary>
+                      <p className="legal-text compact">{op.newText}</p>
+                    </details>
+                  )}
+                  {op.id && (
+                    <div className="admin-entity-actions">
+                      <LifecycleActions
+                        kind="amendment-operations"
+                        id={op.id}
+                        label={`عنصر ${index + 1} من ${doc.titleAr}`}
+                        onDone={data.retry}
+                      />
+                    </div>
+                  )}
+                </section>
+              ))}
+            </article>
+          ))}
+        </div>
+      )}
+      {editing && (
+        <AmendmentFormDialog
+          document={editing}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null);
+            data.retry();
+            setMessage("حُفظت الوثيقة دون فقد عناصرها الأخرى.");
+          }}
+        />
       )}
       {confirmation && (
         <ConfirmDialog
@@ -253,12 +244,14 @@ export function AdminAmendmentsPage() {
     </section>
   );
 }
-function AmendmentForm({
+function AmendmentFormDialog({
   document: doc,
   onDone,
+  onClose,
 }: {
   document?: Document;
   onDone: () => void;
+  onClose: () => void;
 }) {
   const auth = useAuth();
   const candidates = useApi<Candidates>("/admin/amendments/candidates");
@@ -266,6 +259,7 @@ function AmendmentForm({
     doc?.operations.map((o) => ({ ...o })) ?? [emptyOperation()],
   );
   const [legislationId, setLegislationId] = useState(doc?.legislationId ?? "");
+  const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false),
     [error, setError] = useState("");
   const pending = useRef(false);
@@ -314,257 +308,289 @@ function AmendmentForm({
       setSaving(false);
     }
   };
-  if (candidates.loading) return <LoadingCards />;
-  if (candidates.error)
-    return (
-      <ErrorPanel message={candidates.error.message} retry={candidates.retry} />
-    );
   return (
-    <form className="admin-card edit-form" onSubmit={submit}>
-      {error && (
-        <p className="form-error" role="alert">
-          {error}
-        </p>
-      )}
-      <fieldset disabled={saving}>
-        <div className="form-grid">
-          <label>
-            عنوان وثيقة التعديل
-            <input
-              name="titleAr"
-              defaultValue={doc?.titleAr}
-              required
-              minLength={3}
-              maxLength={1000}
-            />
-          </label>
-          <label>
-            التشريع المستهدف
-            <select
-              aria-label="التشريع المستهدف"
-              value={legislationId}
-              onChange={(e) => setLegislationId(e.target.value)}
-              required
-              disabled={!!doc}
-            >
-              <option value="">اختر تشريعاً…</option>
-              {candidates.data?.legislations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.titleAr}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            المصدر المدقق
-            <select
-              aria-label="المصدر المدقق"
-              name="sourceDocumentId"
-              defaultValue={doc?.sourceDocumentId ?? ""}
-              required
-            >
-              <option value="">اختر المصدر…</option>
-              {candidates.data?.sources.map((s) => (
-                <option key={s.id} value={s.id}>
-                  {s.originalName}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            تشريع أداة التعديل (اختياري)
-            <select
-              name="instrumentLegislationId"
-              defaultValue={doc?.instrumentLegislationId ?? ""}
-            >
-              <option value="">دون ربط إضافي</option>
-              {candidates.data?.legislations.map((l) => (
-                <option key={l.id} value={l.id}>
-                  {l.titleAr}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label>
-            تاريخ إصدار الوثيقة
-            <input
-              type="date"
-              name="issueDate"
-              defaultValue={doc?.issueDate ?? ""}
-            />
-          </label>
-          <label>
-            بدء الأثر القانوني
-            <input
-              type="date"
-              name="effectiveFrom"
-              defaultValue={doc?.effectiveFrom}
-              required
-            />
-          </label>
-        </div>
-        <h2>عناصر الوثيقة</h2>
-        {operations.map((op, index) => (
-          <fieldset className="admin-list-card" key={op.id ?? index}>
-            <legend>
-              عنصر {index + 1}
-              {op.isActive === false ? " (معطل إدارياً)" : ""}
-            </legend>
+    <AdminDialog
+      title={doc ? `تعديل ${doc.titleAr}` : "إضافة وثيقة تعديل"}
+      size="large"
+      dirty={dirty && !saving}
+      onClose={() => {
+        if (!pending.current) onClose();
+      }}
+    >
+      {candidates.loading ? (
+        <LoadingCards />
+      ) : candidates.error ? (
+        <ErrorPanel
+          message={candidates.error.message}
+          retry={candidates.retry}
+        />
+      ) : (
+        <form
+          className="edit-form"
+          onSubmit={submit}
+          onChange={() => setDirty(true)}
+        >
+          {error && (
+            <p className="form-error" role="alert">
+              {error}
+            </p>
+          )}
+          <fieldset disabled={saving}>
             <div className="form-grid">
               <label>
-                نوع العملية
+                عنوان وثيقة التعديل
+                <input
+                  name="titleAr"
+                  defaultValue={doc?.titleAr}
+                  required
+                  minLength={3}
+                  maxLength={1000}
+                />
+              </label>
+              <label>
+                التشريع المستهدف
                 <select
-                  aria-label="نوع العملية"
-                  value={op.operationType}
-                  onChange={(e) =>
-                    update(index, "operationType", e.target.value)
-                  }
+                  aria-label="التشريع المستهدف"
+                  value={legislationId}
+                  onChange={(e) => setLegislationId(e.target.value)}
+                  required
+                  disabled={!!doc}
                 >
-                  {Object.entries(labels).map(([value, label]) => (
-                    <option key={value} value={value}>
-                      {label}
+                  <option value="">اختر تشريعاً…</option>
+                  {candidates.data?.legislations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.titleAr}
                     </option>
                   ))}
                 </select>
               </label>
-              {op.operationType !== "ADD" && (
-                <label>
-                  المادة المستهدفة
-                  <select
-                    aria-label="المادة المستهدفة"
-                    value={op.articleId ?? ""}
-                    required
-                    onChange={(e) => update(index, "articleId", e.target.value)}
-                  >
-                    <option value="">اختر المادة…</option>
-                    {candidates.data?.articles
-                      .filter((a) => a.legislationId === legislationId)
-                      .map((a) => (
-                        <option key={a.id} value={a.id}>
-                          المادة {a.currentLabel} — {a.id.slice(0, 8)}
+              <label>
+                المصدر المدقق
+                <select
+                  aria-label="المصدر المدقق"
+                  name="sourceDocumentId"
+                  defaultValue={doc?.sourceDocumentId ?? ""}
+                  required
+                >
+                  <option value="">اختر المصدر…</option>
+                  {candidates.data?.sources.map((s) => (
+                    <option key={s.id} value={s.id}>
+                      {s.originalName}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                تشريع أداة التعديل (اختياري)
+                <select
+                  name="instrumentLegislationId"
+                  defaultValue={doc?.instrumentLegislationId ?? ""}
+                >
+                  <option value="">دون ربط إضافي</option>
+                  {candidates.data?.legislations.map((l) => (
+                    <option key={l.id} value={l.id}>
+                      {l.titleAr}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                تاريخ إصدار الوثيقة
+                <input
+                  type="date"
+                  name="issueDate"
+                  defaultValue={doc?.issueDate ?? ""}
+                />
+              </label>
+              <label>
+                بدء الأثر القانوني
+                <input
+                  type="date"
+                  name="effectiveFrom"
+                  defaultValue={doc?.effectiveFrom}
+                  required
+                />
+              </label>
+            </div>
+            <h2>عناصر الوثيقة</h2>
+            {operations.map((op, index) => (
+              <fieldset className="admin-list-card" key={op.id ?? index}>
+                <legend>
+                  عنصر {index + 1}
+                  {op.isActive === false ? " (معطل إدارياً)" : ""}
+                </legend>
+                <div className="form-grid">
+                  <label>
+                    نوع العملية
+                    <select
+                      aria-label="نوع العملية"
+                      value={op.operationType}
+                      onChange={(e) =>
+                        update(index, "operationType", e.target.value)
+                      }
+                    >
+                      {Object.entries(labels).map(([value, label]) => (
+                        <option key={value} value={value}>
+                          {label}
                         </option>
                       ))}
-                  </select>
-                </label>
-              )}
-              {["ADD", "RENUMBER"].includes(op.operationType) && (
+                    </select>
+                  </label>
+                  {op.operationType !== "ADD" && (
+                    <label>
+                      المادة المستهدفة
+                      <select
+                        aria-label="المادة المستهدفة"
+                        value={op.articleId ?? ""}
+                        required
+                        onChange={(e) =>
+                          update(index, "articleId", e.target.value)
+                        }
+                      >
+                        <option value="">اختر المادة…</option>
+                        {candidates.data?.articles
+                          .filter((a) => a.legislationId === legislationId)
+                          .map((a) => (
+                            <option key={a.id} value={a.id}>
+                              المادة {a.currentLabel} — {a.id.slice(0, 8)}
+                            </option>
+                          ))}
+                      </select>
+                    </label>
+                  )}
+                  {["ADD", "RENUMBER"].includes(op.operationType) && (
+                    <label>
+                      رقم المادة الجديد
+                      <input
+                        value={op.newLabel ?? ""}
+                        required
+                        maxLength={120}
+                        onChange={(e) =>
+                          update(index, "newLabel", e.target.value)
+                        }
+                      />
+                    </label>
+                  )}
+                  {op.operationType === "ADD" && (
+                    <label>
+                      مفتاح ترتيب المادة الجديدة
+                      <input
+                        value={op.sortKey ?? ""}
+                        required
+                        maxLength={120}
+                        onChange={(e) =>
+                          update(index, "sortKey", e.target.value)
+                        }
+                      />
+                    </label>
+                  )}
+                </div>
                 <label>
-                  رقم المادة الجديد
-                  <input
-                    value={op.newLabel ?? ""}
-                    required
-                    maxLength={120}
-                    onChange={(e) => update(index, "newLabel", e.target.value)}
-                  />
-                </label>
-              )}
-              {op.operationType === "ADD" && (
-                <label>
-                  مفتاح ترتيب المادة الجديدة
-                  <input
-                    value={op.sortKey ?? ""}
-                    required
-                    maxLength={120}
-                    onChange={(e) => update(index, "sortKey", e.target.value)}
-                  />
-                </label>
-              )}
-            </div>
-            <label>
-              نص الاستناد
-              <textarea
-                value={op.citationText}
-                required
-                minLength={3}
-                maxLength={5000}
-                onChange={(e) => update(index, "citationText", e.target.value)}
-              />
-            </label>
-            {["ADD", "REPLACE", "CORRECT"].includes(op.operationType) && (
-              <>
-                <label>
-                  النص الجديد
+                  نص الاستناد
                   <textarea
-                    aria-label="النص الجديد"
-                    value={op.newText ?? ""}
+                    value={op.citationText}
                     required
-                    maxLength={100000}
-                    rows={7}
-                    onChange={(e) => update(index, "newText", e.target.value)}
+                    minLength={3}
+                    maxLength={5000}
+                    onChange={(e) =>
+                      update(index, "citationText", e.target.value)
+                    }
                   />
                 </label>
-                {op.operationType !== "ADD" && (
+                {["ADD", "REPLACE", "CORRECT"].includes(op.operationType) && (
                   <>
                     <label>
-                      العبارة الأصلية المراد استبدالها (اتركها فارغة لاستبدال
-                      النص الكامل)
+                      النص الجديد
                       <textarea
-                        value={op.replacementFrom ?? ""}
+                        aria-label="النص الجديد"
+                        value={op.newText ?? ""}
+                        required
+                        maxLength={100000}
+                        rows={7}
                         onChange={(e) =>
-                          update(index, "replacementFrom", e.target.value)
-                        }
-                        maxLength={10000}
-                      />
-                    </label>
-                    <label>
-                      موضع العبارة (اختياري)
-                      <input
-                        value={op.paragraphLocator ?? ""}
-                        maxLength={160}
-                        onChange={(e) =>
-                          update(index, "paragraphLocator", e.target.value)
+                          update(index, "newText", e.target.value)
                         }
                       />
                     </label>
+                    {op.operationType !== "ADD" && (
+                      <>
+                        <label>
+                          العبارة الأصلية المراد استبدالها (اتركها فارغة
+                          لاستبدال النص الكامل)
+                          <textarea
+                            value={op.replacementFrom ?? ""}
+                            onChange={(e) =>
+                              update(index, "replacementFrom", e.target.value)
+                            }
+                            maxLength={10000}
+                          />
+                        </label>
+                        <label>
+                          موضع العبارة (اختياري)
+                          <input
+                            value={op.paragraphLocator ?? ""}
+                            maxLength={160}
+                            onChange={(e) =>
+                              update(index, "paragraphLocator", e.target.value)
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
                   </>
                 )}
-              </>
-            )}
+                <button
+                  type="button"
+                  className="link-button danger"
+                  disabled={
+                    operations.length === 1 ||
+                    (Boolean(doc) && !auth.hasPermission("amendment.delete"))
+                  }
+                  onClick={() => setRemoving(index)}
+                >
+                  حذف هذا العنصر من المسودة
+                </button>
+              </fieldset>
+            ))}
             <button
               type="button"
-              className="link-button danger"
+              className="button secondary"
               disabled={
-                operations.length === 1 ||
-                (Boolean(doc) && !auth.hasPermission("amendment.delete"))
+                operations.length >= 200 ||
+                !auth.hasPermission("amendment.create")
               }
-              onClick={() => setRemoving(index)}
+              onClick={() => {
+                setDirty(true);
+                setOperations((old) => [...old, emptyOperation()]);
+              }}
             >
-              حذف هذا العنصر من المسودة
+              + إضافة عنصر إلى الوثيقة
             </button>
+            {doc && (
+              <label>
+                سبب التعديل
+                <input name="reason" required minLength={3} maxLength={1000} />
+              </label>
+            )}
           </fieldset>
-        ))}
-        <button
-          type="button"
-          className="button secondary"
-          disabled={
-            operations.length >= 200 || !auth.hasPermission("amendment.create")
-          }
-          onClick={() => setOperations((old) => [...old, emptyOperation()])}
-        >
-          + إضافة عنصر إلى الوثيقة
-        </button>
-        {doc && (
-          <label>
-            سبب التعديل
-            <input name="reason" required minLength={3} maxLength={1000} />
-          </label>
-        )}
-      </fieldset>
-      <button className="button" disabled={saving}>
-        {saving ? "جار حفظ الوثيقة…" : "حفظ الوثيقة وجميع عناصرها"}
-      </button>
-      {removing !== null && (
-        <ConfirmDialog
-          title={`حذف العنصر ${removing + 1}`}
-          description="سيحذف العنصر عند حفظ الوثيقة، وتبقى العناصر الأخرى كما هي."
-          confirmLabel="إزالة العنصر"
-          onClose={() => setRemoving(null)}
-          onConfirm={() => {
-            setOperations((old) => old.filter((_, i) => i !== removing));
-            setRemoving(null);
-          }}
-        />
+          <button className="button" disabled={saving}>
+            {saving ? "جار حفظ الوثيقة…" : "حفظ الوثيقة وجميع عناصرها"}
+          </button>
+          {removing !== null && (
+            <ConfirmDialog
+              title={`حذف العنصر ${removing + 1}`}
+              description="سيحذف العنصر عند حفظ الوثيقة، وتبقى العناصر الأخرى كما هي."
+              confirmLabel="إزالة العنصر"
+              onClose={() => setRemoving(null)}
+              onConfirm={() => {
+                setDirty(true);
+                setOperations((old) => old.filter((_, i) => i !== removing));
+                setRemoving(null);
+              }}
+            />
+          )}
+        </form>
       )}
-    </form>
+    </AdminDialog>
   );
 }

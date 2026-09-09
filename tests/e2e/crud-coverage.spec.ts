@@ -351,7 +351,27 @@ test("amendment form creates and edits several elements in one document without 
   } finally {
     await db.destroy();
   }
-  await page.goto("/ar/admin/amendments/create");
+  await page.goto("/ar/admin/amendments");
+  await expect(
+    page
+      .getByRole("navigation", { name: "تبويبات وثائق التعديل" })
+      .getByRole("link"),
+  ).toHaveCount(1);
+  await page
+    .getByRole("button", { name: "+ إضافة وثيقة تعديل", exact: true })
+    .click();
+  await expect(page).toHaveURL(/\/ar\/admin\/amendments$/);
+  const createDialog = page.getByRole("dialog", {
+    name: "إضافة وثيقة تعديل",
+    exact: true,
+  });
+  await expect(createDialog).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(createDialog).toBeHidden();
+  await page
+    .getByRole("button", { name: "+ إضافة وثيقة تعديل", exact: true })
+    .click();
+  await expect(createDialog).toBeVisible();
   await page
     .getByLabel("عنوان وثيقة التعديل", { exact: true })
     .fill("وثيقة واجهة " + f.id);

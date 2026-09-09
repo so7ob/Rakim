@@ -15,10 +15,10 @@ const pages = [
   ["dashboard", "/ar/admin"],
   ["no-permission", "/ar/admin/no-permission"],
   ["imports-queue", "/ar/admin/imports/queue"],
-  ["imports-upload", "/ar/admin/imports/upload"],
+  ["imports-add-dialog", "/ar/admin/imports/upload"],
   ["legislations", "/ar/admin/content"],
   ["amendments-list", "/ar/admin/amendments/list"],
-  ["amendments-create", "/ar/admin/amendments/create"],
+  ["amendments-add-dialog", "/ar/admin/amendments/create"],
   ["audit", "/ar/admin/audit"],
   ["reports", "/ar/admin/reports"],
   ["users", "/ar/admin/users"],
@@ -140,6 +140,14 @@ try {
     for (const [name, path] of [...pages, ...details]) {
       currentAdminPath = path;
       await page.goto(`${baseUrl}${path}`, { waitUntil: "networkidle" });
+      if (name === "imports-add-dialog")
+        await page
+          .getByRole("dialog", { name: "إضافة مصدر", exact: true })
+          .waitFor();
+      if (name === "amendments-add-dialog")
+        await page
+          .getByRole("dialog", { name: "إضافة وثيقة تعديل", exact: true })
+          .waitFor();
       if (name === "imports-queue") {
         const firstImport = page.locator("details.import-row").first();
         if (await firstImport.count())
