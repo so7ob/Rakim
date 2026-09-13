@@ -1,0 +1,23 @@
+name: Enhancement
+description: تحسين سلوك أو تصميم قائم
+title: "[Enhancement] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: current
+    attributes:
+      label: الوضع الحالي
+    validations:
+      required: true
+  - type: textarea
+    id: desired
+    attributes:
+      label: التحسين المطلوب ونطاقه
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria والاختبارات
+    validations:
+      required: true

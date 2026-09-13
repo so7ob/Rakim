@@ -1,3 +1,4 @@
+import { assertSchemaCompatible } from "../../../scripts/database/schema-contract.mjs";
 import { randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
@@ -9,6 +10,7 @@ import { config } from "dotenv";
 import mammoth from "mammoth";
 import readXlsxFile from "read-excel-file/node";
 import { DataSource, type EntityManager } from "typeorm";
+import { parseLegalStructure } from "./legal-structure-parser.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -71,25 +73,7 @@ function targetPath(storageKey: string): string {
 }
 
 export function parseStructure(text: string) {
-  const pattern =
-    /(?:^|\n)\s*(?:المادة|مادة)\s*[\(（]?\s*([0-9٠-٩]+(?:\s*مكرر(?:\s*[أابتثجحخدذرزسشصضطظعغفقكلمنهوي])?)?)[\)）]?\s*[:：\-–]?/gmu;
-  const matches = [...text.matchAll(pattern)];
-  if (!matches.length)
-    return {
-      preamble: "",
-      articles: [{ label: "1", sortKey: "00001", text: text.trim() }],
-    };
-  const articles = matches.map((match, index) => ({
-    label: match[1]!.trim(),
-    sortKey: String(index + 1).padStart(5, "0"),
-    text: text
-      .slice(
-        match.index! + match[0].length,
-        matches[index + 1]?.index ?? text.length,
-      )
-      .trim(),
-  }));
-  return { preamble: text.slice(0, matches[0]!.index).trim(), articles };
+  return parseLegalStructure(text);
 }
 
 async function pdfText(
@@ -472,6 +456,12 @@ async function main() {
     mode: 0o750,
   });
   await db.initialize();
+  try {
+    await assertSchemaCompatible((sql) => db.query(sql));
+  } catch (error) {
+    await db.destroy();
+    throw error;
+  }
   await db.query(
     "INSERT INTO service_heartbeats (service_id,service_type,last_seen_at,metadata_json) VALUES (?,'WORKER',NOW(3),JSON_OBJECT('pid',?,'host',?)) ON DUPLICATE KEY UPDATE last_seen_at=VALUES(last_seen_at),metadata_json=VALUES(metadata_json)",
     [workerId, process.pid, hostname()],
@@ -479,6 +469,11 @@ async function main() {
   await db.query(
     "UPDATE job_queue SET status='READY',locked_by=NULL,locked_at=NULL WHERE status='RUNNING' AND locked_at<DATE_SUB(NOW(3),INTERVAL 15 MINUTE)",
   );
+  if (process.argv.includes("--once")) {
+    await tick();
+    await db.destroy();
+    return;
+  }
   console.log(JSON.stringify({ event: "worker.started", workerId }));
   const timer = setInterval(() => void tick(), 1000);
   const stop = async () => {

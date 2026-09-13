@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Inject,
@@ -10,11 +11,11 @@ import {
   Req,
   Res,
   StreamableFile,
-  UploadedFile,
+  UploadedFiles,
   UseGuards,
   UseInterceptors,
 } from "@nestjs/common";
-import { FileInterceptor } from "@nestjs/platform-express";
+import { FileFieldsInterceptor } from "@nestjs/platform-express";
 import { ApiConsumes, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { IsInt, IsOptional, IsString, Length, Max, Min } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
@@ -22,9 +23,16 @@ import { createReadStream } from "node:fs";
 import { resolve, sep } from "node:path";
 import type { Response } from "express";
 import { SessionGuard } from "../auth/session.guard.js";
-import { RoleGuard, Roles } from "../common/role.guard.js";
+import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { ImportsService } from "./imports.service.js";
 
+class AttachmentDto {
+  @IsString() sourceDocumentId!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class AttachmentReasonDto {
+  @IsString() @Length(3, 1000) reason!: string;
+}
 class UploadMetaDto {
   @IsString() @Length(2, 255) obtainedFrom!: string;
 }
@@ -42,42 +50,92 @@ class DraftFromImportDto {
 
 @ApiTags("الاستيراد")
 @Controller("imports")
-@UseGuards(SessionGuard, RoleGuard)
+@UseGuards(SessionGuard, PermissionGuard)
 export class ImportsController {
   constructor(
     @Inject(ImportsService) private readonly service: ImportsService,
   ) {}
   @Post()
-  @Roles("DATA_ENTRY")
+  @Permissions("source.upload")
   @ApiConsumes("multipart/form-data")
   @UseInterceptors(
-    FileInterceptor("file", {
-      limits: {
-        fileSize: Number(process.env.MAX_IMPORT_BYTES ?? 30 * 1024 * 1024),
-        files: 1,
+    FileFieldsInterceptor(
+      [
+        { name: "file", maxCount: 1 },
+        { name: "referencePdf", maxCount: 1 },
+      ],
+      {
+        limits: {
+          fileSize: Number(process.env.MAX_IMPORT_BYTES ?? 30 * 1024 * 1024),
+          files: 2,
+        },
       },
-    }),
+    ),
   )
-  @ApiOperation({ summary: "رفع مصدر وحساب SHA-256 وإنشاء مهمة استخراج" })
+  @ApiOperation({
+    summary: "رفع مصدر استخراج ونسخة PDF رسمية اختيارية للتشريع نفسه",
+  })
   upload(
-    @UploadedFile() file: Express.Multer.File | undefined,
+    @UploadedFiles()
+    files:
+      | {
+          file?: Express.Multer.File[];
+          referencePdf?: Express.Multer.File[];
+        }
+      | undefined,
     @Body() dto: UploadMetaDto,
     @Req() request: AuthenticatedRequest,
   ) {
-    return this.service.upload(file, dto.obtainedFrom, request.user!);
+    return this.service.upload(
+      files?.file?.[0],
+      dto.obtainedFrom,
+      request.user!,
+      files?.referencePdf?.[0],
+    );
   }
   @Get()
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
+  @Permissions("source.view")
   list() {
     return this.service.list();
   }
+  @Post(":id/attachments")
+  @Permissions("source.update")
+  addAttachment(
+    @Param("id") id: string,
+    @Body() dto: AttachmentDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.changeAttachment(
+      id,
+      dto.sourceDocumentId,
+      false,
+      req.user!,
+      dto.reason,
+    );
+  }
+  @Delete(":id/attachments/:sourceId")
+  @Permissions("source.delete")
+  removeAttachment(
+    @Param("id") id: string,
+    @Param("sourceId") sourceId: string,
+    @Body() dto: AttachmentReasonDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.changeAttachment(
+      id,
+      sourceId,
+      true,
+      req.user!,
+      dto.reason,
+    );
+  }
   @Get(":id")
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
+  @Permissions("source.view")
   detail(@Param("id") id: string) {
     return this.service.detail(id);
   }
   @Get(":id/source")
-  @Roles("DATA_ENTRY", "LEGAL_REVIEWER", "CONTENT_MANAGER", "SYSTEM_ADMIN")
+  @Permissions("source.view")
   async source(
     @Param("id") id: string,
     @Res({ passthrough: true }) response: Response,
@@ -96,14 +154,40 @@ export class ImportsController {
     );
     return new StreamableFile(createReadStream(target));
   }
-  @Post(":id/review") @HttpCode(200) @Roles("LEGAL_REVIEWER") review(
+  @Get(":id/attachments/:sourceDocumentId")
+  @Permissions("source.view")
+  async attachment(
+    @Param("id") id: string,
+    @Param("sourceDocumentId") sourceDocumentId: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const file = await this.service.attachment(id, sourceDocumentId);
+    const root = resolve(
+      process.env.DATA_ROOT ?? resolve(process.cwd(), "../../data"),
+    );
+    const target = resolve(root, file.storageKey);
+    if (!target.startsWith(`${root}${sep}`))
+      throw new NotFoundException("مسار المصدر غير صالح.");
+    response.setHeader("Content-Type", file.mediaType);
+    response.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    return new StreamableFile(createReadStream(target));
+  }
+  @Post(":id/review")
+  @HttpCode(200)
+  @Permissions("source.review")
+  review(
     @Param("id") id: string,
     @Body() dto: ReviewImportDto,
     @Req() request: AuthenticatedRequest,
   ) {
     return this.service.review(id, request.user!, dto.notes);
   }
-  @Post(":id/draft") @Roles("DATA_ENTRY") draft(
+  @Post(":id/draft")
+  @Permissions("source.draft.create")
+  draft(
     @Param("id") id: string,
     @Body() dto: DraftFromImportDto,
     @Req() request: AuthenticatedRequest,

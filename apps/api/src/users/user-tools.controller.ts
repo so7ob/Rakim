@@ -7,13 +7,20 @@ import {
   Inject,
   Param,
   Post,
+  Patch,
   Req,
   UseGuards,
 } from "@nestjs/common";
-import { IsIn, IsObject, IsString, Length } from "class-validator";
+import { IsBoolean, IsIn, IsObject, IsString, Length } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { UserToolsService } from "./user-tools.service.js";
+class PersonalStateDto {
+  @IsBoolean() active!: boolean;
+}
+class NoteUpdateDto {
+  @IsString() @Length(2, 5000) text!: string;
+}
 class SaveSearchDto {
   @IsString() @Length(2, 200) name!: string;
   @IsObject() query!: Record<string, unknown>;
@@ -36,6 +43,28 @@ export class UserToolsController {
   constructor(
     @Inject(UserToolsService) private readonly service: UserToolsService,
   ) {}
+  @Patch(":kind/:id/state") state(
+    @Param("kind") kind: string,
+    @Param("id") id: string,
+    @Body() dto: PersonalStateDto,
+    @Req() r: AuthenticatedRequest,
+  ) {
+    return this.service.setActive(r.user!.id, kind, id, dto.active);
+  }
+  @Patch("saved-searches/:id") updateSearch(
+    @Param("id") id: string,
+    @Body() dto: SaveSearchDto,
+    @Req() r: AuthenticatedRequest,
+  ) {
+    return this.service.updateSearch(r.user!.id, id, dto.name, dto.query);
+  }
+  @Patch("notes/:id") updateNote(
+    @Param("id") id: string,
+    @Body() dto: NoteUpdateDto,
+    @Req() r: AuthenticatedRequest,
+  ) {
+    return this.service.updateNote(r.user!.id, id, dto.text);
+  }
   @Get("favorites") favorites(@Req() r: AuthenticatedRequest) {
     return this.service.favorites(r.user!.id);
   }
@@ -60,7 +89,12 @@ export class UserToolsController {
   ) {
     return this.service.saveSearch(r.user!.id, dto.name, dto.query);
   }
-  @Delete("saved-searches/:id") deleteSearch(@Param("id")id:string,@Req()r:AuthenticatedRequest){return this.service.deleteSavedSearch(r.user!.id,id);}
+  @Delete("saved-searches/:id") deleteSearch(
+    @Param("id") id: string,
+    @Req() r: AuthenticatedRequest,
+  ) {
+    return this.service.deleteSavedSearch(r.user!.id, id);
+  }
   @Get("notes") notes(@Req() r: AuthenticatedRequest) {
     return this.service.notes(r.user!.id);
   }
@@ -72,7 +106,12 @@ export class UserToolsController {
       dto.text,
     );
   }
-  @Delete("notes/:id") deleteNote(@Param("id")id:string,@Req()r:AuthenticatedRequest){return this.service.deleteNote(r.user!.id,id);}
+  @Delete("notes/:id") deleteNote(
+    @Param("id") id: string,
+    @Req() r: AuthenticatedRequest,
+  ) {
+    return this.service.deleteNote(r.user!.id, id);
+  }
   @Post("reports") report(
     @Body() dto: ReportDto,
     @Req() r: AuthenticatedRequest,

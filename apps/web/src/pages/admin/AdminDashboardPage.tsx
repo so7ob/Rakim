@@ -1,32 +1,43 @@
+import { useState } from "react";
 import { useApi } from "../../hooks/use-api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { SearchReindexAction } from "../../components/admin/SearchReindexAction";
 interface Dashboard {
   workflow: Array<{ status: string; count: number }>;
   imports: Array<{ status: string; count: number }>;
   quality: Array<{ severity: string; count: number }>;
   jobs: Array<{ status: string; count: number }>;
-  recentAudit: Array<{
-    id: string;
-    action: string;
-    actorName: string;
-    reason: string;
-    occurredAt: string;
-  }>;
 }
 export function AdminDashboardPage() {
   const { data, error, loading, retry } = useApi<Dashboard>("/admin/dashboard");
+  const [message, setMessage] = useState("");
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">نظرة تشغيلية</span>
-          <h1>لوحة الإدارة</h1>
-        </div>
-        <button className="button secondary" onClick={retry}>
-          تحديث
-        </button>
-      </header>
+      <AdminPageHeader
+        title="لوحة الإدارة"
+        eyebrow="نظرة تشغيلية"
+        description="ملخص دورة المحتوى والاستيراد والمهام الخلفية."
+        breadcrumbs={[{ label: "لوحة الإدارة" }]}
+        actions={
+          <>
+            <button className="button secondary" onClick={retry}>
+              تحديث
+            </button>
+            <SearchReindexAction
+              onSuccess={(count) =>
+                setMessage(`اكتملت إعادة بناء الفهرس لعدد ${count} سجل.`)
+              }
+            />
+          </>
+        }
+      />
+      {message && (
+        <p className="form-message" role="status">
+          {message}
+        </p>
+      )}
       {loading ? (
         <LoadingCards />
       ) : error ? (
@@ -68,22 +79,6 @@ export function AdminDashboardPage() {
               ) : (
                 <p>الطابور فارغ.</p>
               )}
-            </section>
-            <section className="admin-card wide">
-              <h2>آخر أحداث التدقيق</h2>
-              <div className="audit-list">
-                {data?.recentAudit.map((item) => (
-                  <article key={item.id}>
-                    <strong>{item.action}</strong>
-                    <span>
-                      {item.actorName ?? "النظام"} — {item.reason}
-                    </span>
-                    <time>
-                      {new Date(item.occurredAt).toLocaleString("ar-YE")}
-                    </time>
-                  </article>
-                ))}
-              </div>
             </section>
           </div>
         </>

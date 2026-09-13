@@ -1,3 +1,4 @@
+import { assertSchemaCompatible } from "../../../../scripts/database/schema-contract.mjs";
 import {
   Global,
   Inject,
@@ -24,8 +25,16 @@ class DatabaseLifecycle implements OnApplicationShutdown {
   providers: [
     {
       provide: DATABASE,
-      useFactory: async (): Promise<DataSource> =>
-        createDataSource().initialize(),
+      useFactory: async (): Promise<DataSource> => {
+        const db = await createDataSource().initialize();
+        try {
+          await assertSchemaCompatible((sql) => db.query(sql));
+          return db;
+        } catch (error) {
+          await db.destroy();
+          throw error;
+        }
+      },
     },
     DatabaseLifecycle,
   ],

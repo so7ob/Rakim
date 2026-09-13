@@ -1,0 +1,27 @@
+name: Feature request
+description: اقتراح قدرة جديدة قابلة للتسليم
+title: "[Feature] "
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: المشكلة أو الحاجة
+    validations:
+      required: true
+  - type: textarea
+    id: scope
+    attributes:
+      label: النطاق والحل المطلوب
+    validations:
+      required: true
+  - type: textarea
+    id: acceptance
+    attributes:
+      label: Acceptance Criteria والاختبارات
+    validations:
+      required: true
+  - type: textarea
+    id: dependencies
+    attributes:
+      label: Dependencies

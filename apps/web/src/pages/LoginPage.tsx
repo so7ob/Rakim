@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { Navigate, useLocation, useNavigate } from "react-router-dom";
+import { Link, Navigate, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
 
 export function LoginPage() {
@@ -61,6 +61,9 @@ export function LoginPage() {
           <button className="button" disabled={submitting}>
             {submitting ? "جار التحقق…" : "تسجيل الدخول"}
           </button>
+          <Link className="text-link" to="/ar/forgot-password">
+            نسيت كلمة المرور؟
+          </Link>
         </form>
         <p className="security-note">
           الجلسة محدودة المدة، وتُسجّل العمليات الإدارية في سجل التدقيق.

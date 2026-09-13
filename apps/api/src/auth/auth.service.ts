@@ -1,14 +1,20 @@
+import { EFFECTIVE_ROLE_GRANTS_SQL } from "../common/effective-role-grants.js";
 import {
   Inject,
   Injectable,
   UnauthorizedException,
   BadRequestException,
 } from "@nestjs/common";
-import { createHash, randomBytes, randomUUID } from "node:crypto";
+import { createHash, createHmac, randomBytes, randomUUID } from "node:crypto";
 import type { DataSource } from "typeorm";
 import { DATABASE } from "../database/database.module.js";
 import type { AuthUser } from "./auth.types.js";
 import { hashPassword, verifyPassword } from "./password.js";
+import { LEGACY_PERMISSION_ALIASES } from "../common/canonical-permission-catalog.js";
+
+// Session-bound token: concurrent status reads and other tabs must not invalidate forms.
+const csrfForToken = (token: string) =>
+  createHmac("sha256", token).update("ylp-csrf-v1").digest("base64url");
 
 const digest = (value: string) =>
   createHash("sha256").update(value).digest("hex");
@@ -16,6 +22,21 @@ const digest = (value: string) =>
 @Injectable()
 export class AuthService {
   constructor(@Inject(DATABASE) private readonly db: DataSource) {}
+
+  async sessionFromToken(token: string | undefined): Promise<{
+    id: string;
+    userId: string;
+  } | null> {
+    if (!token) return null;
+    const rows = (await this.db.query(
+      `SELECT s.id,s.user_id userId
+      FROM user_sessions s JOIN users u ON u.id=s.user_id
+      WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>NOW(3)
+        AND u.is_active=1 AND u.deleted_at IS NULL LIMIT 1`,
+      [digest(token)],
+    )) as Array<{ id: string; userId: string }>;
+    return rows[0] ?? null;
+  }
 
   async login(
     usernameRaw: string,
@@ -26,7 +47,7 @@ export class AuthService {
     const rows = (await this.db.query(
       `SELECT id,username,display_name displayName,password_hash passwordHash,
       is_active isActive,failed_login_count failedLoginCount,locked_until lockedUntil
-      FROM users WHERE username=? LIMIT 1`,
+      FROM users WHERE deleted_at IS NULL AND username=? LIMIT 1`,
       [username],
     )) as Array<Record<string, unknown>>;
     const account = rows[0];
@@ -57,7 +78,7 @@ export class AuthService {
       [account.id],
     );
     const token = randomBytes(32).toString("base64url");
-    const csrfToken = randomBytes(32).toString("base64url");
+    const csrfToken = csrfForToken(token);
     const sessionId = randomUUID();
     const hours = Math.min(
       24,
@@ -89,26 +110,150 @@ export class AuthService {
 
   async userById(id: string): Promise<AuthUser> {
     const users = await this.db.query(
-      "SELECT id,username,display_name displayName FROM users WHERE id=? AND is_active=1",
+      "SELECT id,username,display_name displayName FROM users WHERE deleted_at IS NULL AND id=? AND is_active=1",
       [id],
     );
     if (!users[0]) throw new UnauthorizedException("الحساب غير متاح.");
-    const assignments = (await this.db.query(
-      `SELECT r.code,r.permissions_json permissions
-      FROM roles r JOIN user_roles ur ON ur.role_id=r.id WHERE ur.user_id=? ORDER BY r.code`,
-      [id],
-    )) as Array<{ code: string; permissions: string | string[] }>;
+    const [assignments, roleGrants, directOverrides, policyOverrides] =
+      await Promise.all([
+        this.db.query(
+          `SELECT r.code,r.name_ar nameAr,r.description_ar descriptionAr
+        FROM roles r JOIN user_roles ur ON ur.role_id=r.id
+        WHERE ur.user_id=? AND r.is_active=1 ORDER BY r.code`,
+          [id],
+        ) as Promise<Array<{ code: string; nameAr: string }>>,
+        this.db.query(
+          `SELECT rp.permission_code permissionCode,rp.scope_code scopeCode,
+          r.code roleCode,r.name_ar roleName,r.permission_model_version modelVersion,
+          pd.is_legacy isLegacy
+        FROM ${EFFECTIVE_ROLE_GRANTS_SQL} rp JOIN user_roles ur ON ur.role_id=rp.role_id
+        JOIN roles r ON r.id=rp.role_id
+        JOIN permission_definitions pd ON pd.code=rp.permission_code
+        WHERE ur.user_id=? AND r.is_active=1 ORDER BY rp.permission_code,r.code`,
+          [id],
+        ) as Promise<
+          Array<{
+            permissionCode: string;
+            scopeCode: "ALL" | "OWN" | "ASSIGNED";
+            roleCode: string;
+            roleName: string;
+            modelVersion: number;
+            isLegacy: boolean | number;
+          }>
+        >,
+        this.db.query(
+          `SELECT upo.permission_code permissionCode,upo.effect,upo.scope_code scopeCode,
+          pd.is_legacy isLegacy
+        FROM user_permission_overrides upo
+        JOIN permission_definitions pd ON pd.code=upo.permission_code
+        WHERE upo.user_id=? AND pd.is_active=TRUE ORDER BY upo.permission_code`,
+          [id],
+        ) as Promise<
+          Array<{
+            permissionCode: string;
+            effect: "ALLOW" | "DENY";
+            scopeCode: "ALL" | "OWN" | "ASSIGNED";
+            isLegacy: boolean | number;
+          }>
+        >,
+        this.db.query(
+          "SELECT permission_code permissionCode FROM user_permissions WHERE user_id=? ORDER BY permission_code",
+          [id],
+        ) as Promise<Array<{ permissionCode: string }>>,
+      ]);
     const roles = assignments.map((item) => item.code);
-    const permissions = [
-      ...new Set(
-        assignments.flatMap((item) =>
-          typeof item.permissions === "string"
-            ? (JSON.parse(item.permissions) as string[])
-            : item.permissions,
-        ),
-      ),
-    ];
-    return { ...users[0], roles, permissions } as AuthUser;
+    const effective = new Map<
+      string,
+      {
+        code: string;
+        allowed: boolean;
+        scope: "ALL";
+        sources: Array<{
+          type: "ROLE" | "DIRECT_ALLOW";
+          code: string;
+          name?: string;
+        }>;
+        overrides: Array<{ type: "DIRECT_ALLOW" | "DIRECT_DENY" }>;
+        policyChecks: Array<{ code: string; result: "PASSED" | "FAILED" }>;
+      }
+    >();
+    for (const grant of roleGrants) {
+      if (
+        grant.scopeCode !== "ALL" ||
+        (grant.isLegacy && Number(grant.modelVersion) >= 2)
+      )
+        continue;
+      for (const code of this.canonicalTargets(
+        grant.permissionCode,
+        Boolean(grant.isLegacy),
+      )) {
+        const existing = effective.get(code) ?? {
+          code,
+          allowed: true as const,
+          scope: "ALL" as const,
+          sources: [],
+          overrides: [],
+          policyChecks: [],
+        };
+        existing.sources.push({
+          type: "ROLE",
+          code: grant.roleCode,
+          name: grant.roleName,
+        });
+        effective.set(code, existing);
+      }
+    }
+    const denied = new Set<string>();
+    for (const override of directOverrides) {
+      const targets = this.canonicalTargets(
+        override.permissionCode,
+        Boolean(override.isLegacy),
+      );
+      if (override.effect === "DENY") {
+        for (const code of targets) denied.add(code);
+      } else if (override.scopeCode === "ALL") {
+        for (const code of targets) {
+          const existing = effective.get(code) ?? {
+            code,
+            allowed: true as const,
+            scope: "ALL" as const,
+            sources: [],
+            overrides: [],
+            policyChecks: [],
+          };
+          existing.sources.push({ type: "DIRECT_ALLOW", code: "DIRECT" });
+          existing.overrides.push({ type: "DIRECT_ALLOW" });
+          effective.set(code, existing);
+        }
+      }
+    }
+    for (const code of denied) {
+      const existing = effective.get(code) ?? {
+        code,
+        allowed: false,
+        scope: "ALL" as const,
+        sources: [],
+        overrides: [],
+        policyChecks: [],
+      };
+      existing.allowed = false;
+      existing.overrides = [{ type: "DIRECT_DENY" }];
+      effective.set(code, existing);
+    }
+    return {
+      ...users[0],
+      roles,
+      permissions: [...effective.values()]
+        .filter((item) => item.allowed)
+        .map((item) => item.code),
+      permissionDetails: [...effective.values()],
+      policyCapabilities: policyOverrides.map((item) => item.permissionCode),
+    } as AuthUser;
+  }
+
+  private canonicalTargets(code: string, legacy: boolean): string[] {
+    if (!legacy) return [code];
+    return LEGACY_PERMISSION_ALIASES[code] ?? [];
   }
 
   async logout(sessionId: string, actorId: string): Promise<void> {
@@ -119,12 +264,12 @@ export class AuthService {
     await this.audit(actorId, "LOGOUT", "USER", actorId, "تسجيل خروج");
   }
 
-  async rotateCsrf(sessionId: string): Promise<string> {
-    const csrfToken = randomBytes(32).toString("base64url");
-    await this.db.query("UPDATE user_sessions SET csrf_hash=? WHERE id=?", [
-      digest(csrfToken),
-      sessionId,
-    ]);
+  async sessionCsrf(sessionId: string, token: string): Promise<string> {
+    const csrfToken = csrfForToken(token);
+    await this.db.query(
+      "UPDATE user_sessions SET csrf_hash=? WHERE id=? AND token_hash=? AND revoked_at IS NULL AND expires_at>NOW(3)",
+      [digest(csrfToken), sessionId, digest(token)],
+    );
     return csrfToken;
   }
 

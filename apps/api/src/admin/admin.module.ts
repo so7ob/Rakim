@@ -1,15 +1,32 @@
+import { LifecycleController } from "./lifecycle.controller.js";
+import { LifecycleService } from "./lifecycle.service.js";
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module.js";
-import { RoleGuard } from "../common/role.guard.js";
 import {
   AdminController,
   PublicationsController,
   ReindexController,
 } from "./admin.controller.js";
 import { AdminService } from "./admin.service.js";
+import { AccessControlController } from "./access-control.controller.js";
+import { AccessControlService } from "./access-control.service.js";
+import { PermissionGuard } from "../common/permission.guard.js";
+import { AuthorizationPolicyService } from "./authorization-policy.service.js";
 @Module({
   imports: [AuthModule],
-  controllers: [AdminController, PublicationsController, ReindexController],
-  providers: [RoleGuard, AdminService],
+  controllers: [
+    AdminController,
+    LifecycleController,
+    AccessControlController,
+    PublicationsController,
+    ReindexController,
+  ],
+  providers: [
+    PermissionGuard,
+    AuthorizationPolicyService,
+    AdminService,
+    LifecycleService,
+    AccessControlService,
+  ],
 })
 export class AdminModule {}

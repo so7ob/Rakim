@@ -12,7 +12,7 @@ import {
   UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
-import { RoleGuard, Roles } from "../common/role.guard.js";
+import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { CreateLegislationDto } from "./create-legislation.dto.js";
 import { LegislationsService } from "./legislations.service.js";
 import { SessionGuard } from "../auth/session.guard.js";
@@ -40,6 +40,12 @@ export class LegislationsController {
     return this.service.suggestions(q);
   }
 
+  @Get("latest-modifications")
+  @ApiOperation({ summary: "أحدث التعديلات المنشورة في جميع التشريعات" })
+  latestModifications(@Query("limit") limit?: string) {
+    return this.service.latestModifications(limit);
+  }
+
   @Get(":id/source")
   @ApiOperation({ summary: "تنزيل المصدر العام المدقق دون كشف مساره" })
   async source(
@@ -62,8 +68,8 @@ export class LegislationsController {
   }
 
   @Post()
-  @UseGuards(SessionGuard, RoleGuard)
-  @Roles("DATA_ENTRY")
+  @UseGuards(SessionGuard, PermissionGuard)
+  @Permissions("legislation.create")
   @ApiOperation({ summary: "إنشاء مسودة تشريع وتسجيلها في التدقيق" })
   create(
     @Body() dto: CreateLegislationDto,

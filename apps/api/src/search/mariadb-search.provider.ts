@@ -1,3 +1,4 @@
+import { PUBLIC_INDEX_RECORD } from "./public-record-visibility.js";
 import { Inject, Injectable } from "@nestjs/common";
 import type { DataSource } from "typeorm";
 import { DATABASE } from "../database/database.module.js";
@@ -183,7 +184,32 @@ export class MariaDbSearchProvider implements SearchProvider {
     parsed: ReturnType<typeof parseSearchQuery>,
   ): Promise<BuiltQuery> {
     const conditions = [
-      `l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
+      PUBLIC_INDEX_RECORD,
+      `l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`,
+      `(sd.entity_type<>'ARTICLE_VERSION' OR EXISTS (
+        SELECT 1 FROM article_versions public_av
+        JOIN articles public_a ON public_a.id=public_av.article_id WHERE public_a.is_active=TRUE AND public_a.deleted_at IS NULL AND public_av.id=sd.version_id AND public_av.status IN ('PUBLISHED','REPEALED')
+          AND public_av.valid_from<=CURRENT_DATE()
+      ))`,
+      `(sd.entity_type<>'ANNEX_PAGE' OR EXISTS (
+        SELECT 1 FROM annex_files public_af
+        JOIN annex_versions public_axv ON public_axv.id=public_af.annex_version_id
+        JOIN annexes public_ax ON public_ax.id=public_axv.annex_id
+        WHERE public_af.id=sd.entity_id
+          AND public_ax.is_active=TRUE AND public_ax.deleted_at IS NULL AND public_ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+          AND public_axv.valid_from<=CURRENT_DATE()
+      ))`,
+      `(sd.entity_type<>'RELATION' OR EXISTS (
+        SELECT 1 FROM legal_relations public_lr
+        JOIN legislations public_source ON public_source.id=public_lr.source_legislation_id
+        JOIN legislations public_target ON public_target.id=public_lr.target_legislation_id
+        WHERE public_lr.id=sd.entity_id AND public_lr.is_active=TRUE AND public_lr.deleted_at IS NULL AND public_lr.review_status='REVIEWED'
+          AND public_source.is_active=TRUE AND public_source.deleted_at IS NULL AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+          AND public_target.is_active=TRUE AND public_target.deleted_at IS NULL AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      ))`,
+      `(sd.entity_type<>'AMENDMENT' OR EXISTS (
+        SELECT 1 FROM amendments public_am WHERE public_am.id=sd.entity_id AND public_am.is_active=TRUE AND public_am.deleted_at IS NULL AND public_am.status='PUBLISHED'
+      ))`,
     ];
     const values: Array<string | number> = [];
     const synonyms = await this.synonyms();
@@ -280,7 +306,7 @@ export class MariaDbSearchProvider implements SearchProvider {
 
   private async synonyms() {
     const rows = (await this.db.query(
-      `SELECT term_ar term,synonym_ar synonym FROM search_synonyms sy JOIN search_synonym_sets ss ON ss.id=sy.set_id WHERE ss.status='ACTIVE'`,
+      `SELECT term_ar term,synonym_ar synonym FROM search_synonyms sy JOIN search_synonym_sets ss ON ss.id=sy.set_id WHERE sy.is_active=TRUE AND sy.deleted_at IS NULL AND ss.is_active=TRUE AND ss.deleted_at IS NULL AND ss.status='ACTIVE'`,
     )) as Array<{ term: string; synonym: string }>;
     const map = new Map<string, string[]>();
     for (const row of rows) {

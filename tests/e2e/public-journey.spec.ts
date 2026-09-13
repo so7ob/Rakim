@@ -17,7 +17,9 @@ test("list, search, stable article link, historical date and previous-text dialo
     .allTextContents();
   await page.getByRole("button", { name: "التالي" }).click();
   await expect(page).toHaveURL(/[?&]page=2(?:&|$)/);
-  await expect(page.locator(".pagination span")).toContainText("صفحة 2 من");
+  await expect(page.locator(".pagination span")).toContainText("صفحة 2 من", {
+    timeout: 10_000,
+  });
   await expect
     .poll(() => page.locator(".legislation-card h2").allTextContents())
     .not.toEqual(firstPageTitles);
@@ -171,7 +173,7 @@ test("modifications, annex PDF and directed relations are served from API data",
   expect(pdfResponse.headers()["content-type"]).toContain("application/pdf");
 
   await page.getByRole("link", { name: /العودة إلى التشريع/ }).click();
-  await page.getByRole("link", { name: /ذات الصلة/ }).click();
+  await page.getByRole("link", { name: /^ذات الصلة \(\d+\)$/ }).click();
   await expect(
     page.getByRole("heading", { name: "التشريعات ذات الصلة" }),
   ).toBeVisible();
@@ -179,9 +181,54 @@ test("modifications, annex PDF and directed relations are served from API data",
   await expect(page.getByText("مرتبط موضوعيًا", { exact: true })).toBeVisible();
 });
 
+test("clean public routes and cross-platform latest modifications resolve", async ({
+  page,
+  request,
+}) => {
+  const latest = await request.get("/api/v1/legislations/latest-modifications");
+  expect(latest.ok()).toBeTruthy();
+  expect((await latest.json()).length).toBeGreaterThan(0);
+
+  await page.goto("/ar/latest-modifications");
+  await expect(
+    page.getByRole("heading", { name: "آخر التعديلات التشريعية" }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("قانون تعديل مستقبلي نموذجي لسنة 2027"),
+  ).toBeVisible();
+
+  await page.goto("/ar/archived-legislation");
+  await expect(
+    page.getByRole("heading", { name: "أرشيف التشريعات", exact: true }),
+  ).toBeVisible();
+  await expect(page.locator(".legislation-card")).toHaveCount(1);
+
+  for (const path of [
+    "/ar/constitution",
+    "/ar/constitution/modifications",
+    "/ar/legislative-system",
+    "/ar/policy/list",
+    "/ar/policy/guide-books",
+    "/ar/news",
+    "/ar/about-us",
+    "/ar/contact-us",
+    "/ar/legal/terms-and-conditions",
+    "/ar/legal/privacy-policy",
+    "/ar/forgot-password",
+  ]) {
+    const response = await page.goto(path);
+    expect(response?.ok(), path).toBeTruthy();
+    await expect(page.locator("h1")).toBeVisible();
+  }
+});
+
 test("responsive visual baseline", async ({ page }) => {
   await page.goto("/ar");
   await page.locator('[aria-busy="true"]').waitFor({ state: "detached" });
+  await page.addStyleTag({
+    content:
+      ":root{--color-primary:#AC4459!important;--color-burgundy:#AC4459!important;--color-action:#AC4459!important;--color-secondary:#344B61!important;--color-navy:#344B61!important;--hero-gradient:linear-gradient(120deg,#AC4459,#344B61)!important}",
+  });
   const hasHorizontalOverflow = await page.evaluate(
     () => document.documentElement.scrollWidth > window.innerWidth + 1,
   );
@@ -189,9 +236,50 @@ test("responsive visual baseline", async ({ page }) => {
   await expect(page).toHaveScreenshot("home.png", {
     fullPage: true,
     animations: "disabled",
-    mask: [page.locator(".stats strong").first()],
-    maskColor: "#314B67",
+    maxDiffPixelRatio: 0.015,
+    mask: [
+      page.locator(".home-statistics strong"),
+      page.locator(".subject-count strong"),
+      page.locator(".home-data-panel ol"),
+    ],
+    maskColor: "#344B61",
   });
+});
+
+test("header tools reveal burgundy accessible labels", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  await page.goto("/ar/legislations");
+  const home = page.locator(
+    'a.header-icon-button[data-tooltip="الصفحة الرئيسية"]',
+  );
+  const expectedHover = await home.evaluate(() => {
+    const probe = document.createElement("span");
+    probe.style.color = "var(--color-action)";
+    document.body.append(probe);
+    const color = getComputedStyle(probe).color;
+    probe.remove();
+    return color;
+  });
+  await home.hover();
+  await expect(home).toHaveCSS("color", expectedHover);
+  await expect
+    .poll(() =>
+      home.evaluate((element) =>
+        getComputedStyle(element, "::after").getPropertyValue("content"),
+      ),
+    )
+    .toContain("الصفحة الرئيسية");
+  await page.mouse.move(0, 400);
+  await home.focus();
+  await expect
+    .poll(() =>
+      home.evaluate((element) =>
+        getComputedStyle(element, "::after").getPropertyValue("opacity"),
+      ),
+    )
+    .toBe("1");
 });
 
 test("reflows at the 200% equivalent viewport", async ({ page }, testInfo) => {

@@ -1,8 +1,15 @@
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { useMemo, useState, type FormEvent } from "react";
 import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
+import { useAuth } from "../../auth/AuthContext";
+import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { SearchReindexAction } from "../../components/admin/SearchReindexAction";
 interface Synonym {
   setId: string;
   versionNo: number;
@@ -13,8 +20,19 @@ interface Synonym {
   publishedAt: string | null;
 }
 export function AdminSynonymsPage() {
+  const { hasPermission } = useAuth();
+  const canCreate = hasPermission("search.synonym.create");
+  const canDelete = hasPermission("search.synonym.delete");
+  const canActivate = hasPermission("search.synonym_set.activate");
   const data = useApi<Synonym[]>("/admin/synonyms");
   const [msg, setMsg] = useState("");
+  const [creatingSet, setCreatingSet] = useState(false);
+  const [editing, setEditing] = useState<Synonym | null>(null);
+  const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState<Synonym | null>(null);
+  const [activating, setActivating] = useState<Synonym | null>(null);
+  const [submitError, setSubmitError] = useState("");
+  const [submitting, setSubmitting] = useState(false);
   const sets = useMemo(
     () =>
       Array.from(
@@ -26,15 +44,19 @@ export function AdminSynonymsPage() {
     e.preventDefault();
     const formElement = e.currentTarget;
     const f = new FormData(formElement);
+    setSubmitting(true);
+    setSubmitError("");
     try {
       await apiRequest("/admin/synonyms", {
         body: { term: f.get("term"), synonym: f.get("synonym") },
       });
-      formElement.reset();
+      setCreating(false);
       setMsg("أضيف المرادف إلى نسخة قاموس مسودة.");
       data.retry();
     } catch (error) {
-      setMsg(error instanceof Error ? error.message : "تعذر الإضافة.");
+      setSubmitError(error instanceof Error ? error.message : "تعذر الإضافة.");
+    } finally {
+      setSubmitting(false);
     }
   };
   const activate = async (id: string) => {
@@ -43,43 +65,141 @@ export function AdminSynonymsPage() {
         body: { reason: "اعتماد ونشر قاموس المرادفات بعد المراجعة" },
       });
       setMsg("نُشرت نسخة القاموس وأصبحت متاحة للبحث مباشرة.");
+      setActivating(null);
       data.retry();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "تعذر النشر.");
+      throw e;
     }
   };
   const remove = async (id: string) => {
     try {
       await apiRequest(`/admin/synonyms/${id}`, { method: "DELETE" });
       setMsg("حُذف المرادف من المسودة.");
+      setDeleting(null);
       data.retry();
     } catch (e) {
       setMsg(e instanceof Error ? e.message : "تعذر الحذف.");
+      throw e;
     }
   };
   return (
     <section>
-      <header className="admin-title">
-        <div>
-          <span className="eyebrow dark">قابل للإصدار والمراجعة</span>
-          <h1>قاموس البحث القانوني</h1>
-        </div>
-      </header>
-      <form className="admin-card inline-form" onSubmit={submit}>
-        <label>
-          المصطلح
-          <input name="term" required />
-        </label>
-        <label>
-          المرادف
-          <input name="synonym" required />
-        </label>
-        <button className="button">إضافة لمسودة</button>
-      </form>
+      <AdminPageHeader
+        title="قاموس البحث القانوني"
+        eyebrow="قابل للإصدار والمراجعة"
+        description="إدارة نسخ المرادفات القانونية المستخدمة في توسيع نتائج البحث."
+        breadcrumbs={[
+          { label: "لوحة التحكم", to: "/ar/admin" },
+          { label: "إدارة البحث" },
+          { label: "قاموس المرادفات" },
+        ]}
+        actions={
+          <>
+            <SearchReindexAction
+              onSuccess={(count) =>
+                setMsg(`اكتملت إعادة بناء الفهرس لعدد ${count} سجل.`)
+              }
+            />
+            {canCreate && (
+              <button
+                type="button"
+                className="button"
+                onClick={() => setCreating(true)}
+              >
+                + إضافة مرادف
+              </button>
+            )}
+          </>
+        }
+      />
+      {creating && canCreate && (
+        <AdminDialog
+          title="إضافة مرادف إلى المسودة"
+          onClose={() => setCreating(false)}
+        >
+          <form className="edit-form" onSubmit={submit}>
+            {submitError && (
+              <p className="form-error" role="alert">
+                {submitError}
+              </p>
+            )}
+            <label>
+              المصطلح
+              <input name="term" required />
+            </label>
+            <label>
+              المرادف
+              <input name="synonym" required />
+            </label>
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setCreating(false)}
+                disabled={submitting}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={submitting}>
+                {submitting ? "جار الإضافة…" : "إضافة لمسودة"}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
+      )}
+      {editing && (
+        <RecordFormDialog
+          title="تعديل المرادف"
+          method="PATCH"
+          path={`/admin/synonyms/${editing.id}`}
+          fields={[
+            {
+              name: "term",
+              label: "المصطلح",
+              value: editing.termAr ?? "",
+              required: true,
+              maxLength: 200,
+            },
+            {
+              name: "synonym",
+              label: "المرادف",
+              value: editing.synonymAr ?? "",
+              required: true,
+              maxLength: 200,
+            },
+          ]}
+          onClose={() => setEditing(null)}
+          onDone={() => {
+            setEditing(null);
+            data.retry();
+          }}
+        />
+      )}
       {msg && (
         <p className="form-message" role="status">
           {msg}
         </p>
+      )}
+      {hasPermission("search.synonym_set.create") && (
+        <button
+          className="button secondary"
+          onClick={() => setCreatingSet(true)}
+        >
+          + إنشاء مجموعة مسودة
+        </button>
+      )}
+      {creatingSet && (
+        <RecordFormDialog
+          title="إنشاء مجموعة مرادفات"
+          path="/admin/synonym-sets"
+          fields={[{ name: "reason", label: "سبب الإنشاء", required: true }]}
+          onClose={() => setCreatingSet(false)}
+          onDone={() => {
+            setCreatingSet(false);
+            data.retry();
+          }}
+        />
       )}
       <div className="dictionary-versions">
         {sets.map((set) => (
@@ -87,11 +207,19 @@ export function AdminSynonymsPage() {
             <h2>
               الإصدار {set.versionNo} <StatusBadge status={set.status} />
             </h2>
+            <div className="admin-entity-actions">
+              <LifecycleActions
+                kind="synonym-sets"
+                id={set.setId}
+                label={`الإصدار ${set.versionNo}`}
+                onDone={data.retry}
+              />
+            </div>
             {set.publishedAt && (
               <p>نشر في {new Date(set.publishedAt).toLocaleString("ar-YE")}</p>
             )}
-            {set.status === "DRAFT" && (
-              <button className="button" onClick={() => activate(set.setId)}>
+            {canActivate && set.status === "DRAFT" && (
+              <button className="button" onClick={() => setActivating(set)}>
                 اعتماد هذا الإصدار ونشره
               </button>
             )}
@@ -111,7 +239,7 @@ export function AdminSynonymsPage() {
                 <th>الحالة</th>
                 <th>المصطلح</th>
                 <th>المرادف</th>
-                <th></th>
+                <th>الإجراءات</th>
               </tr>
             </thead>
             <tbody>
@@ -124,10 +252,29 @@ export function AdminSynonymsPage() {
                   <td>{item.termAr ?? "—"}</td>
                   <td>{item.synonymAr ?? "—"}</td>
                   <td>
-                    {item.id && item.status === "DRAFT" && (
+                    {item.id && (
+                      <LifecycleActions
+                        kind="synonyms"
+                        id={item.id}
+                        label={`${item.termAr} / ${item.synonymAr}`}
+                        onDone={data.retry}
+                        allowDelete={false}
+                      />
+                    )}
+                    {item.id &&
+                      item.status === "DRAFT" &&
+                      hasPermission("search.synonym.update") && (
+                        <button
+                          className="link-button"
+                          onClick={() => setEditing(item)}
+                        >
+                          تعديل
+                        </button>
+                      )}
+                    {canDelete && item.id && item.status === "DRAFT" && (
                       <button
                         className="link-button danger"
-                        onClick={() => remove(item.id!)}
+                        onClick={() => setDeleting(item)}
                       >
                         حذف
                       </button>
@@ -138,6 +285,25 @@ export function AdminSynonymsPage() {
             </tbody>
           </table>
         </div>
+      )}
+      {deleting?.id && (
+        <ConfirmDialog
+          title={`حذف المرادف «${deleting.termAr}»؟`}
+          description={`سيحذف الربط مع «${deleting.synonymAr}» من نسخة القاموس المسودة فقط.`}
+          confirmLabel="حذف المرادف"
+          onClose={() => setDeleting(null)}
+          onConfirm={() => remove(deleting.id!)}
+        />
+      )}
+      {activating && (
+        <ConfirmDialog
+          title={`نشر الإصدار ${activating.versionNo}؟`}
+          description="ستصبح هذه النسخة هي القاموس المستخدم في توسيع البحث."
+          confirmLabel="اعتماد ونشر"
+          destructive={false}
+          onClose={() => setActivating(null)}
+          onConfirm={() => activate(activating.setId)}
+        />
       )}
     </section>
   );
