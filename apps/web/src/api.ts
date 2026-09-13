@@ -13,6 +13,7 @@ export class ApiError extends Error {
       current: Record<string, unknown>;
       revision: number | Record<string, number>;
     },
+    readonly details?: Record<string, unknown>,
   ) {
     super(message);
   }
@@ -53,7 +54,12 @@ export async function apiGet<T>(
     const message = Array.isArray(body?.message)
       ? body.message.join("، ")
       : body?.message;
-    throw new ApiError(message ?? "تعذر تحميل البيانات.", response.status);
+    throw new ApiError(
+      message ?? "تعذر تحميل البيانات.",
+      response.status,
+      body?.conflict,
+      (body ?? undefined) as Record<string, unknown> | undefined,
+    );
   }
   return response.json() as Promise<T>;
 }
@@ -113,6 +119,7 @@ async function sendApiRequest<T>(
       message ?? "تعذر تنفيذ الطلب.",
       response.status,
       body?.conflict,
+      (body ?? undefined) as Record<string, unknown> | undefined,
     );
   }
   if (response.status === 204) return undefined as T;

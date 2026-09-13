@@ -81,7 +81,7 @@ export class AdminService {
         `SELECT status,COUNT(*) count FROM legislations WHERE deleted_at IS NULL GROUP BY status ORDER BY status`,
       ),
       this.db.query(
-        `SELECT si.status,COUNT(*) count FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL GROUP BY si.status ORDER BY si.status`,
+        `SELECT si.status,COUNT(*) count FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND si.deleted_at IS NULL GROUP BY si.status ORDER BY si.status`,
       ),
       this.db.query(
         `SELECT severity,COUNT(*) count FROM quality_issues WHERE status='OPEN' GROUP BY severity`,

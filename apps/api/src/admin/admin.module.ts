@@ -12,6 +12,8 @@ import { AccessControlController } from "./access-control.controller.js";
 import { AccessControlService } from "./access-control.service.js";
 import { PermissionGuard } from "../common/permission.guard.js";
 import { AuthorizationPolicyService } from "./authorization-policy.service.js";
+import { DeletionService } from "./deletion.service.js";
+import { DeletionsController } from "./deletions.controller.js";
 @Module({
   imports: [AuthModule],
   controllers: [
@@ -20,6 +22,7 @@ import { AuthorizationPolicyService } from "./authorization-policy.service.js";
     AccessControlController,
     PublicationsController,
     ReindexController,
+    DeletionsController,
   ],
   providers: [
     PermissionGuard,
@@ -27,6 +30,7 @@ import { AuthorizationPolicyService } from "./authorization-policy.service.js";
     AdminService,
     LifecycleService,
     AccessControlService,
+    DeletionService,
   ],
 })
 export class AdminModule {}

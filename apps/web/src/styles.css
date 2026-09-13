@@ -7152,3 +7152,24 @@ main .reference-relations .relation-label {
     border-inline-start: 0;
   }
 }
+
+.deletion-impact { display: grid; gap: 14px; }
+.deletion-impact-group { border: 1px solid var(--color-border); border-radius: 10px; padding: 10px 14px; }
+.deletion-impact-group summary { cursor: pointer; }
+.deletion-impact-group summary label { display: flex; align-items: center; gap: 10px; cursor: inherit; }
+.deletion-impact-group summary span:not(.tag) { color: var(--color-muted); margin-inline-start: auto; }
+.deletion-impact-group ul,
+.trash-impact-details ul { margin: 10px 0 0; max-height: 240px; overflow: auto; padding-inline-start: 22px; }
+.deletion-impact-group li,
+.trash-impact-details li { display: flex; justify-content: space-between; gap: 16px; padding-block: 5px; }
+.deletion-impact-group li small,
+.trash-impact-details li small { color: var(--color-muted); direction: ltr; }
+.trash-card > header { display: flex; justify-content: space-between; align-items: flex-start; gap: 16px; }
+.trash-card > header h2 { margin: 4px 0; }
+.trash-card > header p { margin: 0; color: var(--color-muted); }
+.trash-impact-details { margin-block: 14px; }
+@media (max-width: 700px) {
+  .trash-card > header { flex-direction: column; }
+  .deletion-impact-group summary label { flex-wrap: wrap; }
+  .deletion-impact-group summary span:not(.tag) { margin-inline-start: 0; }
+}

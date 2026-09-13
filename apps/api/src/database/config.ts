@@ -23,6 +23,7 @@ import { SourceDocHashUniqueness1700000000018 } from "./migrations/1700000000018
 import { SourceDocActiveHashConstraint1700000000019 } from "./migrations/1700000000019-source-doc-active-hash-constraint.js";
 
 import { AdministrativeLifecycle1700000000015 } from "./migrations/1700000000015-administrative-lifecycle.js";
+import { RelationalDeletionTrash1700000000020 } from "./migrations/1700000000020-relational-deletion-trash.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -65,6 +66,7 @@ export const createDataSource = () =>
       RecoveryEditRevisions1700000000017,
       SourceDocHashUniqueness1700000000018,
       SourceDocActiveHashConstraint1700000000019,
+      RelationalDeletionTrash1700000000020,
     ],
     migrationsTableName: "schema_migrations",
   });

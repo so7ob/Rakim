@@ -8,6 +8,10 @@ const fields = [
   ["users", "deleted_at"],
   ["password_recovery_requests", "token_hash"],
   ["source_documents", "active_sha256"],
+  ["source_imports", "deleted_at"],
+  ["job_queue", "cancel_requested_at"],
+  ["deletion_batches", "id"],
+  ["deletion_batch_items", "batch_id"],
   ...[
     "legislation_types",
     "subjects",
