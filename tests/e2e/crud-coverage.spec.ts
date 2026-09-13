@@ -379,6 +379,7 @@ test("amendment form creates and edits several elements in one document without 
   await page
     .getByLabel("المصدر المدقق", { exact: true })
     .selectOption(f.source.id);
+  await page.getByLabel("تاريخ إصدار الوثيقة").fill("2026-05-01");
   await page.getByLabel("بدء الأثر القانوني").fill("2026-06-01");
   for (let i = 0; i < 3; i++) {
     if (i)
@@ -397,23 +398,120 @@ test("amendment form creates and edits several elements in one document without 
       .fill("نص عنصر مستقل " + i);
   }
   await page.getByRole("button", { name: "حفظ الوثيقة وجميع عناصرها" }).click();
+  const documentTitle = "وثيقة واجهة " + f.id;
+  const row = page.getByRole("row").filter({ hasText: documentTitle });
+  await expect(row).toHaveCount(1);
+  await expect(row).toContainText("3");
   await expect(
-    page.getByRole("heading", { name: "وثيقة واجهة " + f.id, exact: true }),
-  ).toBeVisible();
-  let doc = (
-    await (await page.request.get("/api/v1/admin/amendments")).json()
-  ).find((d: { titleAr: string }) => d.titleAr === "وثيقة واجهة " + f.id);
-  expect(doc.operations).toHaveLength(3);
-  const originalIds = doc.operations.map((o: { id: string }) => o.id);
-  const card = page.locator("article.admin-card").filter({
-    has: page.getByRole("heading", {
-      name: "وثيقة واجهة " + f.id,
+    row.getByRole("link", { name: documentTitle, exact: true }),
+  ).toHaveAttribute("href", /^\/ar\/admin\/amendments\/[^/]+\/general$/);
+  await expect(page.getByText("نص عنصر مستقل 0", { exact: true })).toHaveCount(
+    0,
+  );
+  await expect(
+    page.getByRole("button", { name: "اعتماد المراجعة", exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    page.getByRole("button", {
+      name: "نشر وتطبيق جميع العناصر",
       exact: true,
     }),
+  ).toHaveCount(0);
+  let doc = (
+    await (await page.request.get("/api/v1/admin/amendments")).json()
+  ).find((d: { titleAr: string }) => d.titleAr === documentTitle);
+  expect(doc.operations).toHaveLength(3);
+  const originalIds = doc.operations.map((o: { id: string }) => o.id);
+
+  const detailResponse = await page.request.get(
+    `/api/v1/admin/amendments/${doc.id}`,
+  );
+  expect(detailResponse.ok()).toBeTruthy();
+  expect(
+    (await detailResponse.json()).operations.map((op: { id: string }) => op.id),
+  ).toEqual(originalIds);
+  expect(
+    (
+      await page.request.get(`/api/v1/admin/amendments/${randomUUID()}`)
+    ).status(),
+  ).toBe(404);
+
+  await row.getByRole("link", { name: "عرض", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ar/admin/amendments/${doc.id}/general$`),
+  );
+  await expect(
+    page.getByRole("heading", { name: documentTitle, exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("navigation", { name: "تبويبات تفاصيل وثيقة التعديل" }),
+  ).toContainText("عناصر التعديل3");
+  await expect(
+    page.getByRole("button", { name: "اعتماد المراجعة", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", {
+      name: "نشر وتطبيق جميع العناصر",
+      exact: true,
+    }),
+  ).toHaveCount(0);
+  const general = page.locator("section.admin-card");
+  await expect(general).toContainText(f.title);
+  await expect(general).toContainText(f.source.originalName);
+  await expect(general).toContainText("2026-05-01");
+  await expect(general).toContainText("2026-06-01");
+  await expect(general).toContainText("عدد عناصر التعديل");
+  await expect(general).toContainText("3");
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: documentTitle, exact: true }),
+  ).toBeVisible();
+  await page.getByRole("link", { name: /عناصر التعديل/ }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ar/admin/amendments/${doc.id}/operations$`),
+  );
+  await expect(page.locator("article.admin-list-card")).toHaveCount(3);
+  await expect(
+    page.getByText("نص عنصر مستقل 0", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("نص عنصر مستقل 1", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("نص عنصر مستقل 2", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("نص استناد للعنصر 0", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("نص استناد للعنصر 1", { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByText("نص استناد للعنصر 2", { exact: true }),
+  ).toBeVisible();
+  await expect(page.getByText("000001", { exact: true })).toBeVisible();
+  await expect(page.getByText("000002", { exact: true })).toBeVisible();
+  await expect(page.getByText("000003", { exact: true })).toBeVisible();
+  expect(
+    await page.evaluate(
+      () =>
+        document.documentElement.scrollWidth <=
+        document.documentElement.clientWidth + 1,
+    ),
+  ).toBe(true);
+  await page.screenshot({
+    path: `artifacts/crud-coverage/${test.info().project.name}-amendment-detail.png`,
+    fullPage: true,
   });
-  await card.getByRole("button", { name: "تعديل الوثيقة وعناصرها" }).click();
-  const dialog = page.getByRole("dialog");
-  await expect(page.locator("fieldset.admin-list-card")).toHaveCount(3);
+
+  await page.goto("/ar/admin/amendments/list");
+  const updatedRow = page.getByRole("row").filter({ hasText: documentTitle });
+  await updatedRow.getByRole("link", { name: "تعديل", exact: true }).click();
+  await expect(page).toHaveURL(
+    new RegExp(`/ar/admin/amendments/${doc.id}/general$`),
+  );
+  const dialog = page.getByRole("dialog", { name: `تعديل ${documentTitle}` });
+  await expect(dialog.locator("fieldset.admin-list-card")).toHaveCount(3);
   await dialog
     .locator("fieldset.admin-list-card")
     .nth(1)
@@ -423,19 +521,21 @@ test("amendment form creates and edits several elements in one document without 
   await dialog
     .getByRole("button", { name: "حفظ الوثيقة وجميع عناصرها" })
     .click();
-  await expect(page.getByRole("dialog")).toHaveCount(0);
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByText("حُفظت الوثيقة دون فقد عناصرها الأخرى."),
+  ).toBeVisible();
   await page.reload();
-  doc = (
-    await (await page.request.get("/api/v1/admin/amendments")).json()
-  ).find((d: { id: string }) => d.id === doc.id);
+  doc = await (
+    await page.request.get(`/api/v1/admin/amendments/${doc.id}`)
+  ).json();
   expect(doc.operations.map((o: { id: string }) => o.id)).toEqual(originalIds);
   expect(doc.operations[0].newText).toBe("نص عنصر مستقل 0");
   expect(doc.operations[1].newText).toBe("نص العنصر الثاني بعد التحرير");
   expect(doc.operations[2].newText).toBe("نص عنصر مستقل 2");
-  await expect(card.getByText("فعال إدارياً", { exact: true })).toHaveCount(4);
-  await card.locator("details").nth(1).locator("summary").click();
-  await page.screenshot({
-    path: `artifacts/crud-coverage/${test.info().project.name}-amendments.png`,
-    fullPage: true,
-  });
+
+  await login(page.request, "reader");
+  expect(
+    (await page.request.get(`/api/v1/admin/amendments/${doc.id}`)).status(),
+  ).toBe(403);
 });

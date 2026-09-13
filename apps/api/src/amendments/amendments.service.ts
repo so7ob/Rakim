@@ -62,19 +62,64 @@ export class AmendmentsService {
     ]);
     return { articles, sources, legislations };
   }
+  private documentRows(id?: string) {
+    return this.db.query(
+      `SELECT am.id,am.revision,am.is_active isActive,am.title_ar titleAr,am.status,
+       am.amended_legislation_id legislationId,am.source_document_id sourceDocumentId,
+       am.instrument_legislation_id instrumentLegislationId,
+       DATE_FORMAT(am.issue_date,'%Y-%m-%d') issueDate,
+       DATE_FORMAT(am.effective_from,'%Y-%m-%d') effectiveFrom,
+       DATE_FORMAT(am.created_at,'%Y-%m-%d %H:%i:%s') createdAt,
+       DATE_FORMAT(am.reviewed_at,'%Y-%m-%d %H:%i:%s') reviewedAt,
+       DATE_FORMAT(am.published_at,'%Y-%m-%d %H:%i:%s') publishedAt,
+       l.title_ar legislationTitle,instrument.title_ar instrumentLegislationTitle,
+       creator.display_name createdBy,reviewer.display_name reviewedBy,
+       sd.original_name sourceName
+       FROM amendments am
+       JOIN legislations l ON l.id=am.amended_legislation_id
+       JOIN source_documents sd ON sd.id=am.source_document_id
+       LEFT JOIN legislations instrument ON instrument.id=am.instrument_legislation_id
+       LEFT JOIN users creator ON creator.id=am.created_by
+       LEFT JOIN users reviewer ON reviewer.id=am.reviewed_by
+       WHERE am.deleted_at IS NULL${id ? " AND am.id=?" : ""}
+       ORDER BY am.created_at DESC`,
+      id ? [id] : [],
+    );
+  }
+  private operationRows(amendmentId?: string) {
+    return this.db.query(
+      `SELECT ao.id,ao.amendment_id amendmentId,ao.is_active isActive,
+       ao.operation_type operationType,ao.target_id articleId,
+       ao.target_locator paragraphLocator,ao.proposed_text newText,
+       ao.proposed_label newLabel,ao.proposed_sort_key sortKey,
+       ao.replacement_from replacementFrom,ao.citation_text citationText,
+       a.current_label articleLabel,ao.application_order applicationOrder
+       FROM amendment_operations ao
+       LEFT JOIN articles a ON a.id=ao.target_id
+       WHERE ao.deleted_at IS NULL${amendmentId ? " AND ao.amendment_id=?" : ""}
+       ORDER BY ao.application_order`,
+      amendmentId ? [amendmentId] : [],
+    );
+  }
   async list() {
-    const documents = await this.db.query(
-      `SELECT am.id,am.revision,am.is_active isActive,am.title_ar titleAr,am.status,am.amended_legislation_id legislationId,am.source_document_id sourceDocumentId,am.instrument_legislation_id instrumentLegislationId,DATE_FORMAT(am.issue_date,'%Y-%m-%d') issueDate,DATE_FORMAT(am.effective_from,'%Y-%m-%d') effectiveFrom,l.title_ar legislationTitle,creator.display_name createdBy,reviewer.display_name reviewedBy,sd.original_name sourceName FROM amendments am JOIN legislations l ON l.id=am.amended_legislation_id JOIN source_documents sd ON sd.id=am.source_document_id LEFT JOIN users creator ON creator.id=am.created_by LEFT JOIN users reviewer ON reviewer.id=am.reviewed_by WHERE am.deleted_at IS NULL ORDER BY am.created_at DESC`,
-    );
-    const operations = await this.db.query(
-      `SELECT ao.id,ao.amendment_id amendmentId,ao.is_active isActive,ao.operation_type operationType,ao.target_id articleId,ao.target_locator paragraphLocator,ao.proposed_text newText,ao.proposed_label newLabel,ao.proposed_sort_key sortKey,ao.replacement_from replacementFrom,ao.citation_text citationText,a.current_label articleLabel,ao.application_order applicationOrder FROM amendment_operations ao LEFT JOIN articles a ON a.id=ao.target_id WHERE ao.deleted_at IS NULL ORDER BY ao.application_order`,
-    );
+    const [documents, operations] = await Promise.all([
+      this.documentRows(),
+      this.operationRows(),
+    ]);
     return documents.map((doc: { id: string }) => ({
       ...doc,
       operations: operations.filter(
         (op: { amendmentId: string }) => op.amendmentId === doc.id,
       ),
     }));
+  }
+  async detail(id: string) {
+    const [documents, operations] = await Promise.all([
+      this.documentRows(id),
+      this.operationRows(id),
+    ]);
+    if (!documents[0]) throw new NotFoundException("وثيقة التعديل غير موجودة.");
+    return { ...documents[0], operations };
   }
   async create(input: AmendmentInput, actor: AuthUser) {
     requireExactPermission(actor, "amendment.create");

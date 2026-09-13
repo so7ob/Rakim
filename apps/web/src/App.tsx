@@ -25,6 +25,7 @@ import { AdminQualityPage } from "./pages/admin/AdminQualityPage";
 import { AccountPage } from "./pages/AccountPage";
 import { AdminReportsPage } from "./pages/admin/AdminReportsPage";
 import { AdminAmendmentsPage } from "./pages/admin/AdminAmendmentsPage";
+import { AdminAmendmentDetailPage } from "./pages/admin/AdminAmendmentDetailPage";
 import { LatestModificationsPage } from "./pages/LatestModificationsPage";
 import {
   ManagedPublicContentPage,
@@ -205,6 +206,14 @@ export function App() {
               element={
                 <RequirePermission anyOf={["amendment.view"]}>
                   <AdminAmendmentsPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="amendments/:id/:tab"
+              element={
+                <RequirePermission anyOf={["amendment.view"]}>
+                  <AdminAmendmentDetailPage />
                 </RequirePermission>
               }
             />

@@ -1,5 +1,5 @@
 import { useRef, useState, type FormEvent } from "react";
-import { useNavigate, useParams } from "react-router-dom";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { useApi } from "../../hooks/use-api";
@@ -10,7 +10,9 @@ import { AdminTabs } from "../../components/admin/AdminTabs";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
-interface Operation {
+import { AdminRowActions } from "../../components/admin/AdminRowActions";
+import { AdministrativeStatusBadge } from "../../components/admin/LegislationStatus";
+export interface Operation {
   id?: string;
   articleId?: string;
   articleLabel?: string;
@@ -21,9 +23,9 @@ interface Operation {
   sortKey?: string;
   paragraphLocator?: string;
   replacementFrom?: string;
-  isActive?: boolean;
+  isActive?: boolean | number;
 }
-interface Document {
+export interface Document {
   id: string;
   revision: number;
   titleAr: string;
@@ -34,8 +36,14 @@ interface Document {
   instrumentLegislationId?: string;
   issueDate?: string;
   effectiveFrom: string;
+  createdAt?: string;
+  reviewedAt?: string;
+  publishedAt?: string;
+  createdBy?: string;
+  reviewedBy?: string;
+  instrumentLegislationTitle?: string;
   status: string;
-  isActive: boolean;
+  isActive: boolean | number;
   operations: Operation[];
 }
 interface Candidates {
@@ -48,7 +56,7 @@ interface Candidates {
   sources: Array<{ id: string; originalName: string }>;
   legislations: Array<{ id: string; titleAr: string }>;
 }
-const labels: Record<string, string> = {
+export const amendmentOperationLabels: Record<string, string> = {
   ADD: "إضافة مادة جديدة",
   REPLACE: "استبدال نص / عبارة",
   CORRECT: "تصحيح",
@@ -77,13 +85,7 @@ export function AdminAmendmentsPage() {
     if (tab === "create")
       navigate("/ar/admin/amendments/list", { replace: true });
   };
-  const [editing, setEditing] = useState<Document | null>(null),
-    [message, setMessage] = useState("");
-  const [confirmation, setConfirmation] = useState<{
-    document: Document;
-    action: "review" | "publish";
-  } | null>(null);
-  const [reason, setReason] = useState("");
+  const [message, setMessage] = useState("");
   return (
     <section>
       <AdminPageHeader
@@ -123,130 +125,88 @@ export function AdminAmendmentsPage() {
       ) : data.error ? (
         <ErrorPanel message={data.error.message} retry={data.retry} />
       ) : (
-        <div className="admin-list">
-          {data.data?.map((doc) => (
-            <article className="admin-card" key={doc.id}>
-              <header>
-                <span>
-                  سير عمل الوثيقة: <StatusBadge status={doc.status} />
-                </span>
-                <h2>{doc.titleAr}</h2>
-                <p>
-                  {doc.legislationTitle} — {doc.effectiveFrom}
-                </p>
-                <p>المصدر: {doc.sourceName}</p>
-              </header>
-              <div className="admin-entity-actions">
-                <LifecycleActions
-                  kind="amendments"
-                  id={doc.id}
-                  label={doc.titleAr}
-                  onDone={data.retry}
-                />
-                {doc.status === "DRAFT" &&
-                  auth.hasPermission("amendment.update") && (
-                    <button
-                      className="button secondary"
-                      onClick={() => setEditing(doc)}
-                    >
-                      تعديل الوثيقة وعناصرها
-                    </button>
-                  )}
-                {doc.isActive &&
-                  ((doc.status === "DRAFT" &&
-                    auth.hasPermission("amendment.review")) ||
-                    (doc.status === "REVIEWED" &&
-                      auth.hasPermission("amendment.publish"))) && (
-                    <button
-                      className="button"
-                      onClick={() => {
-                        setReason("");
-                        setConfirmation({
-                          document: doc,
-                          action: doc.status === "DRAFT" ? "review" : "publish",
-                        });
-                      }}
-                    >
-                      {doc.status === "DRAFT"
-                        ? "اعتماد المراجعة"
-                        : "نشر وتطبيق جميع العناصر"}
-                    </button>
-                  )}
-              </div>
-              <h3>عناصر الوثيقة ({doc.operations.length})</h3>
-              {doc.operations.map((op, index) => (
-                <section className="admin-list-card" key={op.id}>
-                  <h4>
-                    {index + 1}. {labels[op.operationType]} — المادة{" "}
-                    {op.operationType === "ADD" ? op.newLabel : op.articleLabel}
-                  </h4>
-                  <p>{op.citationText}</p>
-                  {op.replacementFrom && (
-                    <p>العبارة الأصلية: {op.replacementFrom}</p>
-                  )}
-                  {op.newText && (
-                    <details>
-                      <summary>النص المقترح</summary>
-                      <p className="legal-text compact">{op.newText}</p>
-                    </details>
-                  )}
-                  {op.id && (
-                    <div className="admin-entity-actions">
-                      <LifecycleActions
-                        kind="amendment-operations"
-                        id={op.id}
-                        label={`عنصر ${index + 1} من ${doc.titleAr}`}
-                        onDone={data.retry}
+        <div className="admin-table-wrap">
+          <table>
+            <thead>
+              <tr>
+                <th>وثيقة التعديل</th>
+                <th>التشريع المستهدف</th>
+                <th>تاريخ الأثر</th>
+                <th>العناصر</th>
+                <th>سير العمل</th>
+                <th>الحالة الإدارية</th>
+                <th>الإجراءات</th>
+              </tr>
+            </thead>
+            <tbody>
+              {data.data?.length ? (
+                data.data.map((doc) => (
+                  <tr key={doc.id}>
+                    <td>
+                      <Link to={`/ar/admin/amendments/${doc.id}/general`}>
+                        <strong>{doc.titleAr}</strong>
+                      </Link>
+                      <small>المصدر: {doc.sourceName}</small>
+                    </td>
+                    <td>{doc.legislationTitle}</td>
+                    <td>
+                      {doc.effectiveFrom}
+                      {doc.issueDate && <small>الإصدار: {doc.issueDate}</small>}
+                    </td>
+                    <td>{doc.operations.length}</td>
+                    <td>
+                      <StatusBadge status={doc.status} />
+                    </td>
+                    <td>
+                      <AdministrativeStatusBadge
+                        active={Boolean(doc.isActive)}
                       />
-                    </div>
-                  )}
-                </section>
-              ))}
-            </article>
-          ))}
+                    </td>
+                    <td>
+                      <AdminRowActions
+                        label={`إجراءات وثيقة التعديل ${doc.titleAr}`}
+                      >
+                        <Link
+                          className="button secondary"
+                          to={`/ar/admin/amendments/${doc.id}/general`}
+                        >
+                          عرض
+                        </Link>
+                        {doc.status === "DRAFT" &&
+                          Boolean(doc.isActive) &&
+                          auth.hasPermission("amendment.update") && (
+                            <Link
+                              className="link-button"
+                              to={`/ar/admin/amendments/${doc.id}/general`}
+                              state={{ openEdit: true }}
+                            >
+                              تعديل
+                            </Link>
+                          )}
+                        <LifecycleActions
+                          kind="amendments"
+                          id={doc.id}
+                          label={doc.titleAr}
+                          showStatus={false}
+                          onDone={data.retry}
+                        />
+                      </AdminRowActions>
+                    </td>
+                  </tr>
+                ))
+              ) : (
+                <tr>
+                  <td colSpan={7}>لا توجد وثائق تعديل.</td>
+                </tr>
+              )}
+            </tbody>
+          </table>
         </div>
-      )}
-      {editing && (
-        <AmendmentFormDialog
-          document={editing}
-          onClose={() => setEditing(null)}
-          onDone={() => {
-            setEditing(null);
-            data.retry();
-            setMessage("حُفظت الوثيقة دون فقد عناصرها الأخرى.");
-          }}
-        />
-      )}
-      {confirmation && (
-        <ConfirmDialog
-          title={
-            confirmation.action === "review"
-              ? "اعتماد مراجعة الوثيقة"
-              : "نشر وثيقة التعديل"
-          }
-          description={`${confirmation.document.titleAr}: سيشمل الإجراء جميع العناصر الفعالة. النشر ينشئ نسخاً زمنية ويحفظ النصوص السابقة.`}
-          confirmLabel="تأكيد"
-          onClose={() => setConfirmation(null)}
-          onConfirm={async () => {
-            if (reason.trim().length < 3) throw new Error("سبب الإجراء مطلوب.");
-            await apiRequest(
-              `/admin/amendments/${confirmation.document.id}/${confirmation.action}`,
-              { body: { reason } },
-            );
-            setConfirmation(null);
-            data.retry();
-          }}
-        >
-          <label>
-            سبب الإجراء
-            <input value={reason} onChange={(e) => setReason(e.target.value)} />
-          </label>
-        </ConfirmDialog>
       )}
     </section>
   );
 }
-function AmendmentFormDialog({
+export function AmendmentFormDialog({
   document: doc,
   onDone,
   onClose,
@@ -419,7 +379,9 @@ function AmendmentFormDialog({
               <fieldset className="admin-list-card" key={op.id ?? index}>
                 <legend>
                   عنصر {index + 1}
-                  {op.isActive === false ? " (معطل إدارياً)" : ""}
+                  {op.isActive !== undefined && !Boolean(op.isActive)
+                    ? " (معطل إدارياً)"
+                    : ""}
                 </legend>
                 <div className="form-grid">
                   <label>
@@ -431,11 +393,13 @@ function AmendmentFormDialog({
                         update(index, "operationType", e.target.value)
                       }
                     >
-                      {Object.entries(labels).map(([value, label]) => (
-                        <option key={value} value={value}>
-                          {label}
-                        </option>
-                      ))}
+                      {Object.entries(amendmentOperationLabels).map(
+                        ([value, label]) => (
+                          <option key={value} value={value}>
+                            {label}
+                          </option>
+                        ),
+                      )}
                     </select>
                   </label>
                   {op.operationType !== "ADD" && (

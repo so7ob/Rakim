@@ -255,12 +255,7 @@ test("SUPER can delete in all eight management pages and create public pages wit
     "amendments",
   );
   await page.goto("/ar/admin/amendments");
-  await remove(
-    page,
-    page.locator("article.admin-card").filter({
-      has: page.getByRole("heading", { name: documentTitle, exact: true }),
-    }),
-  );
+  await remove(page, page.getByRole("row").filter({ hasText: documentTitle }));
   expect(
     (
       await page.request.patch(

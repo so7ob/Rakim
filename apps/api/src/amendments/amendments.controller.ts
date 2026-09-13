@@ -91,6 +91,11 @@ export class AmendmentsController {
   list() {
     return this.service.list();
   }
+  @Get(":id")
+  @Permissions("amendment.view")
+  detail(@Param("id") id: string) {
+    return this.service.detail(id);
+  }
   @Post()
   @Permissions("amendment.create")
   @ApiOperation({ summary: "إنشاء مسودة عملية تعديل بمصدر صريح" })
