@@ -13,11 +13,13 @@ export function PdfViewer({
   fileName,
   reportedPages,
   initialPage = 1,
+  downloadUrl = url,
 }: {
   url: string;
   fileName: string;
   reportedPages?: number | null;
   initialPage?: number;
+  downloadUrl?: string;
 }) {
   const [pdf, setPdf] = useState<PDFDocumentProxy | null>(null);
   const [page, setPage] = useState(initialPage);
@@ -137,7 +139,7 @@ export function PdfViewer({
             <dd>{reportedPages ?? "غير معروف"}</dd>
           </div>
         </dl>
-        <a className="button" href={url} download>
+        <a className="button" href={downloadUrl} download>
           تنزيل الملف
         </a>
       </div>
@@ -196,7 +198,7 @@ export function PdfViewer({
         <button onClick={() => shell.current?.requestFullscreen()}>
           شاشة كاملة
         </button>
-        <a href={url} download>
+        <a href={downloadUrl} download>
           تنزيل
         </a>
         <button

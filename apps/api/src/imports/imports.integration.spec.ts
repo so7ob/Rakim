@@ -67,6 +67,48 @@ describe("structured import draft persistence", () => {
     return importId;
   }
 
+  async function enforceSingleActiveHashConstraint() {
+    const hasOldIndex = await db.query(
+      "SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='source_documents' AND INDEX_NAME='uq_source_sha256_active' LIMIT 1",
+    );
+    if (hasOldIndex.length) {
+      await db.query("DROP INDEX uq_source_sha256_active ON source_documents");
+    }
+
+    const hasActiveColumn = await db.query(
+      "SELECT 1 FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='source_documents' AND COLUMN_NAME='active_sha256' LIMIT 1",
+    );
+    if (!hasActiveColumn.length) {
+      await db.query(
+        "ALTER TABLE source_documents ADD COLUMN active_sha256 CHAR(64) NULL",
+      );
+      await db.query(
+        "UPDATE source_documents SET active_sha256 = CASE WHEN is_active=TRUE THEN sha256 ELSE NULL END",
+      );
+    }
+
+    const hasActiveIndex = await db.query(
+      "SELECT 1 FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME='source_documents' AND INDEX_NAME='uq_source_active_sha256' LIMIT 1",
+    );
+    if (!hasActiveIndex.length) {
+      await db.query(
+        "DROP TRIGGER IF EXISTS trg_source_documents_set_active_hash_before_insert",
+      );
+      await db.query(
+        "DROP TRIGGER IF EXISTS trg_source_documents_set_active_hash_before_update",
+      );
+      await db.query(
+        "CREATE TRIGGER trg_source_documents_set_active_hash_before_insert BEFORE INSERT ON source_documents FOR EACH ROW SET NEW.active_sha256 = IF(NEW.is_active, NEW.sha256, NULL)",
+      );
+      await db.query(
+        "CREATE TRIGGER trg_source_documents_set_active_hash_before_update BEFORE UPDATE ON source_documents FOR EACH ROW SET NEW.active_sha256 = IF(NEW.is_active, NEW.sha256, NULL)",
+      );
+      await db.query(
+        "ALTER TABLE source_documents ADD UNIQUE KEY uq_source_active_sha256 (active_sha256)",
+      );
+    }
+  }
+
   async function attachOfficialPdf(importId: string) {
     const sourceId = randomUUID();
     const body = `%PDF-1.4 integration-${sourceId}`;
@@ -445,7 +487,8 @@ describe("structured import draft persistence", () => {
     ).toBe(0);
   });
 
-  it("allows reupload when a previously imported source is soft-deleted", async () => {
+  it("allows repeated reuploads after multiple soft-deletes of the same hash", async () => {
+    await enforceSingleActiveHashConstraint();
     const duplicateText = "نص يمكن إعادة رفعه بعد الحذف الناعم";
     const duplicateBytes = Buffer.from(duplicateText, "utf8");
     const duplicateSourceId = randomUUID();
@@ -497,5 +540,27 @@ describe("structured import draft persistence", () => {
       [duplicateSha],
     );
     expect(Number(activeWithSameHash[0].count)).toBe(1);
+
+    await db.query(
+      "UPDATE source_documents SET deleted_at=NOW(3), is_active=FALSE WHERE id=?",
+      [reupload.sourceDocumentId],
+    );
+    const reuploadAgain = await service.upload(
+      duplicateFile,
+      "بيانات الحقل بعد الحذف مرة ثانية",
+      actor,
+    );
+    sourceIds.push(reuploadAgain.sourceDocumentId);
+    importIds.push(reuploadAgain.id);
+    const allByHash = await db.query(
+      "SELECT COUNT(*) count FROM source_documents WHERE sha256=?",
+      [duplicateSha],
+    );
+    expect(Number(allByHash[0].count)).toBe(3);
+    const activeAfterSecondUpload = await db.query(
+      "SELECT COUNT(*) count FROM source_documents WHERE sha256=? AND deleted_at IS NULL AND is_active=TRUE",
+      [duplicateSha],
+    );
+    expect(Number(activeAfterSecondUpload[0].count)).toBe(1);
   });
 });

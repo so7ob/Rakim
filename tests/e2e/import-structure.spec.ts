@@ -403,6 +403,8 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
 الفصل الأول
 التعاريف
 القسم الأول ـ المصطلحات
+الفرع الأول
+مجلس الإدارة
 المادة (1): يقصد بالكلمات الآتية المعاني المبينة قرين كل منها.
 ولا يؤدي ورود كلمة المادة في هذا النص إلى إنشاء مادة جديدة.
 المادة ٢: تسري التعاريف على أحكام هذا القانون.
@@ -428,9 +430,10 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   await page.getByLabel("نسخة PDF الرسمية (اختيارية)").setInputFiles({
     name: pdfName,
     mimeType: "application/pdf",
-    buffer: Buffer.from(
-      `%PDF-1.4\n% synthetic comparison source ${unique}\n%%EOF`,
-    ),
+    buffer: Buffer.concat([
+      await readFile(resolve("tests/fixtures/import-sample.pdf")),
+      Buffer.from(`\n% import hierarchy fixture ${unique}`),
+    ]),
   });
   await page.getByLabel("جهة الحصول").fill("Fixture اصطناعية لاختبار E2E");
   const uploadResponsePromise = page.waitForResponse(
@@ -486,11 +489,28 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   await expect(row).toContainText("جاهز للمراجعة");
   await expect(row).toContainText(pdfName);
   await row.locator(":scope > summary").click();
-  await expect(row.locator(`iframe[title="المصدر: ${pdfName}"]`)).toBeVisible();
+  await expect(row.getByLabel(`عارض PDF: ${pdfName}`)).toBeVisible();
+  await expect(
+    row.getByRole("link", { name: "تنزيل المصدر للمقارنة" }),
+  ).toHaveAttribute("href", /\?download=1$/u);
+  const pdfSourceId = activeFixture.sourceIds[1]!;
+  const inlinePdfResponse = await page.request.get(
+    `/api/v1/imports/${activeFixture.importId}/attachments/${pdfSourceId}`,
+  );
+  expect(inlinePdfResponse.headers()["content-disposition"]).toMatch(
+    /^inline;/u,
+  );
+  const downloadPdfResponse = await page.request.get(
+    `/api/v1/imports/${activeFixture.importId}/attachments/${pdfSourceId}?download=1`,
+  );
+  expect(downloadPdfResponse.headers()["content-disposition"]).toMatch(
+    /^attachment;/u,
+  );
   const tree = row.getByRole("tree", { name: "بنية التشريع المستخرجة" });
   await expect(tree.getByText("الباب الأول", { exact: false })).toBeVisible();
   await expect(tree.getByText("الفصل الأول", { exact: false })).toBeVisible();
   await expect(tree.getByText("القسم الأول", { exact: false })).toBeVisible();
+  await expect(tree.getByText("الفرع الأول", { exact: false })).toBeVisible();
   await expect(tree.getByText("المادة 1", { exact: true })).toBeVisible();
   await expect(row.getByLabel("ملخص نتيجة التحليل")).toContainText("5");
   await page.screenshot({
@@ -533,8 +553,33 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   expect(draftResponse.ok()).toBeTruthy();
   activeFixture!.lawId = (await draftResponse.json()).id;
   await expect(draftRow).toContainText(draftTitle);
+  const importResponseBeforeNavigation = await page.request.get(
+    `/api/v1/imports/${activeFixture?.importId}`,
+  );
+  expect(importResponseBeforeNavigation.ok()).toBeTruthy();
+  expect((await importResponseBeforeNavigation.json()).extracted_text).toBe(
+    source.trim(),
+  );
   await draftRow.locator(":scope > summary").click();
-  const draftLink = draftRow.getByRole("link", { name: draftTitle });
+  await page.reload();
+  await page.goto("/ar/admin/imports/queue");
+  const refreshedRow = page
+    .locator("details.import-row")
+    .filter({ hasText: fileName });
+  await expect(refreshedRow).toContainText(draftTitle);
+  await refreshedRow.locator(":scope > summary").click();
+  await expect(
+    refreshedRow.getByRole("link", { name: draftTitle }),
+  ).toBeVisible();
+  await expect(refreshedRow.getByLabel(`عارض PDF: ${pdfName}`)).toBeVisible();
+  const importResponseAfterReload = await page.request.get(
+    `/api/v1/imports/${activeFixture?.importId}`,
+  );
+  expect(importResponseAfterReload.ok()).toBeTruthy();
+  expect((await importResponseAfterReload.json()).extracted_text).toBe(
+    source.trim(),
+  );
+  const draftLink = refreshedRow.getByRole("link", { name: draftTitle });
   await expect(draftLink).toBeVisible();
   await draftLink.click();
 
@@ -551,6 +596,9 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   await expect(savedChapter).toBeVisible();
   await expect(
     savedTree.getByRole("button").filter({ hasText: "القسم الأول" }),
+  ).toBeVisible();
+  await expect(
+    savedTree.getByRole("button").filter({ hasText: "الفرع الأول" }),
   ).toBeVisible();
   await expect(
     savedTree.getByRole("button").filter({ hasText: "القسم الثاني" }),
@@ -616,7 +664,7 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   );
   expect(detailResponse.ok()).toBeTruthy();
   const detail = await detailResponse.json();
-  expect(detail.structures).toHaveLength(6);
+  expect(detail.structures).toHaveLength(7);
   expect(detail.articles).toHaveLength(5);
   expect(detail.sources).toEqual(
     expect.arrayContaining([
@@ -641,8 +689,11 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
   expect(byLabel.get("القسم الأول")?.parentId).toBe(
     byLabel.get("الفصل الأول")?.id,
   );
-  expect(detail.articles[0].structureNodeId).toBe(
+  expect(byLabel.get("الفرع الأول")?.parentId).toBe(
     byLabel.get("القسم الأول")?.id,
+  );
+  expect(detail.articles[0].structureNodeId).toBe(
+    byLabel.get("الفرع الأول")?.id,
   );
 
   await page.goto(`/ar/admin/content/${lawId}/workflow`);

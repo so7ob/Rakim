@@ -18,6 +18,7 @@ export const expectedMigrations = [
   "ReferenceLifecycle1700000000016",
   "RecoveryEditRevisions1700000000017",
   "SourceDocHashUniqueness1700000000018",
+  "SourceDocActiveHashConstraint1700000000019",
 ];
 // Historical development migration (8496639), superseded by CanonicalRbacSecurity
 // 0012. It only synchronized permission data; it is not a replacement for the
@@ -44,11 +45,12 @@ export async function assertSchemaCompatible(query) {
       `DATABASE_SCHEMA_INCOMPATIBLE: الترحيلات الناقصة: ${missing.join(", ") || "لا يوجد"}. ترحيلات غير معروفة لهذه النسخة: ${unknown.join(", ") || "لا يوجد"}. طبّق الترحيلات الناقصة عبر npm run db:migrate قبل التشغيل، أو استخدم إصدار التطبيق المطابق عند وجود ترحيلات غير معروفة. لم يُغيّر فحص التوافق قاعدة البيانات.`,
     );
   const columns = await query(
-    "SELECT table_name tableName,column_name columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND (column_name IN ('deleted_at','edit_revision') OR table_name='password_recovery_requests')",
+    "SELECT table_name tableName,column_name columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND (column_name IN ('deleted_at','edit_revision') OR table_name='password_recovery_requests' OR (table_name='source_documents' AND column_name='active_sha256'))",
   );
   for (const [table, column] of [
     ["users", "deleted_at"],
     ["password_recovery_requests", "token_hash"],
+    ["source_documents", "active_sha256"],
     ...[
       "legislation_types",
       "subjects",

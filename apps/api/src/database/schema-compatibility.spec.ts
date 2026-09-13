@@ -7,6 +7,7 @@ import { createDataSource } from "./config.js";
 const fields = [
   ["users", "deleted_at"],
   ["password_recovery_requests", "token_hash"],
+  ["source_documents", "active_sha256"],
   ...[
     "legislation_types",
     "subjects",
