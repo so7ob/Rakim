@@ -198,7 +198,8 @@ export class ImportsService {
       throw new BadRequestException("لا يمكن إرفاق الملف نفسه مرتين.");
     const duplicate = await this.db.query(
       `SELECT id,original_name originalName FROM source_documents
-       WHERE sha256 IN (${referenceSha256 ? "?,?" : "?"}) LIMIT 1`,
+       WHERE sha256 IN (${referenceSha256 ? "?,?" : "?"})
+         AND deleted_at IS NULL AND is_active=TRUE LIMIT 1`,
       referenceSha256 ? [sha256, referenceSha256] : [sha256],
     );
     if (duplicate[0])
