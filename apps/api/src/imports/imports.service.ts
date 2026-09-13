@@ -29,7 +29,12 @@ const formats: Record<string, string> = {
   ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
 };
 
-const structureNodeTypes = new Set(["TITLE", "CHAPTER", "SECTION"]);
+const structureNodeRanks = new Map([
+  ["TITLE", 1],
+  ["CHAPTER", 2],
+  ["SECTION", 3],
+  ["SUBSECTION", 4],
+]);
 
 export function normalizeUploadedFilename(value: string) {
   if (!/[ÃÂØÙ]/u.test(value)) return value;
@@ -609,7 +614,8 @@ export class ImportsService {
           const key = String(node.key ?? "");
           const nodeType = String(node.nodeType ?? "");
           const parentKey = node.parentKey ? String(node.parentKey) : null;
-          if (!key || nodeIds.has(key) || !structureNodeTypes.has(nodeType))
+          const nodeRank = structureNodeRanks.get(nodeType);
+          if (!key || nodeIds.has(key) || !nodeRank)
             throw new BadRequestException(
               "نتيجة تحليل البنية غير صالحة أو تحتوي عقدة مكررة.",
             );
@@ -618,14 +624,10 @@ export class ImportsService {
             throw new BadRequestException(
               "نتيجة تحليل البنية تشير إلى أب غير موجود أو متأخر.",
             );
-          const legalParent =
-            (nodeType === "TITLE" && !parent) ||
-            (nodeType === "CHAPTER" &&
-              (!parent || parent.nodeType === "TITLE")) ||
-            (nodeType === "SECTION" &&
-              (!parent ||
-                parent.nodeType === "TITLE" ||
-                parent.nodeType === "CHAPTER"));
+          const parentRank = parent
+            ? structureNodeRanks.get(parent.nodeType)
+            : undefined;
+          const legalParent = !parent || (parentRank && parentRank < nodeRank);
           if (!legalParent)
             throw new BadRequestException(
               "نتيجة تحليل البنية تحتوي علاقة أب/ابن غير قانونية.",

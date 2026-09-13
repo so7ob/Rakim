@@ -1,5 +1,5 @@
 export type StructureKind = "BAB" | "FASL" | "QISM";
-export type StructureNodeType = "TITLE" | "CHAPTER" | "SECTION";
+export type StructureNodeType = "TITLE" | "CHAPTER" | "SECTION" | "SUBSECTION";
 export type ExtractionStatus = "CONFIRMED" | "REVIEW_REQUIRED";
 
 export interface ParsedStructureNode {
@@ -108,6 +108,14 @@ const kindByHeading = {
   الباب: { kind: "BAB", nodeType: "TITLE" },
   الفصل: { kind: "FASL", nodeType: "CHAPTER" },
   القسم: { kind: "QISM", nodeType: "SECTION" },
+  الفرع: { kind: "QISM", nodeType: "SUBSECTION" },
+} as const;
+
+const structureRank = {
+  الباب: 1,
+  الفصل: 2,
+  القسم: 3,
+  الفرع: 4,
 } as const;
 
 const arabicIndicDigits = "٠١٢٣٤٥٦٧٨٩";
@@ -198,7 +206,7 @@ function cleanMarkdownLine(line: string, hasFollowingLine: boolean): string {
 
 function parseStructureHeading(line: string) {
   const match = compact(line).match(
-    /^(الباب|الفصل|القسم)\s+(?:رقم\s*)?([0-9٠-٩]+|[\p{L}]+(?:\s+[\p{L}]+)?)(?:\s*[:：\-–—ـ]+\s*|\s+)?(.*)$/u,
+    /^(الباب|الفصل|القسم|الفرع)\s+(?:رقم\s*)?([0-9٠-٩]+|[\p{L}]+(?:\s+[\p{L}]+)?)(?:\s*[:：\-–—ـ]+\s*|\s+)?(.*)$/u,
   );
   if (!match) return null;
   const number = numberValue(match[2]!);
@@ -235,7 +243,8 @@ function isLikelyFollowingTitle(line: string): boolean {
   if (!value || value.length > 160 || value.split(/\s+/u).length > 14)
     return false;
   if (/[.!؟؛]$/u.test(value) || pageMarker.test(value)) return false;
-  if (/^(?:الباب|الفصل|القسم|المادة|مادة)(?:\s|$)/u.test(value)) return false;
+  if (/^(?:الباب|الفصل|القسم|الفرع|المادة|مادة)(?:\s|$)/u.test(value))
+    return false;
   return true;
 }
 
@@ -272,6 +281,7 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
   let currentBab: string | null = null;
   let currentFasl: string | null = null;
   let currentQism: string | null = null;
+  let currentFar: string | null = null;
   let documentOrder = 0;
   let sawLegalToken = false;
 
@@ -309,18 +319,24 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
       documentOrder += 1;
       const metadata = kindByHeading[structureHeading.heading];
       const key = `node-${String(nodes.length + 1).padStart(4, "0")}`;
-      let parentKey: string | null = null;
-      if (metadata.kind === "BAB") {
+      const rank = structureRank[structureHeading.heading];
+      const activeParents = [currentBab, currentFasl, currentQism, currentFar];
+      const parentKey =
+        [...activeParents.slice(0, rank - 1)].reverse().find(Boolean) ?? null;
+      if (structureHeading.heading === "الباب") {
         currentBab = key;
         currentFasl = null;
         currentQism = null;
-      } else if (metadata.kind === "FASL") {
-        parentKey = currentBab;
+        currentFar = null;
+      } else if (structureHeading.heading === "الفصل") {
         currentFasl = key;
         currentQism = null;
-      } else {
-        parentKey = currentFasl ?? currentBab;
+        currentFar = null;
+      } else if (structureHeading.heading === "القسم") {
         currentQism = key;
+        currentFar = null;
+      } else {
+        currentFar = key;
       }
       let title = structureHeading.title;
       if (!title) {
@@ -374,7 +390,8 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
         number: articleHeading.number,
         headingLabel: `${articleHeading.heading} ${articleHeading.rawNumber}`,
         title: null,
-        structureNodeKey: currentQism ?? currentFasl ?? currentBab,
+        structureNodeKey:
+          currentFar ?? currentQism ?? currentFasl ?? currentBab,
         sortKey: sortKey(articles.length + 1),
         documentOrder,
         sourceLine: index + 1,
@@ -385,8 +402,8 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
       continue;
     }
 
-    if (/^(?:الباب|الفصل|القسم)(?:\s|$)/u.test(line)) {
-      const heading = line.match(/^(الباب|الفصل|القسم)(?:\s|$)/u)?.[1];
+    if (/^(?:الباب|الفصل|القسم|الفرع)(?:\s|$)/u.test(line)) {
+      const heading = line.match(/^(الباب|الفصل|القسم|الفرع)(?:\s|$)/u)?.[1];
       flushArticle();
       flushUnassigned();
       sawLegalToken = true;
@@ -394,10 +411,15 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
         currentBab = null;
         currentFasl = null;
         currentQism = null;
+        currentFar = null;
       } else if (heading === "الفصل") {
         currentFasl = null;
         currentQism = null;
-      } else currentQism = null;
+        currentFar = null;
+      } else if (heading === "القسم") {
+        currentQism = null;
+        currentFar = null;
+      } else currentFar = null;
       issues.push({
         code: "UNRECOGNIZED_STRUCTURE_HEADING",
         message: "عنوان بنية محتمل لم يُفسر، ولذلك لم يُخترع له أب.",
@@ -429,7 +451,7 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
       headingLabel: "المادة 1",
       title: null,
       text: fallbackText,
-      structureNodeKey: currentQism ?? currentFasl ?? currentBab,
+      structureNodeKey: currentFar ?? currentQism ?? currentFasl ?? currentBab,
       sortKey: sortKey(1),
       documentOrder,
       sourceLine: 1,

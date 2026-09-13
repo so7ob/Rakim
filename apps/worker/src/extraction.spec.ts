@@ -266,6 +266,12 @@ describe("Arabic legal structure parser", () => {
       "node-0003",
     ],
     [
+      "باب وفصل فرع ومواد",
+      "الباب الأول: عام\nالفصل الأول: تعريفات\nالفرع الأول: مجلس الإدارة\nالمادة 1: نص",
+      ["BAB", "FASL", "QISM"],
+      "node-0003",
+    ],
+    [
       "باب وفصل ومواد",
       "الباب الأول: عام\nالفصل الأول: تعريفات\nالمادة 1: نص",
       ["BAB", "FASL"],
@@ -338,6 +344,56 @@ describe("Arabic legal structure parser", () => {
       "node-0003",
       "node-0004",
     ]);
+  });
+
+  it("assigns articles to الفرع headings and keeps multiple فرع under the same chapter", () => {
+    const result = parseStructure(
+      "**الفصل الأول**\n**تعريفات**\n**الفرع الأول**\n**المصطلحات**\nالمادة ١: أ\n**الفرع الثاني**\n**المجالس**\nالمادة ٢: ب",
+    );
+    expect(result.nodes.map((node) => node.kind)).toEqual([
+      "FASL",
+      "QISM",
+      "QISM",
+    ]);
+    expect(result.nodes.map((node) => node.title)).toEqual([
+      "تعريفات",
+      "المصطلحات",
+      "المجالس",
+    ]);
+    expect(result.nodes[1]?.parentKey).toBe("node-0001");
+    expect(result.nodes[2]?.parentKey).toBe("node-0001");
+    expect(result.articles.map((article) => article.structureNodeKey)).toEqual([
+      "node-0002",
+      "node-0003",
+    ]);
+  });
+
+  it("nests الفرع under an active القسم and assigns its articles to the branch", () => {
+    const result = parseStructure(
+      "الفصل الثالث: إدارة الهيئة\nالقسم الأول: التنظيم\nالفرع الأول: مجلس الإدارة\nالمادة 1: نص",
+    );
+    expect(result.nodes[2]).toEqual(
+      expect.objectContaining({
+        label: "الفرع الأول",
+        nodeType: "SUBSECTION",
+        parentKey: "node-0002",
+      }),
+    );
+    expect(result.articles[0]?.structureNodeKey).toBe("node-0003");
+  });
+
+  it("flags an unnumbered فرع as unrecognized heading and keeps following article parent", () => {
+    const result = parseStructure(
+      "الباب الأول: عام\nالفصل الأول: تعريفات\nالفرع التمهيدي\nالمادة 1: نص",
+    );
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({
+        code: "UNRECOGNIZED_STRUCTURE_HEADING",
+        sourceLine: 3,
+        excerpt: "الفرع التمهيدي",
+      }),
+    );
+    expect(result.articles[0]?.structureNodeKey).toBe("node-0002");
   });
 
   it("resets chapter and section when a new title starts", () => {

@@ -3,7 +3,14 @@ import { AdminDialog } from "../../components/admin/AdminDialog";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
 import { SourceEditor } from "./AdminContentDetailPage";
-import { useEffect, useRef, useState, type FormEvent } from "react";
+import {
+  lazy,
+  Suspense,
+  useEffect,
+  useRef,
+  useState,
+  type FormEvent,
+} from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
@@ -12,6 +19,12 @@ import { StatusBadge } from "../../components/StatusBadge";
 import { useApi } from "../../hooks/use-api";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
+
+const PdfViewer = lazy(() =>
+  import("../../components/PdfViewer").then((module) => ({
+    default: module.PdfViewer,
+  })),
+);
 interface ImportItem {
   id: string;
   sourceDocumentId: string;
@@ -385,10 +398,12 @@ function ImportPreview({
     ? `/api/v1/imports/${id}/attachments/${officialPdf.sourceDocumentId}`
     : `/api/v1/imports/${id}/source`;
   const sourceName = officialPdf?.originalName ?? name;
-  const viewable =
-    Boolean(officialPdf) ||
-    mediaType === "application/pdf" ||
-    mediaType.startsWith("image/");
+  const normalizedMediaType = mediaType.toLowerCase().trim();
+  const sourceIsPdf =
+    Boolean(officialPdf) || normalizedMediaType === "application/pdf";
+  const sourceIsImage =
+    !officialPdf && normalizedMediaType.startsWith("image/");
+  const downloadUrl = `${sourceUrl}?download=1`;
   return (
     <>
       {auth.hasPermission("source.update") && (
@@ -479,13 +494,23 @@ function ImportPreview({
           {officialPdf && (
             <p className="form-hint">نسخة PDF الرسمية: {sourceName}</p>
           )}
-          {viewable ? (
-            <iframe title={`المصدر: ${sourceName}`} src={sourceUrl} />
-          ) : (
-            <a className="button secondary" href={sourceUrl} download>
+          {sourceIsPdf ? (
+            <Suspense fallback={<p>جار تحميل عارض PDF…</p>}>
+              <PdfViewer
+                url={sourceUrl}
+                downloadUrl={downloadUrl}
+                fileName={sourceName}
+                reportedPages={officialPdf?.pageCount}
+              />
+            </Suspense>
+          ) : sourceIsImage ? (
+            <img src={sourceUrl} alt={`المصدر: ${sourceName}`} />
+          ) : null}
+          <p>
+            <a className="button secondary" href={downloadUrl} download>
               تنزيل المصدر للمقارنة
             </a>
-          )}
+          </p>
         </section>
       </div>
     </>
@@ -567,7 +592,7 @@ export function StructureAnalysisPreview({
         {[
           ["الأبواب", analysis.summary.babs],
           ["الفصول", analysis.summary.fasls],
-          ["الأقسام", analysis.summary.qisms],
+          ["الأقسام والفروع", analysis.summary.qisms],
           ["المواد", analysis.summary.articles],
           ["مواد دون بنية", analysis.summary.rootArticles],
           ["تحتاج مراجعة", analysis.summary.reviewRequired],

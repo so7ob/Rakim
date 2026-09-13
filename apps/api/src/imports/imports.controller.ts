@@ -8,6 +8,7 @@ import {
   NotFoundException,
   Param,
   Post,
+  Query,
   Req,
   Res,
   StreamableFile,
@@ -20,11 +21,22 @@ import { ApiConsumes, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { IsInt, IsOptional, IsString, Length, Max, Min } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { createReadStream } from "node:fs";
-import { resolve, sep } from "node:path";
+import { extname, resolve, sep } from "node:path";
 import type { Response } from "express";
 import { SessionGuard } from "../auth/session.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { ImportsService } from "./imports.service.js";
+
+function encodeDownloadName(fileName: string) {
+  const extension = extname(fileName)
+    .toLowerCase()
+    .replace(/[^.a-z0-9]/gu, "")
+    .slice(0, 12);
+  return {
+    filename: "source" + extension,
+    filenameStar: encodeURIComponent(fileName),
+  };
+}
 
 class AttachmentDto {
   @IsString() sourceDocumentId!: string;
@@ -138,6 +150,7 @@ export class ImportsController {
   @Permissions("source.view")
   async source(
     @Param("id") id: string,
+    @Query("download") download: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ) {
     const file = await this.service.source(id);
@@ -148,9 +161,11 @@ export class ImportsController {
     if (!target.startsWith(`${root}${sep}`))
       throw new NotFoundException("مسار المصدر غير صالح.");
     response.setHeader("Content-Type", file.mediaType);
+    const { filename, filenameStar } = encodeDownloadName(file.fileName);
+    const disposition = download === "1" ? "attachment" : "inline";
     response.setHeader(
       "Content-Disposition",
-      `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+      `${disposition}; filename="${filename}"; filename*=UTF-8''${filenameStar}`,
     );
     return new StreamableFile(createReadStream(target));
   }
@@ -159,6 +174,7 @@ export class ImportsController {
   async attachment(
     @Param("id") id: string,
     @Param("sourceDocumentId") sourceDocumentId: string,
+    @Query("download") download: string | undefined,
     @Res({ passthrough: true }) response: Response,
   ) {
     const file = await this.service.attachment(id, sourceDocumentId);
@@ -169,9 +185,11 @@ export class ImportsController {
     if (!target.startsWith(`${root}${sep}`))
       throw new NotFoundException("مسار المصدر غير صالح.");
     response.setHeader("Content-Type", file.mediaType);
+    const { filename, filenameStar } = encodeDownloadName(file.fileName);
+    const disposition = download === "1" ? "attachment" : "inline";
     response.setHeader(
       "Content-Disposition",
-      `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+      `${disposition}; filename="${filename}"; filename*=UTF-8''${filenameStar}`,
     );
     return new StreamableFile(createReadStream(target));
   }
