@@ -1708,6 +1708,8 @@ button:disabled {
 }
 .audit-list {
   display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow-wrap: anywhere;
 }
 .audit-list article,
 .audit-list details > summary {

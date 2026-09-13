@@ -1,3 +1,6 @@
+import { useEditConflict } from "../../components/admin/useEditConflict";
+import { AdminGazettesPage } from "./AdminGazettesPage";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
 import { useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -5,11 +8,12 @@ import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
 import { AdminDialog } from "../../components/admin/AdminDialog";
-import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
-import { AdminTabs } from "../../components/admin/AdminTabs";
+import { ReferenceDataHeader } from "../../components/admin/ReferenceDataHeader";
+import { ReferenceDataTabs } from "../../components/admin/ReferenceDataTabs";
 
 interface Item {
   id: string;
+  editRevision: number;
   code: string;
   nameAr: string;
   isActive: boolean;
@@ -37,6 +41,14 @@ export function AdminReferenceDataPage() {
   const [message, setMessage] = useState("");
   const [editing, setEditing] = useState<Item | null>(null);
   const [creating, setCreating] = useState(false);
+  const counts = state.data
+    ? {
+        types: state.data.types.length,
+        subjects: state.data.subjects.length,
+        authorities: state.data.authorities.length,
+      }
+    : undefined;
+  if (kind === "gazettes") return <AdminGazettesPage counts={counts} />;
   if (state.loading) return <LoadingCards />;
   if (state.error || !state.data)
     return (
@@ -54,36 +66,31 @@ export function AdminReferenceDataPage() {
   };
   return (
     <section>
-      <AdminPageHeader
-        eyebrow="قواميس قابلة للإدارة"
-        title="القوائم المرجعية"
-        description="الأنواع والجهات والموضوعات المستخدمة في نماذج التشريعات ومرشحات البحث."
-        breadcrumbs={[
-          { label: "لوحة الإدارة", to: "/ar/admin" },
-          { label: "إدارة المحتوى" },
-          { label: "القوائم المرجعية" },
-        ]}
+      <ReferenceDataHeader
         actions={
           auth.hasPermission("reference.create") ? (
-            <button type="button" className="button" onClick={() => setCreating(true)}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => setCreating(true)}
+            >
               + إضافة إلى {labels[activeKind]}
             </button>
           ) : undefined
         }
       />
-      <AdminTabs
-        label="أنواع القوائم المرجعية"
-        items={[
-          { label: "أنواع التشريعات", to: "/ar/admin/reference-data/types", count: state.data.types.length },
-          { label: "التصنيفات والموضوعات", to: "/ar/admin/reference-data/subjects", count: state.data.subjects.length },
-          { label: "الجهات", to: "/ar/admin/reference-data/authorities", count: state.data.authorities.length },
-        ]}
-      />
-      {message && <p role="status" className="form-message">{message}</p>}
+      <ReferenceDataTabs counts={counts} />
+      {message && (
+        <p role="status" className="form-message">
+          {message}
+        </p>
+      )}
       <section className="admin-card">
         <h2>{labels[activeKind]}</h2>
         {!items.length ? (
-          <div className="admin-empty-inline">لا توجد عناصر في هذه القائمة.</div>
+          <div className="admin-empty-inline">
+            لا توجد عناصر في هذه القائمة.
+          </div>
         ) : (
           <div className="admin-table-wrap">
             <table>
@@ -92,23 +99,42 @@ export function AdminReferenceDataPage() {
                   <th>الاسم</th>
                   <th>الرمز</th>
                   {activeKind === "subjects" && <th>الموضوع الأب</th>}
-                  <th>الحالة</th>
+                  <th>الحالة الإدارية</th>
                   <th>الإجراءات</th>
                 </tr>
               </thead>
               <tbody>
                 {items.map((item) => (
                   <tr key={item.id}>
-                    <td><strong>{item.nameAr}</strong></td>
-                    <td><code dir="ltr">{item.code}</code></td>
-                    {activeKind === "subjects" && <td>{parentName(item.parentId)}</td>}
-                    <td>{item.isActive ? "فعال" : "معطل"}</td>
                     <td>
+                      <strong>{item.nameAr}</strong>
+                    </td>
+                    <td>
+                      <code dir="ltr">{item.code}</code>
+                    </td>
+                    {activeKind === "subjects" && (
+                      <td>{parentName(item.parentId)}</td>
+                    )}
+                    <td>{item.isActive ? "فعال إدارياً" : "معطل إدارياً"}</td>
+                    <td>
+                      <LifecycleActions
+                        kind={activeKind}
+                        showStatus={false}
+                        id={item.id}
+                        label={item.nameAr}
+                        onDone={state.retry}
+                      />
                       {auth.hasPermission("reference.update") ? (
-                        <button type="button" className="button secondary" onClick={() => setEditing(item)}>
+                        <button
+                          type="button"
+                          className="button secondary"
+                          onClick={() => setEditing(item)}
+                        >
                           تعديل
                         </button>
-                      ) : "عرض فقط"}
+                      ) : (
+                        "عرض فقط"
+                      )}
                     </td>
                   </tr>
                 ))}
@@ -122,7 +148,10 @@ export function AdminReferenceDataPage() {
           kind={activeKind}
           subjects={state.data.subjects}
           onClose={() => setCreating(false)}
-          onDone={(text) => { setCreating(false); done(text); }}
+          onDone={(text) => {
+            setCreating(false);
+            done(text);
+          }}
         />
       )}
       {editing && (
@@ -131,7 +160,10 @@ export function AdminReferenceDataPage() {
           item={editing}
           subjects={state.data.subjects}
           onClose={() => setEditing(null)}
-          onDone={(text) => { setEditing(null); done(text); }}
+          onDone={(text) => {
+            setEditing(null);
+            done(text);
+          }}
         />
       )}
     </section>
@@ -151,11 +183,13 @@ function ReferenceDialog({
   onClose: () => void;
   onDone: (message: string) => void;
 }) {
+  const conflict = useEditConflict(item?.editRevision);
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
   const submit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const form = new FormData(event.currentTarget);
+    const formElement = event.currentTarget;
+    const form = new FormData(formElement);
     setSubmitting(true);
     setError("");
     try {
@@ -166,6 +200,7 @@ function ReferenceDialog({
         {
           ...(item ? { method: "PATCH" } : {}),
           body: {
+            ...(item ? { editRevision: conflict.revision } : {}),
             code: form.get("code"),
             nameAr: form.get("nameAr"),
             parentId: form.get("parentId"),
@@ -174,8 +209,15 @@ function ReferenceDialog({
           },
         },
       );
-      onDone(item ? "حُفظ عنصر القائمة المرجعية." : "أضيف عنصر القائمة المرجعية.");
+      onDone(
+        item ? "حُفظ عنصر القائمة المرجعية." : "أضيف عنصر القائمة المرجعية.",
+      );
     } catch (reason) {
+      conflict.capture(
+        reason,
+        { ...Object.fromEntries(form), isActive: form.has("isActive") },
+        formElement,
+      );
       setError(reason instanceof Error ? reason.message : "تعذر حفظ العنصر.");
       setSubmitting(false);
     }
@@ -183,15 +225,27 @@ function ReferenceDialog({
   return (
     <AdminDialog
       title={`${item ? "تعديل" : "إضافة"} عنصر في ${labels[kind]}`}
-      description={item ? "القيمة الحالية تبقى معروضة حتى يؤكد الخادم التعديل." : undefined}
+      description={
+        item ? "القيمة الحالية تبقى معروضة حتى يؤكد الخادم التعديل." : undefined
+      }
       onClose={onClose}
     >
       <form className="edit-form" onSubmit={submit}>
-        {error && <p className="form-error" role="alert">{error}</p>}
+        {conflict.notice}
+        {error && (
+          <p className="form-error" role="alert">
+            {error}
+          </p>
+        )}
         <div className="form-columns">
           <label>
             الرمز
-            <input name="code" defaultValue={item?.code ?? ""} pattern="[A-Za-z0-9_]+" required />
+            <input
+              name="code"
+              defaultValue={item?.code ?? ""}
+              pattern="[A-Za-z0-9_]+"
+              required
+            />
           </label>
           <label>
             الاسم العربي
@@ -202,14 +256,22 @@ function ReferenceDialog({
               الموضوع الأب
               <select name="parentId" defaultValue={item?.parentId ?? ""}>
                 <option value="">بلا أب</option>
-                {subjects.filter((subject) => subject.id !== item?.id).map((subject) => (
-                  <option key={subject.id} value={subject.id}>{subject.nameAr}</option>
-                ))}
+                {subjects
+                  .filter((subject) => subject.id !== item?.id)
+                  .map((subject) => (
+                    <option key={subject.id} value={subject.id}>
+                      {subject.nameAr}
+                    </option>
+                  ))}
               </select>
             </label>
           )}
           <label className="setting-toggle">
-            <input name="isActive" type="checkbox" defaultChecked={item?.isActive ?? true} />
+            <input
+              name="isActive"
+              type="checkbox"
+              defaultChecked={item?.isActive ?? true}
+            />
             فعال
           </label>
         </div>
@@ -218,8 +280,20 @@ function ReferenceDialog({
           <input name="reason" required />
         </label>
         <div className="admin-entity-actions">
-          <button type="button" className="button secondary" onClick={onClose} disabled={submitting}>إلغاء</button>
-          <button className="button" disabled={submitting}>{submitting ? "جار الحفظ…" : item ? "حفظ" : "إضافة"}</button>
+          <button
+            type="button"
+            className="button secondary"
+            onClick={onClose}
+            disabled={submitting}
+          >
+            إلغاء
+          </button>
+          <button
+            className="button"
+            disabled={submitting || conflict.hasConflict}
+          >
+            {submitting ? "جار الحفظ…" : item ? "حفظ" : "إضافة"}
+          </button>
         </div>
       </form>
     </AdminDialog>

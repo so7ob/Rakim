@@ -1,3 +1,4 @@
+import { PERMISSION_CATALOG } from "../common/permission-catalog.js";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { DataSource } from "typeorm";
 import { WORKFLOW_POLICIES } from "../admin/workflow-policies.js";
@@ -18,7 +19,7 @@ describe("canonical RBAC database migration", () => {
     if (db?.isInitialized) await db.destroy();
   });
 
-  it("persists exactly 75 active canonical permissions and keeps legacy rows", async () => {
+  it("persists the runtime catalog while keeping the frozen baseline and legacy rows", async () => {
     const rows = await db.query(
       `SELECT
         SUM(is_active=1 AND is_legacy=0) canonicalCount,
@@ -26,7 +27,7 @@ describe("canonical RBAC database migration", () => {
         SUM(is_active=1 AND is_legacy=0 AND supported_scopes_json<>JSON_ARRAY('ALL')) invalidScopeCount
        FROM permission_definitions`,
     );
-    expect(Number(rows[0].canonicalCount)).toBe(75);
+    expect(Number(rows[0].canonicalCount)).toBe(PERMISSION_CATALOG.length);
     expect(Number(rows[0].legacyCount)).toBeGreaterThan(0);
     expect(Number(rows[0].invalidScopeCount)).toBe(0);
 
@@ -35,7 +36,7 @@ describe("canonical RBAC database migration", () => {
        WHERE is_active=1 AND is_legacy=0 ORDER BY code`,
     );
     expect(codes.map((row: { code: string }) => row.code).sort()).toEqual(
-      CANONICAL_PERMISSION_CATALOG.map((item) => item.code).sort(),
+      PERMISSION_CATALOG.map((item) => item.code).sort(),
     );
   });
 

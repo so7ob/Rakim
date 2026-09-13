@@ -17,6 +17,7 @@ import {
   IsIn,
   IsInt,
   IsObject,
+  IsOptional,
   IsString,
   Length,
   Max,
@@ -29,11 +30,21 @@ import { SessionGuard } from "../auth/session.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { SiteService } from "./site.service.js";
 
+class CreatePageDto {
+  @IsString() @Length(2, 120) slug!: string;
+  @IsString() @Length(1, 500) titleAr!: string;
+  @IsString() @Length(0, 10000) introAr!: string;
+  @IsString() @Length(1, 500) sectionTitle!: string;
+  @IsString() @Length(1, 100000) sectionBody!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
 class SettingsDto {
+  @IsObject() editRevisions!: Record<string, number>;
   @IsObject() values!: Record<string, string | boolean>;
   @IsString() @Length(3, 1000) reason!: string;
 }
 class NavigationDto {
+  @IsOptional() @IsInt() @Min(1) editRevision?: number;
   @IsIn(["HEADER", "FOOTER"]) location!: "HEADER" | "FOOTER";
   @IsString() @Length(1, 160) labelAr!: string;
   @IsString() @Length(1, 500) path!: string;
@@ -46,6 +57,7 @@ class PageSectionDto {
   @IsString() @Length(1, 100000) body!: string;
 }
 class PageDto {
+  @IsInt() @Min(1) editRevision!: number;
   @IsString() @Length(0, 200) eyebrowAr!: string;
   @IsString() @Length(1, 500) titleAr!: string;
   @IsString() @Length(0, 10000) introAr!: string;
@@ -93,7 +105,12 @@ export class AdminSiteController {
     "settings.legislation_page.update",
   )
   settings(@Body() dto: SettingsDto, @Req() req: AuthenticatedRequest) {
-    return this.service.updateSettings(dto.values, req.user!, dto.reason);
+    return this.service.updateSettings(
+      dto.values,
+      req.user!,
+      dto.reason,
+      dto.editRevisions,
+    );
   }
   @Post("navigation")
   @Permissions("navigation.create")
@@ -113,6 +130,11 @@ export class AdminSiteController {
   ) {
     const { reason, ...input } = dto;
     return this.service.updateNavigation(id, input, req.user!, reason);
+  }
+  @Post("pages")
+  @Permissions("public_page.create")
+  createPage(@Body() dto: CreatePageDto, @Req() req: AuthenticatedRequest) {
+    return this.service.createPage(dto, req.user!);
   }
   @Patch("pages/:id")
   @Permissions(

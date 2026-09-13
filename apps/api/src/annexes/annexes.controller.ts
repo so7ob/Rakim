@@ -26,11 +26,11 @@ export class AnnexesController {
     const rows = await this.db.query(
       `SELECT ax.id,ax.legislation_id legislationId,ax.annex_type annexType,ax.title_ar titleAr,ax.status,
       av.id versionId,av.version_no versionNo,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,
-      af.id fileId,af.original_name fileName,af.media_type mediaType,af.byte_size byteSize,af.page_count pageCount,af.ocr_status ocrStatus,
+      COALESCE(af.id,sd.id) fileId,COALESCE(af.original_name,sd.original_name) fileName,COALESCE(af.media_type,sd.media_type) mediaType,COALESCE(af.byte_size,sd.byte_size) byteSize,COALESCE(af.page_count,sd.page_count) pageCount,af.ocr_status ocrStatus,
       av.structured_table_json structuredTable FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id
-      LEFT JOIN annex_files af ON af.annex_version_id=av.id JOIN legislations l ON l.id=ax.legislation_id
-      WHERE ax.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
-        AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
+      LEFT JOIN annex_files af ON af.annex_version_id=av.id JOIN source_documents sd ON sd.id=av.source_document_id AND sd.is_active=TRUE AND sd.deleted_at IS NULL JOIN legislations l ON l.id=ax.legislation_id
+      WHERE ax.id=? AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+        AND ax.is_active=TRUE AND ax.deleted_at IS NULL AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
         AND av.valid_from<=CURRENT_DATE()
       ORDER BY av.valid_from DESC`,
       [id],
@@ -54,10 +54,10 @@ export class AnnexesController {
     @Res({ passthrough: true }) response: Response,
   ) {
     const rows = await this.db.query(
-      `SELECT af.storage_key storageKey,af.original_name fileName,af.media_type mediaType
-      FROM annex_files af JOIN annex_versions av ON av.id=af.annex_version_id JOIN annexes ax ON ax.id=av.annex_id
-      JOIN legislations l ON l.id=ax.legislation_id WHERE ax.id=? AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
-      AND ax.status IN ('PUBLISHED','REPLACED','REPEALED') AND av.valid_from<=CURRENT_DATE()
+      `SELECT COALESCE(af.storage_key,sd.storage_key) storageKey,COALESCE(af.original_name,sd.original_name) fileName,COALESCE(af.media_type,sd.media_type) mediaType
+      FROM annex_versions av JOIN source_documents sd ON sd.id=av.source_document_id AND sd.is_active=TRUE AND sd.deleted_at IS NULL LEFT JOIN annex_files af ON af.annex_version_id=av.id JOIN annexes ax ON ax.id=av.annex_id
+      JOIN legislations l ON l.id=ax.legislation_id WHERE ax.id=? AND l.is_active=TRUE AND l.deleted_at IS NULL AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+      AND ax.is_active=TRUE AND ax.deleted_at IS NULL AND ax.status IN ('PUBLISHED','REPLACED','REPEALED') AND av.valid_from<=CURRENT_DATE()
       AND (? IS NULL OR av.id=?)
       ORDER BY av.valid_from DESC LIMIT 1`,
       [id, version ?? null, version ?? null],

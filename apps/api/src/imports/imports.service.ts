@@ -1,3 +1,5 @@
+import { assertActiveReference } from "../admin/record-validation.js";
+import { requireExactPermission } from "../admin/lifecycle.service.js";
 import {
   BadRequestException,
   ConflictException,
@@ -336,12 +338,96 @@ export class ImportsService {
     };
   }
 
+  async changeAttachment(
+    id: string,
+    sourceId: string,
+    remove: boolean,
+    actor: AuthUser,
+    reason: string,
+  ) {
+    requireExactPermission(actor, remove ? "source.delete" : "source.update");
+    return this.db.transaction(async (m) => {
+      const [bundle] = await m.query(
+        "SELECT si.*,sd.deleted_at,sd.is_active FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE si.id=? FOR UPDATE",
+        [id],
+      );
+      if (!bundle || bundle.deleted_at || !bundle.is_active)
+        throw new NotFoundException("حزمة المصدر غير موجودة أو معطلة.");
+      if (["QUEUED", "EXTRACTING", "OCR_RUNNING"].includes(bundle.status))
+        throw new ConflictException(
+          "انتظر انتهاء الاستخراج قبل تغيير المرفقات.",
+        );
+      if (bundle.legislation_id) {
+        const [law] = await m.query(
+          "SELECT status,deleted_at FROM legislations WHERE id=? FOR UPDATE",
+          [bundle.legislation_id],
+        );
+        if (!law || law.deleted_at || !["INBOX", "DRAFT"].includes(law.status))
+          throw new ConflictException("مصادر تشريع غير مسودة محفوظة ولا تعدل.");
+      }
+      const [source] = await m.query(
+        "SELECT id,original_name,media_type,is_active,deleted_at,extraction_status FROM source_documents WHERE id=? FOR UPDATE",
+        [sourceId],
+      );
+      if (!source || source.deleted_at || (!remove && !source.is_active))
+        throw new BadRequestException("المرفق غير موجود أو معطل.");
+      if (remove) {
+        const links = await m.query(
+          "SELECT legislation_id FROM legislation_source_documents WHERE source_document_id=?",
+          [sourceId],
+        );
+        if (links.length)
+          throw new ConflictException(
+            "المرفق مرتبط بنسخة تشريع؛ فك الارتباط المسموح أولاً من تبويب المصادر.",
+          );
+        const result = await m.query(
+          "DELETE FROM source_import_attachments WHERE source_import_id=? AND source_document_id=?",
+          [id, sourceId],
+        );
+        if (!result.affectedRows)
+          throw new NotFoundException("المرفق لا يتبع هذه الحزمة.");
+      } else {
+        if (
+          sourceId === bundle.source_document_id ||
+          source.media_type !== "application/pdf" ||
+          source.extraction_status !== "REVIEWED"
+        )
+          throw new BadRequestException(
+            "اختر ملف PDF مستقلاً ومدققاً للمرفق الرسمي.",
+          );
+        await m.query(
+          "INSERT INTO source_import_attachments (source_import_id,source_document_id,attachment_role) VALUES (?,?,'OFFICIAL_PDF')",
+          [id, sourceId],
+        );
+        if (bundle.legislation_id)
+          await m.query(
+            "INSERT INTO legislation_source_documents (legislation_id,source_document_id,source_role) VALUES (?,?,'OFFICIAL_PDF')",
+            [bundle.legislation_id, sourceId],
+          );
+      }
+      await m.query(
+        "INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,before_json,after_json,reason) VALUES (?,?,?,'SOURCE_IMPORT',?,?,?,?)",
+        [
+          randomUUID(),
+          actor.id,
+          remove ? "REMOVE_IMPORT_ATTACHMENT" : "ADD_IMPORT_ATTACHMENT",
+          id,
+          remove ? JSON.stringify({ sourceId }) : null,
+          remove ? null : JSON.stringify({ sourceId }),
+          reason.trim(),
+        ],
+      );
+      return { id, sourceId, removed: remove };
+    });
+  }
+
   async list(status?: string) {
-    const where = status ? "WHERE si.status=?" : "";
+    const where =
+      "WHERE sd.deleted_at IS NULL" + (status ? " AND si.status=?" : "");
     return this.db.query(
       `SELECT si.id,si.status,si.detected_format detectedFormat,
     si.created_at createdAt,si.updated_at updatedAt,sd.id sourceDocumentId,sd.original_name originalName,sd.media_type mediaType,
-    sd.byte_size byteSize,sd.sha256,sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,u.display_name uploadedBy,
+    sd.obtained_from obtainedFrom,sd.page_count pageCount,sd.byte_size byteSize,sd.sha256,sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,u.display_name uploadedBy,
     l.id legislationId,l.title_ar legislationTitle,
     (SELECT COUNT(*) FROM source_import_attachments sia WHERE sia.source_import_id=si.id) attachmentCount,
     (SELECT attached.original_name FROM source_import_attachments sia
@@ -358,7 +444,7 @@ export class ImportsService {
       `SELECT si.*,sd.original_name originalName,sd.media_type mediaType,sd.byte_size byteSize,
     sd.sha256,sd.obtained_from obtainedFrom,sd.page_count pageCount,sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,
     sd.reviewed_at reviewedAt,u.display_name uploadedBy FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
-    JOIN users u ON u.id=si.uploaded_by WHERE si.id=?`,
+    JOIN users u ON u.id=si.uploaded_by WHERE sd.deleted_at IS NULL AND si.id=?`,
       [id],
     );
     if (!rows[0]) throw new NotFoundException("عملية الاستيراد غير موجودة.");
@@ -369,10 +455,10 @@ export class ImportsService {
     const attachments = await this.db.query(
       `SELECT sd.id sourceDocumentId,sd.original_name originalName,
        sd.media_type mediaType,sd.byte_size byteSize,sd.sha256,
-       sd.extraction_status extractionStatus,sia.attachment_role role
+       sd.obtained_from obtainedFrom,sd.page_count pageCount,sd.ocr_confidence ocrConfidence,sd.extraction_status extractionStatus,sia.attachment_role role
        FROM source_import_attachments sia
        JOIN source_documents sd ON sd.id=sia.source_document_id
-       WHERE sia.source_import_id=? ORDER BY sia.created_at,sd.id`,
+       WHERE sd.deleted_at IS NULL AND sia.source_import_id=? ORDER BY sia.created_at,sd.id`,
       [id],
     );
     return {
@@ -386,7 +472,7 @@ export class ImportsService {
 
   async source(id: string) {
     const rows = await this.db.query(
-      `SELECT sd.storage_key storageKey,sd.original_name fileName,sd.media_type mediaType FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE si.id=?`,
+      `SELECT sd.storage_key storageKey,sd.original_name fileName,sd.media_type mediaType FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND si.id=?`,
       [id],
     );
     if (!rows[0]) throw new NotFoundException("ملف المصدر غير موجود.");
@@ -417,7 +503,7 @@ export class ImportsService {
   async review(id: string, actor: AuthUser, notes: string) {
     return this.db.transaction(async (m) => {
       const rows = await m.query(
-        `SELECT si.*,sd.extraction_status extractionStatus FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE si.id=? FOR UPDATE`,
+        `SELECT si.*,sd.extraction_status extractionStatus FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND sd.is_active=TRUE AND si.id=? FOR UPDATE`,
         [id],
       );
       const item = rows[0];
@@ -470,7 +556,7 @@ export class ImportsService {
       const rows = await m.query(
         `SELECT si.*,sd.extraction_status,l.status legislation_status
          FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
-         LEFT JOIN legislations l ON l.id=si.legislation_id WHERE si.id=? FOR UPDATE`,
+         LEFT JOIN legislations l ON l.id=si.legislation_id WHERE sd.deleted_at IS NULL AND sd.is_active=TRUE AND si.id=? FOR UPDATE`,
         [id],
       );
       const item = rows[0];
@@ -485,6 +571,10 @@ export class ImportsService {
         throw new ConflictException(
           "انتظر اكتمال استخراج الملف قبل إنشاء المسودة.",
         );
+      await assertActiveReference(m, "legislation_types", input.typeId);
+      await assertActiveReference(m, "authorities", input.authorityId);
+      if (!input.titleAr.trim())
+        throw new BadRequestException("عنوان التشريع مطلوب.");
       const lawId = randomUUID();
       await m.query(
         `INSERT INTO legislations (id,type_id,authority_id,official_number,year,title_ar,status,legal_status,verification_level,effective_from) VALUES (?,?,?,?,?,?,'DRAFT','UNKNOWN','D',?)`,

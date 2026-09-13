@@ -130,12 +130,18 @@ async function changeUser(
   await login(page, username);
 }
 
-test("keeps the multi-source upload usable on a narrow RTL screen", async ({
+test("opens source creation in a dialog without an upload tab", async ({
   page,
 }, testInfo) => {
-  test.skip(testInfo.project.name !== "mobile-390");
   await login(page, "data_entry");
-  await page.goto("/ar/admin/imports/upload");
+  await page.goto("/ar/admin/imports");
+  await expect(
+    page.getByRole("navigation", { name: "إدارة المصادر" }).getByRole("link"),
+  ).toHaveCount(1);
+  await page.getByRole("button", { name: "+ إضافة مصدر", exact: true }).click();
+  await expect(page).toHaveURL(/\/ar\/admin\/imports$/);
+  const dialog = page.getByRole("dialog", { name: "إضافة مصدر", exact: true });
+  await expect(dialog).toBeVisible();
   await expect(page.getByLabel("ملف النص للاستخراج")).toBeVisible();
   await expect(page.getByLabel("نسخة PDF الرسمية (اختيارية)")).toBeVisible();
   const overflow = await page.evaluate(
@@ -143,9 +149,81 @@ test("keeps the multi-source upload usable on a narrow RTL screen", async ({
   );
   expect(overflow).toBeLessThanOrEqual(1);
   await page.screenshot({
-    path: testInfo.outputPath("multi-source-upload-mobile.png"),
+    path: testInfo.outputPath("source-add-dialog.png"),
     fullPage: true,
   });
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeHidden();
+  await expect(
+    page.getByRole("button", { name: "+ إضافة مصدر", exact: true }),
+  ).toBeFocused();
+  await page.goto("/ar/admin/imports/upload");
+  await expect(dialog).toBeVisible();
+  await dialog.getByRole("button", { name: "إغلاق النافذة" }).click();
+  await expect(dialog).toBeHidden();
+  await expect(page).toHaveURL(/\/ar\/admin\/imports\/queue$/);
+});
+
+test("retains source files on upload failure and prevents duplicate submissions", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  await login(page, "data_entry");
+  await page.goto("/ar/admin/imports");
+  await page.getByRole("button", { name: "+ إضافة مصدر", exact: true }).click();
+  const dialog = page.getByRole("dialog", { name: "إضافة مصدر", exact: true });
+  await dialog.getByLabel("ملف النص للاستخراج").setInputFiles({
+    name: "retry-source.txt",
+    mimeType: "text/plain",
+    buffer: Buffer.from("مصدر اختبار فشل الرفع"),
+  });
+  await dialog.getByLabel("جهة الحصول").fill("بيانات يحتفظ بها عند الفشل");
+  let requests = 0;
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route("**/api/v1/imports", async (route) => {
+    if (route.request().method() !== "POST") return route.continue();
+    requests++;
+    await held;
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({ message: "تعذر الرفع مؤقتًا، أعد المحاولة." }),
+    });
+  });
+  await dialog.getByRole("button", { name: "إضافة وبدء الاستخراج" }).click();
+  await expect(
+    dialog.getByRole("button", { name: "جار الرفع…" }),
+  ).toBeDisabled();
+  await dialog
+    .locator("form")
+    .evaluate((form) =>
+      form.dispatchEvent(
+        new Event("submit", { bubbles: true, cancelable: true }),
+      ),
+    );
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await expect.poll(() => requests).toBe(1);
+  release();
+  await expect(dialog.getByRole("alert")).toContainText("تعذر الرفع مؤقتًا");
+  await expect(dialog.getByLabel("جهة الحصول")).toHaveValue(
+    "بيانات يحتفظ بها عند الفشل",
+  );
+  expect(
+    await dialog
+      .getByLabel("ملف النص للاستخراج")
+      .evaluate((element: HTMLInputElement) => element.files?.[0]?.name),
+  ).toBe("retry-source.txt");
+  await dialog.getByRole("button", { name: "إغلاق النافذة" }).click();
+  const discard = page.getByRole("alertdialog", { name: "إغلاق دون حفظ؟" });
+  await expect(discard).toBeVisible();
+  await discard.getByRole("button", { name: "متابعة التحرير" }).click();
+  await expect(dialog.getByLabel("جهة الحصول")).toHaveValue(
+    "بيانات يحتفظ بها عند الفشل",
+  );
 });
 
 test("imports and persists the complete Arabic legal hierarchy", async ({
@@ -178,7 +256,8 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
 المادة 5: تحفظ السجلات المالية وفق الإجراءات المعتمدة.`;
 
   await login(page, "data_entry");
-  await page.goto("/ar/admin/imports/upload");
+  await page.goto("/ar/admin/imports");
+  await page.getByRole("button", { name: "+ إضافة مصدر", exact: true }).click();
   await page.getByLabel("ملف النص للاستخراج").setInputFiles({
     name: fileName,
     mimeType: "text/plain",
@@ -197,10 +276,14 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
       response.url().endsWith("/api/v1/imports") &&
       response.request().method() === "POST",
   );
-  await page.getByRole("button", { name: "رفع وبدء الاستخراج" }).click();
+  await page.getByRole("button", { name: "إضافة وبدء الاستخراج" }).click();
   const uploadResponse = await uploadResponsePromise;
   expect(uploadResponse.ok()).toBeTruthy();
   const uploadResult = await uploadResponse.json();
+  await expect(
+    page.getByRole("dialog", { name: "إضافة مصدر", exact: true }),
+  ).toBeHidden();
+  await expect(page).toHaveURL(/\/ar\/admin\/imports$/);
   activeFixture = {
     importId: uploadResult.id,
     sourceIds: [
@@ -348,17 +431,19 @@ test("imports and persists the complete Arabic legal hierarchy", async ({
       response.url().endsWith(`/api/v1/admin/legislations/${lawId}`) &&
       response.request().method() === "PATCH",
   );
-  await metadataDialog
-    .getByRole("button", { name: "حفظ التغييرات" })
-    .click();
+  await metadataDialog.getByRole("button", { name: "حفظ التغييرات" }).click();
   expect((await metadataResponsePromise).ok()).toBeTruthy();
   await expect(metadataDialog).toBeHidden();
   await expect(
-    page.locator(".admin-entity-details dd").filter({ hasText: updatedSummary }),
+    page
+      .locator(".admin-entity-details dd")
+      .filter({ hasText: updatedSummary }),
   ).toBeVisible();
   await page.reload();
   await expect(
-    page.locator(".admin-entity-details dd").filter({ hasText: updatedSummary }),
+    page
+      .locator(".admin-entity-details dd")
+      .filter({ hasText: updatedSummary }),
   ).toBeVisible();
   await page.screenshot({
     path: testInfo.outputPath("admin-content-view-first.png"),

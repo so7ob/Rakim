@@ -1,5 +1,10 @@
 import { useMemo, useState, type FormEvent } from "react";
-import { Navigate, useLocation, useNavigate, useParams } from "react-router-dom";
+import {
+  Navigate,
+  useLocation,
+  useNavigate,
+  useParams,
+} from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
@@ -130,7 +135,11 @@ export function AdminRoleDetailPage() {
           tab === "general" &&
           data.canManage &&
           auth.hasPermission("role.update") ? (
-            <button type="button" className="button" onClick={() => setEditing(true)}>
+            <button
+              type="button"
+              className="button"
+              onClick={() => setEditing(true)}
+            >
               تعديل الدور
             </button>
           ) : undefined
@@ -178,25 +187,44 @@ export function AdminRoleDetailPage() {
       {tab === "general" && (
         <section className="admin-card">
           <h2>بيانات الدور</h2>
-          <EntityDetails items={[
-            { label: "الاسم", value: data.nameAr },
-            { label: "الرمز", value: <code dir="ltr">{data.code}</code> },
-            { label: "النوع", value: data.isProtected ? "محمي" : data.isSystem ? "نظامي" : "مخصص" },
-            { label: "الحالة", value: data.isActive ? "فعال" : "معطل" },
-            { label: "الوصف", value: data.descriptionAr || "—", wide: true },
-            { label: "آخر تحديث", value: new Date(data.updatedAt).toLocaleString("ar-YE") },
-          ]} />
+          <EntityDetails
+            items={[
+              { label: "الاسم", value: data.nameAr },
+              { label: "الرمز", value: <code dir="ltr">{data.code}</code> },
+              {
+                label: "النوع",
+                value: data.isProtected
+                  ? "محمي"
+                  : data.isSystem
+                    ? "نظامي"
+                    : "مخصص",
+              },
+              { label: "الحالة", value: data.isActive ? "فعال" : "معطل" },
+              { label: "الوصف", value: data.descriptionAr || "—", wide: true },
+              {
+                label: "آخر تحديث",
+                value: new Date(data.updatedAt).toLocaleString("ar-YE"),
+              },
+            ]}
+          />
           {!data.isSystem &&
             data.canManage &&
             auth.hasPermission("role.delete") && (
-              <button type="button" className="link-button danger" onClick={() => setDeleting(true)}>
+              <button
+                type="button"
+                className="link-button danger"
+                onClick={() => setDeleting(true)}
+              >
                 حذف الدور المخصص
               </button>
             )}
         </section>
       )}
       {editing && data.canManage && auth.hasPermission("role.update") && (
-        <AdminDialog title={`تعديل ${data.nameAr}`} onClose={() => setEditing(false)}>
+        <AdminDialog
+          title={`تعديل ${data.nameAr}`}
+          onClose={() => setEditing(false)}
+        >
           <form
             className="edit-form"
             onSubmit={async (event: FormEvent<HTMLFormElement>) => {
@@ -218,20 +246,57 @@ export function AdminRoleDetailPage() {
                 setMessage("حُفظت بيانات الدور.");
                 role.retry();
               } catch (error) {
-                setEditError(error instanceof Error ? error.message : "تعذر الحفظ.");
+                setEditError(
+                  error instanceof Error ? error.message : "تعذر الحفظ.",
+                );
               } finally {
                 setSaving(false);
               }
             }}
           >
-            {editError && <p className="form-error" role="alert">{editError}</p>}
-            <label>الاسم<input name="nameAr" defaultValue={data.nameAr} required /></label>
-            <label>الحالة<select name="isActive" defaultValue={String(data.isActive)} disabled={data.isSystem}><option value="true">فعال</option><option value="false">معطل</option></select></label>
-            <label>الوصف<textarea name="descriptionAr" defaultValue={data.descriptionAr ?? ""} /></label>
-            <label>سبب التغيير<input name="reason" required /></label>
+            {editError && (
+              <p className="form-error" role="alert">
+                {editError}
+              </p>
+            )}
+            <label>
+              الاسم
+              <input name="nameAr" defaultValue={data.nameAr} required />
+            </label>
+            <label>
+              الحالة
+              <select
+                name="isActive"
+                defaultValue={String(data.isActive)}
+                disabled={data.isSystem}
+              >
+                <option value="true">فعال</option>
+                <option value="false">معطل</option>
+              </select>
+            </label>
+            <label>
+              الوصف
+              <textarea
+                name="descriptionAr"
+                defaultValue={data.descriptionAr ?? ""}
+              />
+            </label>
+            <label>
+              سبب التغيير
+              <input name="reason" required />
+            </label>
             <div className="admin-entity-actions">
-              <button type="button" className="button secondary" onClick={() => setEditing(false)} disabled={saving}>إلغاء</button>
-              <button className="button" disabled={saving}>{saving ? "جار الحفظ…" : "حفظ بيانات الدور"}</button>
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setEditing(false)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار الحفظ…" : "حفظ بيانات الدور"}
+              </button>
             </div>
           </form>
         </AdminDialog>
@@ -256,7 +321,11 @@ export function AdminRoleDetailPage() {
           <div className="section-heading">
             <div>
               <h2>صلاحيات الدور</h2>
-              <p>حدد الصلاحيات التي سيرثها كل مستخدم يحمل هذا الدور.</p>
+              <p>
+                {data.code === "SUPER"
+                  ? "يرث هذا الدور جميع الصلاحيات الفعالة تلقائياً، بما فيها الصلاحيات المضافة لاحقاً. تبقى قواعد حماية السجلات وسير العمل مفروضة."
+                  : "حدد الصلاحيات التي سيرثها كل مستخدم يحمل هذا الدور."}
+              </p>
             </div>
           </div>
           {catalog.loading || rolePermissions.loading ? (

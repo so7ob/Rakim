@@ -1,3 +1,5 @@
+import { ResetPasswordPage } from "./pages/ResetPasswordPage";
+import { AdminRecoveryPage } from "./pages/admin/AdminRecoveryPage";
 import { Navigate, Route, Routes } from "react-router-dom";
 import { useEffect } from "react";
 import { Layout } from "./components/Layout";
@@ -24,7 +26,10 @@ import { AccountPage } from "./pages/AccountPage";
 import { AdminReportsPage } from "./pages/admin/AdminReportsPage";
 import { AdminAmendmentsPage } from "./pages/admin/AdminAmendmentsPage";
 import { LatestModificationsPage } from "./pages/LatestModificationsPage";
-import { ManagedPublicContentPage } from "./pages/PublicContentPage";
+import {
+  ManagedPublicContentPage,
+  DynamicPublicContentPage,
+} from "./pages/PublicContentPage";
 import { DownloadPage } from "./pages/DownloadPage";
 import { ForgotPasswordPage } from "./pages/ForgotPasswordPage";
 import { AdminSettingsPage } from "./pages/admin/AdminSettingsPage";
@@ -47,6 +52,7 @@ export function App() {
       <Route path="/ar" element={<Layout />}>
         <Route index element={<HomePage />} />
         <Route path="login" element={<LoginPage />} />
+        <Route path="reset-password" element={<ResetPasswordPage />} />
         <Route path="forgot-password" element={<ForgotPasswordPage />} />
         <Route path="legislations" element={<LegislationsPage />} />
         <Route
@@ -132,6 +138,7 @@ export function App() {
           path="legal/privacy-policy"
           element={<ManagedPublicContentPage slug="legal/privacy-policy" />}
         />
+        <Route path="pages/:slug" element={<DynamicPublicContentPage />} />
         <Route path="search" element={<SearchPage />} />
         <Route element={<RequireAuth />}>
           <Route path="account" element={<AccountPage />} />
@@ -222,6 +229,14 @@ export function App() {
               element={
                 <RequirePermission anyOf={["user.view"]}>
                   <AdminUsersPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="users/recovery"
+              element={
+                <RequirePermission anyOf={["user.reset_password"]}>
+                  <AdminRecoveryPage />
                 </RequirePermission>
               }
             />

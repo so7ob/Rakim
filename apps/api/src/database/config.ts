@@ -1,3 +1,5 @@
+import { RecoveryEditRevisions1700000000017 } from "./migrations/1700000000017-recovery-edit-revisions.js";
+import { ReferenceLifecycle1700000000016 } from "./migrations/1700000000016-reference-lifecycle.js";
 import "reflect-metadata";
 import { config } from "dotenv";
 import { resolve } from "node:path";
@@ -17,6 +19,8 @@ import { ReferenceThemeDefaults1700000000011 } from "./migrations/1700000000011-
 import { CanonicalRbacSecurity1700000000012 } from "./migrations/1700000000012-canonical-rbac-security.js";
 import { ArticleLabelOrdering1700000000013 } from "./migrations/1700000000013-article-label-ordering.js";
 import { MultiSourceImports1700000000014 } from "./migrations/1700000000014-multi-source-imports.js";
+
+import { AdministrativeLifecycle1700000000015 } from "./migrations/1700000000015-administrative-lifecycle.js";
 
 config({
   path: [resolve(process.cwd(), ".env"), resolve(process.cwd(), "../../.env")],
@@ -54,6 +58,9 @@ export const createDataSource = () =>
       CanonicalRbacSecurity1700000000012,
       ArticleLabelOrdering1700000000013,
       MultiSourceImports1700000000014,
+      AdministrativeLifecycle1700000000015,
+      ReferenceLifecycle1700000000016,
+      RecoveryEditRevisions1700000000017,
     ],
     migrationsTableName: "schema_migrations",
   });

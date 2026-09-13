@@ -15,13 +15,16 @@ const pages = [
   ["dashboard", "/ar/admin"],
   ["no-permission", "/ar/admin/no-permission"],
   ["imports-queue", "/ar/admin/imports/queue"],
-  ["imports-upload", "/ar/admin/imports/upload"],
+  ["imports-add-dialog", "/ar/admin/imports/upload"],
   ["legislations", "/ar/admin/content"],
   ["amendments-list", "/ar/admin/amendments/list"],
-  ["amendments-create", "/ar/admin/amendments/create"],
+  ["amendments-add-dialog", "/ar/admin/amendments/create"],
   ["audit", "/ar/admin/audit"],
   ["reports", "/ar/admin/reports"],
   ["users", "/ar/admin/users"],
+  ["user-recovery", "/ar/admin/users/recovery"],
+  ["forgot-password", "/ar/forgot-password"],
+  ["reset-password", "/ar/reset-password"],
   ["roles", "/ar/admin/roles"],
   ["permission-matrix", "/ar/admin/permissions/matrix"],
   ["permission-resources", "/ar/admin/permissions/resources"],
@@ -35,6 +38,7 @@ const pages = [
   ["settings-legislation", "/ar/admin/settings/legislation"],
   ["workflow-policies", "/ar/admin/settings/workflow"],
   ["settings-pages", "/ar/admin/settings/pages"],
+  ["reference-gazettes", "/ar/admin/reference-data/gazettes"],
   ["reference-types", "/ar/admin/reference-data/types"],
   ["reference-subjects", "/ar/admin/reference-data/subjects"],
   ["reference-authorities", "/ar/admin/reference-data/authorities"],
@@ -89,9 +93,64 @@ try {
     await page.getByRole("button", { name: "تسجيل الدخول" }).click();
     await page.getByRole("heading", { name: "لوحة الإدارة" }).waitFor();
 
-    for (const [name, path] of pages) {
+    const content = await (
+      await page.request.get(
+        `${baseUrl}/api/v1/admin/legislations?status=PUBLISHED`,
+      )
+    ).json();
+    const users = await (
+      await page.request.get(`${baseUrl}/api/v1/admin/users`)
+    ).json();
+    const roles = await (
+      await page.request.get(`${baseUrl}/api/v1/admin/roles`)
+    ).json();
+    const lawId = content.items[0]?.id;
+    const userId = users.find((u) => u.username === "reader")?.id;
+    const roleId = roles.find((r) => r.code === "READER")?.id;
+    const details = [
+      ...(lawId
+        ? [
+            "general",
+            "articles",
+            "structure",
+            "annexes",
+            "relations",
+            "sources",
+            "workflow",
+          ].map((tab) => [
+            `content-${tab}`,
+            `/ar/admin/content/${lawId}/${tab}`,
+          ])
+        : []),
+      ...(userId
+        ? [
+            "profile",
+            "roles",
+            "permissions",
+            "effective",
+            "activity",
+            "sessions",
+          ].map((tab) => [`user-${tab}`, `/ar/admin/users/${userId}/${tab}`])
+        : []),
+      ...(roleId
+        ? ["general", "permissions", "users", "activity"].map((tab) => [
+            `role-${tab}`,
+            `/ar/admin/roles/${roleId}/${tab}`,
+          ])
+        : []),
+      ["account", "/ar/account"],
+    ];
+    for (const [name, path] of [...pages, ...details]) {
       currentAdminPath = path;
       await page.goto(`${baseUrl}${path}`, { waitUntil: "networkidle" });
+      if (name === "imports-add-dialog")
+        await page
+          .getByRole("dialog", { name: "إضافة مصدر", exact: true })
+          .waitFor();
+      if (name === "amendments-add-dialog")
+        await page
+          .getByRole("dialog", { name: "إضافة وثيقة تعديل", exact: true })
+          .waitFor();
       if (name === "imports-queue") {
         const firstImport = page.locator("details.import-row").first();
         if (await firstImport.count())
@@ -214,3 +273,17 @@ await writeFile(
 console.log(
   `Captured ${manifest.captures.filter((item) => item.path).length} administration views.`,
 );
+
+const problems = manifest.captures.filter(
+  (item) =>
+    item.overflowPixels > 1 ||
+    (item.diagnostics &&
+      (item.consoleErrors.length ||
+        item.failedRequests.length ||
+        item.httpErrors.length ||
+        item.externalRequests.length)),
+);
+if (problems.length)
+  throw new Error(
+    `Visual diagnostics failed; inspect ${join(output, "manifest.json")}`,
+  );

@@ -1,3 +1,5 @@
+import { UserManagementTabs } from "../../components/admin/UserManagementTabs";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useMemo, useState, type FormEvent } from "react";
 import { Link } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -135,6 +137,7 @@ export function AdminUsersPage() {
           ) : undefined
         }
       />
+      <UserManagementTabs />
       {message && (
         <p role="status" className="form-message">
           {message}
@@ -298,7 +301,9 @@ export function AdminUsersPage() {
                         aria-label="تحديد الصفحة"
                         checked={
                           actionableVisible.length > 0 &&
-                          actionableVisible.every((user) => selected.has(user.id))
+                          actionableVisible.every((user) =>
+                            selected.has(user.id),
+                          )
                         }
                         onChange={(event) =>
                           setSelected((current) => {
@@ -374,15 +379,16 @@ export function AdminUsersPage() {
                         >
                           عرض
                         </Link>
-                        {user.canManage && auth.hasPermission("user.update") && (
-                          <Link
-                            className="link-button"
-                            to={`/ar/admin/users/${user.id}/profile`}
-                            state={{ openEdit: true }}
-                          >
-                            تعديل
-                          </Link>
-                        )}
+                        {user.canManage &&
+                          auth.hasPermission("user.update") && (
+                            <Link
+                              className="link-button"
+                              to={`/ar/admin/users/${user.id}/profile`}
+                              state={{ openEdit: true }}
+                            >
+                              تعديل
+                            </Link>
+                          )}
                         {user.canManage &&
                           (user.isActive
                             ? auth.hasPermission("user.disable") &&
@@ -404,6 +410,15 @@ export function AdminUsersPage() {
                                   تفعيل
                                 </button>
                               ))}
+                        {user.canManage && (
+                          <LifecycleActions
+                            kind="users"
+                            allowState={false}
+                            id={user.id}
+                            label={user.displayName}
+                            onDone={users.retry}
+                          />
+                        )}
                       </AdminRowActions>
                     </td>
                   </tr>

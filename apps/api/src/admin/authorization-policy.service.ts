@@ -76,7 +76,7 @@ export class AuthorizationPolicyService {
         "لا يمكن تعديل صلاحيات أو أدوار الحساب الحالي.",
       );
     const targetRows = await manager.query(
-      "SELECT id,is_active isActive FROM users WHERE id=? FOR UPDATE",
+      "SELECT id,is_active isActive FROM users WHERE deleted_at IS NULL AND id=? FOR UPDATE",
       [targetUserId],
     );
     if (!targetRows[0]) throw new NotFoundException("المستخدم غير موجود.");

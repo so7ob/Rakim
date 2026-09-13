@@ -1,3 +1,5 @@
+import { LifecycleController } from "./lifecycle.controller.js";
+import { LifecycleService } from "./lifecycle.service.js";
 import { Module } from "@nestjs/common";
 import { AuthModule } from "../auth/auth.module.js";
 import {
@@ -14,6 +16,7 @@ import { AuthorizationPolicyService } from "./authorization-policy.service.js";
   imports: [AuthModule],
   controllers: [
     AdminController,
+    LifecycleController,
     AccessControlController,
     PublicationsController,
     ReindexController,
@@ -22,6 +25,7 @@ import { AuthorizationPolicyService } from "./authorization-policy.service.js";
     PermissionGuard,
     AuthorizationPolicyService,
     AdminService,
+    LifecycleService,
     AccessControlService,
   ],
 })

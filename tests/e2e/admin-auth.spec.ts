@@ -1,3 +1,4 @@
+import { PERMISSION_CATALOG } from "../../apps/api/src/common/permission-catalog.js";
 import AxeBuilder from "@axe-core/playwright";
 import { expect, test } from "@playwright/test";
 
@@ -176,6 +177,11 @@ test("platform settings and full legislation metadata are manageable with audite
     headers: { cookie: system.cookie, "x-csrf-token": system.csrfToken },
     data: {
       values: { "branding.site_name": siteName },
+      editRevisions: {
+        "branding.site_name": state.settings.find(
+          (x: { settingKey: string }) => x.settingKey === "branding.site_name",
+        ).editRevision,
+      },
       reason: "اختبار حفظ إعدادات المنصة",
     },
   });
@@ -193,6 +199,12 @@ test("platform settings and full legislation metadata are manageable with audite
         },
         data: {
           values: { "branding.site_name": siteName },
+          editRevisions: {
+            "branding.site_name": state.settings.find(
+              (x: { settingKey: string }) =>
+                x.settingKey === "branding.site_name",
+            ).editRevision,
+          },
           reason: "اختبار رفض صلاحية الإعدادات",
         },
       })
@@ -312,10 +324,8 @@ test("system administrator can open the platform settings editor", async ({
       headers: { cookie: system.cookie },
     })
   ).json();
-  const protectedAdmin = accessUsers.find((item: { roles: string | null }) =>
-    String(item.roles ?? "")
-      .split(",")
-      .includes("SUPER"),
+  const protectedAdmin = accessUsers.find(
+    (item: { username: string }) => item.username === "super",
   );
   const superAdmin = await login(request, protectedAdmin.username);
   const privilegedState = await (
@@ -397,10 +407,8 @@ test("authority ceiling blocks API privilege escalation and preserves role bound
       headers: { cookie: system.cookie },
     })
   ).json();
-  const superUser = users.find((item: { roles: string | null }) =>
-    String(item.roles ?? "")
-      .split(",")
-      .includes("SUPER"),
+  const superUser = users.find(
+    (item: { username: string }) => item.username === "super",
   );
   const roles = await (
     await request.get("/api/v1/admin/access-roles", {
@@ -557,7 +565,14 @@ test("authority ceiling blocks API privilege escalation and preserves role bound
   expect(status.user.permissions).not.toContain(
     "workflow_policy.overrides.manage",
   );
-  expect(superAuthUser.permissions).toHaveLength(75);
+  const activeCatalog = await (
+    await request.get("/api/v1/admin/permissions", {
+      headers: { cookie: superAdmin.cookie },
+    })
+  ).json();
+  expect([...superAuthUser.permissions].sort()).toEqual(
+    activeCatalog.permissions.map((item: { code: string }) => item.code).sort(),
+  );
   expect(superAuthUser.policyCapabilities).toEqual([]);
 });
 
@@ -572,7 +587,7 @@ test("granular permissions persist, enforce in the API, and drive navigation", a
   });
   expect(catalogResponse.ok()).toBeTruthy();
   const catalog = await catalogResponse.json();
-  expect(catalog.permissions).toHaveLength(75);
+  expect(catalog.permissions).toHaveLength(PERMISSION_CATALOG.length);
 
   const users = await (
     await request.get("/api/v1/admin/users", {

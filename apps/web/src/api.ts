@@ -9,6 +9,10 @@ export class ApiError extends Error {
   constructor(
     message: string,
     readonly status: number,
+    readonly conflict?: {
+      current: Record<string, unknown>;
+      revision: number | Record<string, number>;
+    },
   ) {
     super(message);
   }
@@ -41,6 +45,10 @@ export async function apiGet<T>(
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string | string[];
+      conflict?: {
+        current: Record<string, unknown>;
+        revision: number | Record<string, number>;
+      };
     } | null;
     const message = Array.isArray(body?.message)
       ? body.message.join("، ")
@@ -50,7 +58,7 @@ export async function apiGet<T>(
   return response.json() as Promise<T>;
 }
 
-export async function apiRequest<T>(
+async function sendApiRequest<T>(
   path: string,
   options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
 ): Promise<T> {
@@ -91,14 +99,41 @@ export async function apiRequest<T>(
   if (!response.ok) {
     const body = (await response.json().catch(() => null)) as {
       message?: string | string[];
+      conflict?: {
+        current: Record<string, unknown>;
+        revision: number | Record<string, number>;
+      };
     } | null;
     const message = Array.isArray(body?.message)
       ? body.message.join("، ")
       : typeof body?.message === "object"
         ? JSON.stringify(body.message)
         : body?.message;
-    throw new ApiError(message ?? "تعذر تنفيذ الطلب.", response.status);
+    throw new ApiError(
+      message ?? "تعذر تنفيذ الطلب.",
+      response.status,
+      body?.conflict,
+    );
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
+}
+
+// Coalesce identical in-flight mutations, including repeat clicks before React rerenders.
+// Entries live only until completion; request contents are never logged or persisted.
+const pendingMutations = new Map<string, Promise<unknown>>();
+export function apiRequest<T>(
+  path: string,
+  options: { method?: string; body?: unknown; signal?: AbortSignal } = {},
+): Promise<T> {
+  if (options.body instanceof FormData || options.signal)
+    return sendApiRequest<T>(path, options);
+  const key = `${options.method ?? "POST"}:${path}:${JSON.stringify(options.body)}`;
+  const existing = pendingMutations.get(key);
+  if (existing) return existing as Promise<T>;
+  const pending = sendApiRequest<T>(path, options).finally(() =>
+    pendingMutations.delete(key),
+  );
+  pendingMutations.set(key, pending);
+  return pending;
 }

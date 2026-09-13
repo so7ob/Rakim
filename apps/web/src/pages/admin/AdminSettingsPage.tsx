@@ -1,3 +1,7 @@
+import { useEditConflict } from "../../components/admin/useEditConflict";
+import { StatusBadge } from "../../components/StatusBadge";
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useState, type FormEvent } from "react";
 import { Navigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -13,6 +17,7 @@ import { AdminDialog } from "../../components/admin/AdminDialog";
 import { EntityDetails } from "../../components/admin/EntityDetails";
 
 interface Setting {
+  editRevision: number;
   settingKey: string;
   groupCode: string;
   labelAr: string;
@@ -20,6 +25,7 @@ interface Setting {
   value: string | boolean;
 }
 interface NavigationItem {
+  editRevision: number;
   id: string;
   location: "HEADER" | "FOOTER";
   labelAr: string;
@@ -28,6 +34,7 @@ interface NavigationItem {
   isVisible: boolean;
 }
 interface ContentPage {
+  editRevision: number;
   id: string;
   slug: string;
   eyebrowAr: string;
@@ -59,6 +66,7 @@ export function AdminSettingsPage() {
   const siteConfig = useSiteConfig();
   const isWorkflow = tab === "workflow";
   const state = useApi<SettingsState>(isWorkflow ? null : "/admin/site");
+  const [creatingPage, setCreatingPage] = useState(false);
   const [message, setMessage] = useState("");
   const canViewSettings = auth.hasPermission("settings.view");
   const canViewWorkflow = auth.hasPermission("workflow_policy.view");
@@ -221,6 +229,50 @@ export function AdminSettingsPage() {
           )}
         </section>
       )}
+      {tab === "pages" && auth.hasPermission("public_page.create") && (
+        <button className="button" onClick={() => setCreatingPage(true)}>
+          + إضافة صفحة عامة
+        </button>
+      )}
+      {creatingPage && (
+        <RecordFormDialog
+          title="إضافة صفحة عامة"
+          path="/admin/site/pages"
+          fields={[
+            {
+              name: "slug",
+              label: "الرابط بعد /ar/pages/",
+              required: true,
+              maxLength: 120,
+            },
+            {
+              name: "titleAr",
+              label: "عنوان الصفحة",
+              required: true,
+              maxLength: 500,
+            },
+            { name: "introAr", label: "المقدمة", type: "textarea" },
+            {
+              name: "sectionTitle",
+              label: "عنوان القسم الأول",
+              required: true,
+              maxLength: 500,
+            },
+            {
+              name: "sectionBody",
+              label: "محتوى القسم الأول",
+              type: "textarea",
+              required: true,
+            },
+            { name: "reason", label: "سبب الإضافة", required: true },
+          ]}
+          onClose={() => setCreatingPage(false)}
+          onDone={() => {
+            setCreatingPage(false);
+            state.retry();
+          }}
+        />
+      )}
       {tab === "pages" && (
         <section className="admin-card">
           <h2>الصفحات العامة</h2>
@@ -262,6 +314,9 @@ function SettingsGroupForm({
   saved: () => Promise<void>;
   failed: (message: string) => void;
 }) {
+  const conflict = useEditConflict(
+    Object.fromEntries(settings.map((s) => [s.settingKey, s.editRevision])),
+  );
   const [dirty, setDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   if (!editable)
@@ -290,7 +345,8 @@ function SettingsGroupForm({
       onInput={() => setDirty(true)}
       onSubmit={async (event) => {
         event.preventDefault();
-        const form = new FormData(event.currentTarget);
+        const formElement = event.currentTarget;
+        const form = new FormData(formElement);
         const values = Object.fromEntries(
           settings.map((setting) => [
             setting.settingKey,
@@ -303,11 +359,16 @@ function SettingsGroupForm({
         try {
           await apiRequest("/admin/site/settings", {
             method: "PATCH",
-            body: { values, reason: form.get("reason") },
+            body: {
+              values,
+              editRevisions: conflict.revision,
+              reason: form.get("reason"),
+            },
           });
           setDirty(false);
           await saved();
         } catch (error) {
+          conflict.capture(error, values, formElement);
           failed(
             error instanceof Error ? error.message : "تعذر حفظ الإعدادات.",
           );
@@ -317,6 +378,7 @@ function SettingsGroupForm({
       }}
     >
       <h2>{groupLabels[group] ?? group}</h2>
+      {conflict.notice}
       <div className="settings-grid">
         {settings.map((setting) => (
           <SettingField
@@ -330,7 +392,10 @@ function SettingsGroupForm({
         سبب التغيير
         <input name="reason" required placeholder="سبب يظهر في سجل التدقيق" />
       </label>
-      <button className="button" disabled={!dirty || saving}>
+      <button
+        className="button"
+        disabled={!dirty || saving || conflict.hasConflict}
+      >
         {saving ? "جار الحفظ…" : "حفظ هذا القسم"}
       </button>
       <UnsavedChangesGuard active={dirty && !saving} />
@@ -399,6 +464,7 @@ function NavigationEditor({
   editable: boolean;
   done: (x: string) => void;
 }) {
+  const conflict = useEditConflict(item.editRevision);
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
@@ -420,6 +486,14 @@ function NavigationEditor({
           { label: "الترتيب", value: item.sortOrder },
         ]}
       />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="navigation"
+          id={item.id}
+          label={item.labelAr}
+          onDone={() => done("حُدّث رابط التنقل.")}
+        />
+      </div>
       {editable && (
         <div className="admin-entity-actions">
           <button
@@ -440,13 +514,15 @@ function NavigationEditor({
             className="edit-form"
             onSubmit={async (event) => {
               event.preventDefault();
-              const f = new FormData(event.currentTarget);
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
               setSaving(true);
               setError("");
               try {
                 await apiRequest(`/admin/site/navigation/${item.id}`, {
                   method: "PATCH",
                   body: {
+                    editRevision: conflict.revision,
                     location: f.get("location"),
                     labelAr: f.get("labelAr"),
                     path: f.get("path"),
@@ -458,6 +534,15 @@ function NavigationEditor({
                 setEditing(false);
                 done("حُفظ رابط التنقل.");
               } catch (error) {
+                conflict.capture(
+                  error,
+                  {
+                    ...Object.fromEntries(f),
+                    sortOrder: Number(f.get("sortOrder")),
+                    isVisible: f.has("isVisible"),
+                  },
+                  formElement,
+                );
                 setError(
                   error instanceof Error ? error.message : "تعذر الحفظ.",
                 );
@@ -466,6 +551,7 @@ function NavigationEditor({
               }
             }}
           >
+            {conflict.notice}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -518,7 +604,10 @@ function NavigationEditor({
               >
                 إلغاء
               </button>
-              <button className="button" disabled={saving}>
+              <button
+                className="button"
+                disabled={saving || conflict.hasConflict}
+              >
                 {saving ? "جار الحفظ…" : "حفظ الرابط"}
               </button>
             </div>
@@ -642,6 +731,7 @@ function PageEditor({
   canArchive: boolean;
   done: (x: string) => void;
 }) {
+  const conflict = useEditConflict(page.editRevision);
   const [sections, setSections] = useState(page.sections);
   const [editing, setEditing] = useState(false);
   const [dirty, setDirty] = useState(false);
@@ -660,7 +750,9 @@ function PageEditor({
           <h3>{page.titleAr}</h3>
           <p dir="ltr">/{page.slug}</p>
         </div>
-        <span className="tag">{page.status}</span>
+        <span>
+          حالة النشر: <StatusBadge status={page.status} />
+        </span>
       </header>
       <EntityDetails
         items={[
@@ -673,6 +765,14 @@ function PageEditor({
           },
         ]}
       />
+      <div className="admin-entity-actions">
+        <LifecycleActions
+          kind="pages"
+          id={page.id}
+          label={page.titleAr}
+          onDone={() => done("حُدّثت حالة الصفحة.")}
+        />
+      </div>
       {canSaveCurrentStatus && (
         <div className="admin-entity-actions">
           <button
@@ -701,13 +801,15 @@ function PageEditor({
             onInput={() => setDirty(true)}
             onSubmit={async (event) => {
               event.preventDefault();
-              const f = new FormData(event.currentTarget);
+              const formElement = event.currentTarget;
+              const f = new FormData(formElement);
               setSaving(true);
               setError("");
               try {
                 await apiRequest(`/admin/site/pages/${page.id}`, {
                   method: "PATCH",
                   body: {
+                    editRevision: conflict.revision,
                     eyebrowAr: f.get("eyebrowAr"),
                     titleAr: f.get("titleAr"),
                     introAr: f.get("introAr"),
@@ -720,6 +822,13 @@ function PageEditor({
                 setEditing(false);
                 done("حُفظت الصفحة العامة.");
               } catch (error) {
+                conflict.capture(
+                  error,
+                  { ...Object.fromEntries(f), sections },
+                  formElement,
+                  (merged) =>
+                    setSections(merged.sections as ContentPage["sections"]),
+                );
                 setError(
                   error instanceof Error ? error.message : "تعذر حفظ الصفحة.",
                 );
@@ -728,6 +837,7 @@ function PageEditor({
               }
             }}
           >
+            {conflict.notice}
             {error && (
               <p className="form-error" role="alert">
                 {error}
@@ -825,7 +935,10 @@ function PageEditor({
               >
                 إلغاء
               </button>
-              <button className="button" disabled={saving}>
+              <button
+                className="button"
+                disabled={saving || conflict.hasConflict}
+              >
                 {saving ? "جار الحفظ…" : "حفظ الصفحة"}
               </button>
             </div>

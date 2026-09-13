@@ -38,7 +38,7 @@ export class SessionGuard implements CanActivate {
     const rows = await this.db.query(
       `SELECT s.id,s.user_id userId,s.csrf_hash csrfHash
       FROM user_sessions s JOIN users u ON u.id=s.user_id
-      WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>NOW(3) AND u.is_active=1 LIMIT 1`,
+      WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>NOW(3) AND u.is_active=1 AND u.deleted_at IS NULL LIMIT 1`,
       [digest(decodeURIComponent(token))],
     );
     const session = rows[0];

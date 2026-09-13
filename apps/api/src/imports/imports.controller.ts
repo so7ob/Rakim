@@ -1,6 +1,7 @@
 import {
   Body,
   Controller,
+  Delete,
   Get,
   HttpCode,
   Inject,
@@ -25,6 +26,13 @@ import { SessionGuard } from "../auth/session.guard.js";
 import { PermissionGuard, Permissions } from "../common/permission.guard.js";
 import { ImportsService } from "./imports.service.js";
 
+class AttachmentDto {
+  @IsString() sourceDocumentId!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class AttachmentReasonDto {
+  @IsString() @Length(3, 1000) reason!: string;
+}
 class UploadMetaDto {
   @IsString() @Length(2, 255) obtainedFrom!: string;
 }
@@ -89,6 +97,37 @@ export class ImportsController {
   @Permissions("source.view")
   list() {
     return this.service.list();
+  }
+  @Post(":id/attachments")
+  @Permissions("source.update")
+  addAttachment(
+    @Param("id") id: string,
+    @Body() dto: AttachmentDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.changeAttachment(
+      id,
+      dto.sourceDocumentId,
+      false,
+      req.user!,
+      dto.reason,
+    );
+  }
+  @Delete(":id/attachments/:sourceId")
+  @Permissions("source.delete")
+  removeAttachment(
+    @Param("id") id: string,
+    @Param("sourceId") sourceId: string,
+    @Body() dto: AttachmentReasonDto,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.service.changeAttachment(
+      id,
+      sourceId,
+      true,
+      req.user!,
+      dto.reason,
+    );
   }
   @Get(":id")
   @Permissions("source.view")

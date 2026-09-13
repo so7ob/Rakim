@@ -1,3 +1,4 @@
+import { EFFECTIVE_ROLE_GRANTS_SQL } from "../common/effective-role-grants.js";
 import {
   BadRequestException,
   ConflictException,
@@ -36,7 +37,7 @@ export class AccessControlService {
         r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
         COUNT(DISTINCT pd.code) permissionCount,r.updated_at updatedAt
         FROM roles r LEFT JOIN user_roles ur ON ur.role_id=r.id
-        LEFT JOIN role_permissions rp ON rp.role_id=r.id
+        LEFT JOIN ${EFFECTIVE_ROLE_GRANTS_SQL} rp ON rp.role_id=r.id
         LEFT JOIN permission_definitions pd ON pd.code=rp.permission_code AND pd.is_legacy=FALSE
         GROUP BY r.id ORDER BY r.is_system DESC,r.name_ar`),
     ]);
@@ -56,7 +57,7 @@ export class AccessControlService {
       r.is_active isActive,COUNT(DISTINCT ur.user_id) userCount,
       COUNT(DISTINCT pd.code) permissionCount,r.updated_at updatedAt
       FROM roles r LEFT JOIN user_roles ur ON ur.role_id=r.id
-      LEFT JOIN role_permissions rp ON rp.role_id=r.id
+      LEFT JOIN ${EFFECTIVE_ROLE_GRANTS_SQL} rp ON rp.role_id=r.id
       LEFT JOIN permission_definitions pd ON pd.code=rp.permission_code AND pd.is_legacy=FALSE
       GROUP BY r.id ORDER BY r.is_system DESC,r.name_ar`);
     if (!actor) return roles;
@@ -93,7 +94,7 @@ export class AccessControlService {
       `SELECT pd.code,pd.domain_code domain,pd.resource_code resource,
       pd.action_code action,pd.label_ar labelAr,pd.description_ar descriptionAr,
       pd.sensitivity,rp.scope_code scope
-      FROM role_permissions rp JOIN permission_definitions pd ON pd.code=rp.permission_code
+      FROM ${EFFECTIVE_ROLE_GRANTS_SQL} rp JOIN permission_definitions pd ON pd.code=rp.permission_code
       WHERE rp.role_id=? AND pd.is_legacy=FALSE
       ORDER BY pd.domain_code,pd.resource_code,pd.action_code`,
       [id],
@@ -295,7 +296,7 @@ export class AccessControlService {
       u.created_at createdAt,u.last_login_at lastLoginAt,u.failed_login_count failedLoginCount,
       (SELECT COALESCE(MAX(r.authority_level),0) FROM user_roles ur
        JOIN roles r ON r.id=ur.role_id WHERE ur.user_id=u.id AND r.is_active=TRUE) authorityLevel
-      FROM users u WHERE u.id=?`,
+      FROM users u WHERE u.deleted_at IS NULL AND u.id=?`,
       [id],
     );
     if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
@@ -337,13 +338,13 @@ export class AccessControlService {
         FROM user_permission_overrides upo
         JOIN permission_definitions pd ON pd.code=upo.permission_code
         LEFT JOIN users g ON g.id=upo.granted_by
-        WHERE upo.user_id=? AND pd.is_legacy=FALSE
+        WHERE upo.user_id=? AND pd.is_legacy=FALSE AND pd.is_active=TRUE
         ORDER BY upo.permission_code`,
         [id],
       ),
       this.db.query(
         `SELECT rp.permission_code code,rp.scope_code scope,r.code roleCode,r.name_ar roleName
-        FROM role_permissions rp JOIN user_roles ur ON ur.role_id=rp.role_id
+        FROM ${EFFECTIVE_ROLE_GRANTS_SQL} rp JOIN user_roles ur ON ur.role_id=rp.role_id
         JOIN roles r ON r.id=rp.role_id
         JOIN permission_definitions pd ON pd.code=rp.permission_code
         WHERE ur.user_id=? AND r.is_active=1 AND pd.is_legacy=FALSE
@@ -366,7 +367,7 @@ export class AccessControlService {
     const normalized = this.normalizeOverrides(overrides);
     await this.db.transaction(async (manager) => {
       const users = await manager.query(
-        "SELECT id FROM users WHERE id=? FOR UPDATE",
+        "SELECT id FROM users WHERE deleted_at IS NULL AND id=? FOR UPDATE",
         [userId],
       );
       if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
@@ -421,7 +422,7 @@ export class AccessControlService {
   ) {
     return this.db.transaction(async (manager) => {
       const users = await manager.query(
-        "SELECT id,username,display_name displayName FROM users WHERE id=? FOR UPDATE",
+        "SELECT id,username,display_name displayName FROM users WHERE deleted_at IS NULL AND id=? FOR UPDATE",
         [userId],
       );
       if (!users[0]) throw new NotFoundException("المستخدم غير موجود.");
@@ -620,7 +621,10 @@ export class AccessControlService {
   }
 
   private async assertUserExists(id: string) {
-    const rows = await this.db.query("SELECT id FROM users WHERE id=?", [id]);
+    const rows = await this.db.query(
+      "SELECT id FROM users WHERE deleted_at IS NULL AND id=?",
+      [id],
+    );
     if (!rows[0]) throw new NotFoundException("المستخدم غير موجود.");
   }
 

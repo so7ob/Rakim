@@ -1,3 +1,4 @@
+import { assertSchemaCompatible } from "../../../scripts/database/schema-contract.mjs";
 import { randomUUID } from "node:crypto";
 import { execFile as execFileCallback } from "node:child_process";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
@@ -455,6 +456,12 @@ async function main() {
     mode: 0o750,
   });
   await db.initialize();
+  try {
+    await assertSchemaCompatible((sql) => db.query(sql));
+  } catch (error) {
+    await db.destroy();
+    throw error;
+  }
   await db.query(
     "INSERT INTO service_heartbeats (service_id,service_type,last_seen_at,metadata_json) VALUES (?,'WORKER',NOW(3),JSON_OBJECT('pid',?,'host',?)) ON DUPLICATE KEY UPDATE last_seen_at=VALUES(last_seen_at),metadata_json=VALUES(metadata_json)",
     [workerId, process.pid, hostname()],

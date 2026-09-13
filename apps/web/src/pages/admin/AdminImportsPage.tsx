@@ -1,5 +1,10 @@
-import { useEffect, useState, type FormEvent } from "react";
-import { Link, useParams } from "react-router-dom";
+import { LifecycleActions } from "../../components/admin/LifecycleActions";
+import { AdminDialog } from "../../components/admin/AdminDialog";
+import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
+import { ConfirmDialog } from "../../components/admin/ConfirmDialog";
+import { SourceEditor } from "./AdminContentDetailPage";
+import { useEffect, useRef, useState, type FormEvent } from "react";
+import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
@@ -9,6 +14,9 @@ import { AdminPageHeader } from "../../components/admin/AdminPageHeader";
 import { AdminTabs } from "../../components/admin/AdminTabs";
 interface ImportItem {
   id: string;
+  sourceDocumentId: string;
+  obtainedFrom: string;
+  pageCount: number | null;
   status: string;
   detectedFormat: string;
   createdAt: string;
@@ -70,10 +78,16 @@ interface ImportAnalysis {
 export function AdminImportsPage() {
   const { tab = "queue" } = useParams();
   const auth = useAuth();
+  const navigate = useNavigate();
+  const [creating, setCreating] = useState(false);
+  const closeUpload = () => {
+    setCreating(false);
+    if (tab === "upload")
+      navigate("/ar/admin/imports/queue", { replace: true });
+  };
   const imports = useApi<ImportItem[]>("/imports");
   const refs = useApi<Refs>("/admin/references");
   const [message, setMessage] = useState("");
-  const [busy, setBusy] = useState(false);
   const hasPendingImport = imports.data?.some(
     (item) =>
       ["UPLOADED", "QUEUED", "PROCESSING"].includes(item.status) ||
@@ -84,34 +98,12 @@ export function AdminImportsPage() {
     const timer = window.setInterval(imports.retry, 2_000);
     return () => window.clearInterval(timer);
   }, [hasPendingImport, imports.retry]);
-  const upload = async (e: FormEvent<HTMLFormElement>) => {
-    e.preventDefault();
-    const formElement = e.currentTarget;
-    setBusy(true);
-    setMessage("");
-    try {
-      const body = new FormData(formElement);
-      await apiRequest("/imports", { body });
-      setMessage(
-        body.get("referencePdf") instanceof File &&
-          (body.get("referencePdf") as File).size > 0
-          ? "تم رفع ملف النص ونسخة PDF معًا، ووُضع النص في طابور الاستخراج."
-          : "تم رفع المصدر ووضعه في طابور الاستخراج.",
-      );
-      formElement.reset();
-      imports.retry();
-    } catch (error) {
-      setMessage(error instanceof Error ? error.message : "تعذر الرفع.");
-    } finally {
-      setBusy(false);
-    }
-  };
   return (
     <section>
       <AdminPageHeader
         eyebrow="المصدر منفصل عن النص"
         title="الاستيراد والمصادر"
-        description="راقب طابور المصادر أو ارفع مصدرًا جديدًا في تبويب مستقل."
+        description="راقب طابور المصادر وأضف ملفات النص والمرفقات من نافذة الإضافة."
         breadcrumbs={[
           { label: "لوحة الإدارة", to: "/ar/admin" },
           { label: "إدارة المحتوى" },
@@ -122,10 +114,14 @@ export function AdminImportsPage() {
             <button className="button secondary" onClick={imports.retry}>
               تحديث الحالات
             </button>
-            {tab === "queue" && auth.hasPermission("source.upload") && (
-              <Link className="button" to="/ar/admin/imports/upload">
-                + رفع مصدر
-              </Link>
+            {auth.hasPermission("source.upload") && (
+              <button
+                type="button"
+                className="button"
+                onClick={() => setCreating(true)}
+              >
+                + إضافة مصدر
+              </button>
             )}
           </>
         }
@@ -138,58 +134,46 @@ export function AdminImportsPage() {
             to: "/ar/admin/imports/queue",
             count: imports.data?.length,
           },
-          ...(auth.hasPermission("source.upload")
-            ? [{ label: "رفع مصدر", to: "/ar/admin/imports/upload" }]
-            : []),
         ]}
       />
-      {tab === "upload" && auth.hasPermission("source.upload") && (
-        <form className="admin-card upload-form" onSubmit={upload}>
-          <h2>رفع مصادر تشريع واحد</h2>
-          <p className="form-hint">
-            استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية
-            للمقارنة والتنزيل من صفحة التشريع.
-          </p>
-          <label>
-            ملف النص للاستخراج
-            <input
-              name="file"
-              type="file"
-              accept=".txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.csv,.xlsx"
-              required
-            />
-          </label>
-          <label>
-            نسخة PDF الرسمية (اختيارية)
-            <input name="referencePdf" type="file" accept=".pdf" />
-          </label>
-          <label>
-            جهة الحصول
-            <input
-              name="obtainedFrom"
-              required
-              placeholder="مثال: أرشيف الجريدة الرسمية"
-            />
-          </label>
-          <button className="button" disabled={busy}>
-            {busy ? "جار الرفع…" : "رفع وبدء الاستخراج"}
-          </button>
-          {message && (
-            <p role="status" className="form-message">
-              {message}
-            </p>
-          )}
-        </form>
+      {message && (
+        <p role="status" className="form-message">
+          {message}
+        </p>
       )}
-      {tab === "queue" &&
-        (imports.loading ? (
-          <LoadingCards />
-        ) : imports.error ? (
-          <ErrorPanel message={imports.error.message} retry={imports.retry} />
-        ) : (
-          <div className="admin-list">
-            {imports.data?.map((item) => (
-              <details className="admin-card import-row" key={item.id}>
+      {(creating || tab === "upload") &&
+        auth.hasPermission("source.upload") && (
+          <UploadSourceDialog
+            onClose={closeUpload}
+            onDone={(successMessage) => {
+              closeUpload();
+              setMessage(successMessage);
+              imports.retry();
+            }}
+          />
+        )}
+      {imports.loading ? (
+        <LoadingCards />
+      ) : imports.error ? (
+        <ErrorPanel message={imports.error.message} retry={imports.retry} />
+      ) : (
+        <div className="admin-list">
+          {imports.data?.map((item) => (
+            <article className="admin-card" key={item.id}>
+              <div
+                className="admin-entity-actions"
+                role="group"
+                aria-label={`إجراءات المصدر ${item.originalName}`}
+              >
+                <span>الحالة الإدارية:</span>
+                <LifecycleActions
+                  kind="sources"
+                  id={item.sourceDocumentId}
+                  label={item.originalName}
+                  onDone={imports.retry}
+                />
+              </div>
+              <details className="import-row">
                 <summary>
                   <div>
                     <strong>{item.originalName}</strong>
@@ -201,7 +185,9 @@ export function AdminImportsPage() {
                         ` — PDF: ${item.referencePdfName}`}
                     </span>
                   </div>
-                  <StatusBadge status={item.status} />
+                  <span>
+                    حالة الاستيراد: <StatusBadge status={item.status} />
+                  </span>
                 </summary>
                 <div className="import-details">
                   <dl>
@@ -242,6 +228,16 @@ export function AdminImportsPage() {
                       </Link>
                     </p>
                   )}
+                  <SourceEditor
+                    source={{
+                      ...item,
+                      id: item.sourceDocumentId,
+                      sourceRole: "EXTRACTION",
+                    }}
+                    editable={auth.hasPermission("source.update")}
+                    showLifecycle={false}
+                    done={imports.retry}
+                  />
                   <ImportPreview
                     id={item.id}
                     mediaType={item.mediaType}
@@ -249,12 +245,97 @@ export function AdminImportsPage() {
                   />
                 </div>
               </details>
-            ))}
-          </div>
-        ))}
+            </article>
+          ))}
+        </div>
+      )}
     </section>
   );
 }
+function UploadSourceDialog({
+  onClose,
+  onDone,
+}: {
+  onClose: () => void;
+  onDone: (message: string) => void;
+}) {
+  const [busy, setBusy] = useState(false);
+  const [dirty, setDirty] = useState(false);
+  const [error, setError] = useState("");
+  const pending = useRef(false);
+  const upload = async (event: FormEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (pending.current) return;
+    const body = new FormData(event.currentTarget);
+    pending.current = true;
+    setBusy(true);
+    setError("");
+    try {
+      await apiRequest("/imports", { body });
+      setDirty(false);
+      onDone(
+        body.get("referencePdf") instanceof File &&
+          (body.get("referencePdf") as File).size > 0
+          ? "تم رفع ملف النص ونسخة PDF معًا، ووُضع النص في طابور الاستخراج."
+          : "تم رفع المصدر ووضعه في طابور الاستخراج.",
+      );
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "تعذر رفع المصدر.");
+    } finally {
+      pending.current = false;
+      setBusy(false);
+    }
+  };
+  return (
+    <AdminDialog
+      title="إضافة مصدر"
+      description="استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية للمقارنة والتنزيل من صفحة التشريع."
+      dirty={dirty && !busy}
+      onClose={() => {
+        if (!pending.current) onClose();
+      }}
+    >
+      <form
+        className="edit-form"
+        onSubmit={upload}
+        onChange={() => setDirty(true)}
+      >
+        {error && (
+          <p role="alert" className="form-error">
+            {error}
+          </p>
+        )}
+        <fieldset className="admin-fieldset edit-form" disabled={busy}>
+          <label>
+            ملف النص للاستخراج
+            <input
+              name="file"
+              type="file"
+              accept=".txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.csv,.xlsx"
+              required
+            />
+          </label>
+          <label>
+            نسخة PDF الرسمية (اختيارية)
+            <input name="referencePdf" type="file" accept=".pdf" />
+          </label>
+          <label>
+            جهة الحصول
+            <input
+              name="obtainedFrom"
+              required
+              placeholder="مثال: أرشيف الجريدة الرسمية"
+            />
+          </label>
+        </fieldset>
+        <button className="button" disabled={busy}>
+          {busy ? "جار الرفع…" : "إضافة وبدء الاستخراج"}
+        </button>
+      </form>
+    </AdminDialog>
+  );
+}
+
 function ImportPreview({
   id,
   mediaType,
@@ -264,12 +345,27 @@ function ImportPreview({
   mediaType: string;
   name: string;
 }) {
+  const auth = useAuth();
+  const [addingAttachment, setAddingAttachment] = useState(false);
+  const [removingAttachment, setRemovingAttachment] = useState<{
+    sourceDocumentId: string;
+    originalName: string;
+  } | null>(null);
+  const sources = useApi<Array<{ id: string; originalName: string }>>(
+    addingAttachment ? "/admin/source-options" : null,
+  );
   const { data, error, loading, retry } = useApi<{
     extracted_text: string;
     error_details: string | null;
     analysis: ImportAnalysis | null;
     attachments: Array<{
       sourceDocumentId: string;
+      obtainedFrom: string;
+      pageCount: number | null;
+      ocrConfidence: number | null;
+      extractionStatus: string;
+      byteSize: number;
+      sha256: string;
       originalName: string;
       mediaType: string;
       role: "OFFICIAL_PDF";
@@ -295,6 +391,80 @@ function ImportPreview({
     mediaType.startsWith("image/");
   return (
     <>
+      {auth.hasPermission("source.update") && (
+        <button
+          className="button secondary"
+          onClick={() => setAddingAttachment(true)}
+        >
+          إضافة مرفق PDF مدقق
+        </button>
+      )}
+      {addingAttachment && (
+        <RecordFormDialog
+          title="إضافة مرفق إلى حزمة المصدر"
+          path={`/imports/${id}/attachments`}
+          fields={[
+            {
+              name: "sourceDocumentId",
+              label: "المرفق المدقق",
+              required: true,
+              options: (sources.data ?? []).map((s) => ({
+                value: s.id,
+                label: s.originalName,
+              })),
+            },
+            { name: "reason", label: "سبب الإضافة", required: true },
+          ]}
+          onClose={() => setAddingAttachment(false)}
+          onDone={() => {
+            setAddingAttachment(false);
+            retry();
+          }}
+        />
+      )}
+      {data?.attachments.map((attachment) => (
+        <section key={attachment.sourceDocumentId}>
+          <SourceEditor
+            source={{
+              ...attachment,
+              id: attachment.sourceDocumentId,
+              sourceRole: attachment.role,
+            }}
+            editable={auth.hasPermission("source.update")}
+            done={retry}
+          />
+          {auth.hasPermission("source.delete") && (
+            <button
+              className="link-button danger"
+              onClick={() => setRemovingAttachment(attachment)}
+            >
+              إزالة ارتباط المرفق من الحزمة
+            </button>
+          )}
+        </section>
+      ))}
+      {removingAttachment && (
+        <ConfirmDialog
+          title={`إزالة ${removingAttachment.originalName}`}
+          description="يزال ارتباط الملف بالحزمة فقط. تمنع إزالة المرفق المثبت في تاريخ تشريعي أو المستخدم في تشريع حتى معالجة الارتباط المسموح."
+          confirmLabel="إزالة الارتباط"
+          onClose={() => setRemovingAttachment(null)}
+          onConfirm={async () => {
+            await apiRequest(
+              `/imports/${id}/attachments/${removingAttachment.sourceDocumentId}`,
+              {
+                method: "DELETE",
+                body: {
+                  reason: `إزالة ارتباط ${removingAttachment.originalName} من حزمة المصدر`,
+                },
+              },
+            );
+            setRemovingAttachment(null);
+            retry();
+          }}
+        />
+      )}
+
       <StructureAnalysisPreview analysis={data?.analysis ?? null} />
       <h3>المقارنة مع المصدر</h3>
       <div className="source-compare">
