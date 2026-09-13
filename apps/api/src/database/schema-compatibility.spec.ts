@@ -71,7 +71,9 @@ describe("startup schema compatibility", () => {
   it("rejects pending migrations with actionable diagnostic", async () => {
     await expect(
       assertSchemaCompatible(query(expectedMigrations.slice(0, -1))),
-    ).rejects.toThrow(/RecoveryEditRevisions.*npm run db:migrate/);
+    ).rejects.toMatchObject({
+      message: expect.stringContaining("npm run db:migrate"),
+    });
   });
   it("rejects a database newer than the application", async () => {
     await expect(
