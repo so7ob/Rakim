@@ -449,6 +449,14 @@ describe("complete administrative lifecycle on MariaDB", () => {
       (d: { id: string }) => d.id === draft.id,
     )!;
     expect(doc.operations).toHaveLength(4);
+    const detail = await amendments.detail(draft.id);
+    expect(detail.id).toBe(draft.id);
+    expect(detail.operations.map((op: { id: string }) => op.id)).toEqual(
+      doc.operations.map((op: { id: string }) => op.id),
+    );
+    await expect(amendments.detail(randomUUID())).rejects.toThrow(
+      /وثيقة التعديل غير موجودة/,
+    );
     const changed = {
       ...input,
       revision: doc.revision,

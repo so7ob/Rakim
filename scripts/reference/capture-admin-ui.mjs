@@ -104,7 +104,11 @@ try {
     const roles = await (
       await page.request.get(`${baseUrl}/api/v1/admin/roles`)
     ).json();
+    const amendments = await (
+      await page.request.get(`${baseUrl}/api/v1/admin/amendments`)
+    ).json();
     const lawId = content.items[0]?.id;
+    const amendmentId = amendments[0]?.id;
     const userId = users.find((u) => u.username === "reader")?.id;
     const roleId = roles.find((r) => r.code === "READER")?.id;
     const details = [
@@ -136,6 +140,12 @@ try {
         ? ["general", "permissions", "users", "activity"].map((tab) => [
             `role-${tab}`,
             `/ar/admin/roles/${roleId}/${tab}`,
+          ])
+        : []),
+      ...(amendmentId
+        ? ["general", "operations"].map((tab) => [
+            `amendment-${tab}`,
+            `/ar/admin/amendments/${amendmentId}/${tab}`,
           ])
         : []),
       ["account", "/ar/account"],
