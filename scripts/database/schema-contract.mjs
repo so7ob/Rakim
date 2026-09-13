@@ -17,6 +17,7 @@ export const expectedMigrations = [
   "AdministrativeLifecycle1700000000015",
   "ReferenceLifecycle1700000000016",
   "RecoveryEditRevisions1700000000017",
+  "SourceDocHashUniqueness1700000000018",
 ];
 // Historical development migration (8496639), superseded by CanonicalRbacSecurity
 // 0012. It only synchronized permission data; it is not a replacement for the

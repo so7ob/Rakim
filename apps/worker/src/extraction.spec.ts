@@ -42,6 +42,179 @@ describe("source extraction worker", () => {
 });
 
 describe("Arabic legal structure parser", () => {
+  it("extracts the six articles and two chapters from the asterisk report", async () => {
+    const source = readFileSync(
+      fixture("legal-structure-asterisks-ar.md"),
+      "utf8",
+    );
+    const extracted = await extract(
+      fixture("legal-structure-asterisks-ar.md"),
+      "text/markdown",
+    );
+    expect(extracted.text).toBe(source);
+    const result = parseStructure(extracted.text);
+    // This fixture has only bold delimiters and hard breaks; the comparison
+    // checks every body/list line, not just the resulting article count.
+    const plain = source.replaceAll("**", "").replace(/\\\n/gu, "\n");
+    expect(result).toEqual(parseStructure(plain));
+    expect(result.summary).toEqual({
+      babs: 0,
+      fasls: 2,
+      qisms: 0,
+      articles: 6,
+      rootArticles: 0,
+      reviewRequired: 0,
+    });
+    expect(result.nodes.map((node) => node.title)).toEqual([
+      "التسمية والتعاريف",
+      "إنشاء الهيئة وأهدافها ومهامها وصلاحياتها العامة",
+    ]);
+    expect(result.articles.map((article) => article.number)).toEqual([
+      "1",
+      "2",
+      "3",
+      "4",
+      "5",
+      "6",
+    ]);
+    expect(result.articles.map((article) => article.label)).toEqual([
+      "١",
+      "٢",
+      "٣",
+      "٤",
+      "٥",
+      "٦",
+    ]);
+    expect(result.articles.map((article) => article.structureNodeKey)).toEqual([
+      "node-0001",
+      "node-0001",
+      "node-0002",
+      "node-0002",
+      "node-0002",
+      "node-0002",
+    ]);
+    expect(result.articles[3]?.text).toContain("المادة (٢٣)");
+    expect(result.articles[5]?.text).toMatch(/\n١$/u);
+    const lines = source.split("\n");
+    for (const article of result.articles)
+      expect(lines[article.sourceLine - 1]).toMatch(/^\*\*مادة/u);
+    for (const node of result.nodes)
+      expect(lines[node.sourceLine - 1]).toMatch(/^\*\*الفصل/u);
+  });
+
+  it.each(["*", "**", "***"])(
+    "cleans balanced %s emphasis in headings, preamble and bodies",
+    (marker) => {
+      const result = parseStructure(
+        [
+          `${marker}ديباجة${marker}`,
+          `${marker}الباب الأول${marker}: ${marker}عام${marker}`,
+          `${marker}الفصل الأول${marker}`,
+          `${marker}تعريفات${marker}`,
+          `${marker}القسم الأول: مصطلحات${marker}`,
+          `${marker}مادة (١)${marker} النص ${marker}الأول${marker}.`,
+          `${marker}سطر تابع${marker}`,
+          `${marker}مادة (٢): النص الثاني.${marker}`,
+        ].join("\n"),
+      );
+      expect(result.preamble).toBe("ديباجة");
+      expect(result.nodes.map((node) => node.title)).toEqual([
+        "عام",
+        "تعريفات",
+        "مصطلحات",
+      ]);
+      expect(result.articles.map((article) => article.text)).toEqual([
+        "النص الأول.\nسطر تابع",
+        "النص الثاني.",
+      ]);
+      expect(result.issues).toEqual([]);
+    },
+  );
+
+  it("does not consume a formatted article or structure heading as a following title", () => {
+    const result = parseStructure(
+      "**الباب الأول**\n\n**الفصل الأول**\n\n**مادة (١)** نص",
+    );
+    expect(result.nodes.map((node) => node.title)).toEqual([
+      "الباب الأول",
+      "الفصل الأول",
+    ]);
+    expect(result.articles[0]).toMatchObject({
+      number: "1",
+      text: "نص",
+      sourceLine: 5,
+      structureNodeKey: "node-0002",
+    });
+    expect(result.issues.map((issue) => issue.code)).toEqual([
+      "STRUCTURE_TITLE_MISSING",
+      "STRUCTURE_TITLE_MISSING",
+    ]);
+  });
+
+  it("keeps literal, escaped, list, arithmetic and unmatched asterisks", () => {
+    const body = String.raw`علامة * منفردة، وحساب 2 * 3 * 4 و2*3*4.
+حساب بين أقواس (2+3)*(4+5)*(6+7) و[2+3]*4*[6+7].
+* بند أول
+* بند ثان مع **تنسيق**.
+نجوم مهروبة \*حرفية\* و\**حرفية\**.
+نص **غير مغلق
+نص مختلف ***غير متوازن**.
+****فاصل****
+***`;
+    expect(parseStructure(`مادة (١)\n${body}`).articles[0]?.text).toBe(
+      body.replace("**تنسيق**", "تنسيق"),
+    );
+  });
+
+  it("supports nested balanced emphasis without changing adjacent characters", () => {
+    expect(
+      parseStructure("**مادة** (١) **نص *مهم* جدًا**، و(***تنبيه***).")
+        .articles[0]?.text,
+    ).toBe("نص مهم جدًا، و(تنبيه).");
+  });
+
+  it("cleans hard breaks without merging lines or losing escaped and final backslashes", () => {
+    const source = [
+      "**الفصل الأول**\\",
+      "**عام**",
+      "**مادة (١)** نص\\",
+      String.raw`مسار\\`,
+      "سطر تابع",
+      "**مادة (٢)** آخر\\",
+    ].join("\r\n");
+    const result = parseStructure(source);
+    expect(result.nodes[0]).toMatchObject({ title: "عام", sourceLine: 1 });
+    expect(result.articles[0]).toMatchObject({
+      text: "نص\nمسار\\\\\nسطر تابع",
+      sourceLine: 3,
+    });
+    expect(result.articles[1]).toMatchObject({ text: "آخر\\", sourceLine: 6 });
+  });
+
+  it("cleans fallback and unassigned text while retaining review diagnostics", () => {
+    const fallback = parseStructure("**نص بلا مواد**\\\n*سطر آخر*");
+    expect(fallback.articles[0]?.text).toBe("نص بلا مواد\nسطر آخر");
+    expect(fallback.issues).toContainEqual(
+      expect.objectContaining({ code: "ARTICLE_MARKERS_NOT_FOUND" }),
+    );
+    const result = parseStructure(
+      "**الباب الأول: عام**\n**الفصل التمهيدي**\n**نص غير منسوب**\n**مادة (١)** نص",
+    );
+    expect(result.articles[0]?.structureNodeKey).toBe("node-0001");
+    expect(result.issues).toEqual([
+      expect.objectContaining({
+        code: "UNRECOGNIZED_STRUCTURE_HEADING",
+        sourceLine: 2,
+        excerpt: "الفصل التمهيدي",
+      }),
+      expect.objectContaining({
+        code: "UNASSIGNED_TEXT",
+        sourceLine: 3,
+        excerpt: "نص غير منسوب",
+      }),
+    ]);
+  });
+
   it("parses the realistic nested fixture deterministically", () => {
     const source = readFileSync(fixture("legal-structure-ar.txt"), "utf8");
     const first = parseStructure(source);
