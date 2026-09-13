@@ -19,6 +19,7 @@ import { ReferenceThemeDefaults1700000000011 } from "./migrations/1700000000011-
 import { CanonicalRbacSecurity1700000000012 } from "./migrations/1700000000012-canonical-rbac-security.js";
 import { ArticleLabelOrdering1700000000013 } from "./migrations/1700000000013-article-label-ordering.js";
 import { MultiSourceImports1700000000014 } from "./migrations/1700000000014-multi-source-imports.js";
+import { SourceDocHashUniqueness1700000000018 } from "./migrations/1700000000018-source-doc-hash-uniqueness.js";
 
 import { AdministrativeLifecycle1700000000015 } from "./migrations/1700000000015-administrative-lifecycle.js";
 
@@ -61,6 +62,7 @@ export const createDataSource = () =>
       AdministrativeLifecycle1700000000015,
       ReferenceLifecycle1700000000016,
       RecoveryEditRevisions1700000000017,
+      SourceDocHashUniqueness1700000000018,
     ],
     migrationsTableName: "schema_migrations",
   });

@@ -444,4 +444,58 @@ describe("structured import draft persistence", () => {
       ),
     ).toBe(0);
   });
+
+  it("allows reupload when a previously imported source is soft-deleted", async () => {
+    const duplicateText = "نص يمكن إعادة رفعه بعد الحذف الناعم";
+    const duplicateBytes = Buffer.from(duplicateText, "utf8");
+    const duplicateSourceId = randomUUID();
+    const duplicateSha = createHash("sha256")
+      .update(duplicateBytes)
+      .digest("hex");
+    sourceIds.push(duplicateSourceId);
+    await db.query(
+      `INSERT INTO source_documents
+       (id,original_name,storage_key,media_type,byte_size,sha256,received_at,obtained_from,extraction_status,is_active,created_by)
+       VALUES (?,?,?,'text/plain',?,?,NOW(3),'اختبار حذف','REVIEWED',TRUE,?)`,
+      [
+        duplicateSourceId,
+        "مكرر_محذوف.txt",
+        `tests/${duplicateSourceId}.txt`,
+        duplicateBytes.length,
+        duplicateSha,
+        actor.id,
+      ],
+    );
+    await db.query(
+      "UPDATE source_documents SET deleted_at=NOW(3), is_active=FALSE WHERE id=?",
+      [duplicateSourceId],
+    );
+
+    const duplicateFile = {
+      buffer: duplicateBytes,
+      originalname: "مكرر_محذوف.txt",
+      size: duplicateBytes.length,
+      fieldname: "file",
+      encoding: "7bit",
+      mimetype: "text/plain",
+      destination: "",
+      filename: "مكرر_محذوف.txt",
+      path: "/tmp/mocked-upload",
+      stream: null,
+    } as unknown as Express.Multer.File;
+
+    const reupload = await service.upload(
+      duplicateFile,
+      "بيانات الحقل بعد الحذف",
+      actor,
+    );
+    sourceIds.push(reupload.sourceDocumentId);
+    importIds.push(reupload.id);
+
+    const activeWithSameHash = await db.query(
+      "SELECT COUNT(*) count FROM source_documents WHERE sha256=? AND deleted_at IS NULL AND is_active=TRUE",
+      [duplicateSha],
+    );
+    expect(Number(activeWithSameHash[0].count)).toBe(1);
+  });
 });
