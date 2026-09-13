@@ -1,5 +1,5 @@
 import { execFile as execFileCallback } from "node:child_process";
-import { unlink } from "node:fs/promises";
+import { readFile, unlink } from "node:fs/promises";
 import { resolve, sep } from "node:path";
 import { promisify } from "node:util";
 import { expect, test } from "@playwright/test";
@@ -224,6 +224,168 @@ test("retains source files on upload failure and prevents duplicate submissions"
   await expect(dialog.getByLabel("جهة الحصول")).toHaveValue(
     "بيانات يحتفظ بها عند الفشل",
   );
+});
+
+test("imports Markdown articles with clean drafts and unchanged source text", async ({
+  page,
+}, testInfo) => {
+  test.skip(testInfo.project.name !== "desktop-1440");
+  test.setTimeout(90_000);
+  const unique = Date.now();
+  const fileName = `markdown-regression-${unique}.md`;
+  const draftTitle = `اختبار استخراج النجوم ${unique}`;
+  const source =
+    `عينة اختبار آلي مقتبسة من بلاغ، ليست للنشر — ${unique}\n${await readFile(resolve("tests/fixtures/legal-structure-asterisks-ar.md"), "utf8")}`.replace(
+      "يسمى هذا القرار",
+      "**يسمى هذا القرار**",
+    );
+
+  await login(page, "data_entry");
+  await page.goto("/ar/admin/imports");
+  await page.getByRole("button", { name: "+ إضافة مصدر", exact: true }).click();
+  await page.getByLabel("ملف النص للاستخراج").setInputFiles({
+    name: fileName,
+    mimeType: "text/markdown",
+    buffer: Buffer.from(source),
+  });
+  await page.getByLabel("جهة الحصول").fill("اختبار انحدار بلاغ النجوم");
+  const uploadPromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith("/api/v1/imports") &&
+      response.request().method() === "POST",
+  );
+  await page.getByRole("button", { name: "إضافة وبدء الاستخراج" }).click();
+  const uploadResponse = await uploadPromise;
+  expect(uploadResponse.ok()).toBeTruthy();
+  const upload = await uploadResponse.json();
+  activeFixture = { importId: upload.id, sourceIds: [upload.sourceDocumentId] };
+
+  for (let attempt = 0; attempt < 5; attempt += 1) {
+    await execFile(
+      "npm",
+      ["run", "start", "-w", "@ylp/worker", "--", "--once"],
+      { cwd: process.cwd(), timeout: 30_000 },
+    );
+    const response = await page.request.get(`/api/v1/imports/${upload.id}`);
+    expect(response.ok()).toBeTruthy();
+    if ((await response.json()).status === "READY_FOR_REVIEW") break;
+  }
+  await page.goto("/ar/admin/imports/queue");
+  const row = page.locator("details.import-row").filter({ hasText: fileName });
+  await expect(row).toContainText("جاهز للمراجعة");
+  await row.locator(":scope > summary").click();
+  const tree = row.getByRole("tree", { name: "بنية التشريع المستخرجة" });
+  await expect(tree.getByText("الفصل الأول", { exact: true })).toBeVisible();
+  await expect(tree.getByText("الفصل الثاني", { exact: true })).toBeVisible();
+  await expect(tree.locator(".import-article")).toHaveText([
+    "مادة ١",
+    "مادة ٢",
+    "مادة ٣",
+    "مادة ٤",
+    "مادة ٥",
+    "مادة ٦",
+  ]);
+  expect(await row.locator(".extracted-preview").textContent()).toBe(
+    source.trim(),
+  );
+  await page.screenshot({
+    path: testInfo.outputPath("markdown-import-preview.png"),
+    fullPage: true,
+  });
+
+  await changeUser(page, "legal_reviewer");
+  await page.goto("/ar/admin/imports/queue");
+  await row.locator(":scope > summary").click();
+  await row.getByRole("button", { name: "اعتماد مراجعة المصدر" }).click();
+  await expect(
+    row.locator(":scope > summary").getByText("مراجع", { exact: true }),
+  ).toBeVisible();
+  await changeUser(page, "data_entry");
+  await page.goto("/ar/admin/imports/queue");
+  await row.locator(":scope > summary").click();
+  await row.locator('input[name="titleAr"]').fill(draftTitle);
+  await row.locator('input[name="year"]').fill("2018");
+  await row.locator('select[name="typeId"]').selectOption({ index: 1 });
+  await row.locator('select[name="authorityId"]').selectOption({ index: 1 });
+  const draftPromise = page.waitForResponse(
+    (response) =>
+      response.url().endsWith(`/api/v1/imports/${upload.id}/draft`) &&
+      response.request().method() === "POST",
+  );
+  await row.getByRole("button", { name: "إنشاء المسودة" }).click();
+  const draftResponse = await draftPromise;
+  expect(draftResponse.ok()).toBeTruthy();
+  const lawId = (await draftResponse.json()).id;
+  activeFixture.lawId = lawId;
+  await page.goto(`/ar/admin/content/${lawId}/articles`);
+  await page.reload();
+  await expect(
+    page.getByRole("heading", { name: "المادة 1", exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: "المادة 6", exact: true }),
+  ).toBeVisible();
+  await page
+    .getByRole("button", { name: "تعديل المادة", exact: true })
+    .first()
+    .click();
+  const dialog = page.getByRole("dialog", {
+    name: "تعديل المادة 1",
+    exact: true,
+  });
+  await expect(dialog.getByLabel("النص")).toHaveValue(
+    "يسمى هذا القرار (قرار إنشاء الهيئة العامة للزكاة).",
+  );
+  await dialog.getByRole("button", { name: "إلغاء", exact: true }).click();
+
+  const detailResponse = await page.request.get(
+    `/api/v1/admin/legislations/${lawId}?articleContent=full`,
+  );
+  expect(detailResponse.ok()).toBeTruthy();
+  const detail = await detailResponse.json();
+  expect(detail.structures).toHaveLength(2);
+  expect(detail.articles).toHaveLength(6);
+  const chapterIds = ["الفصل الأول", "الفصل الثاني"].map(
+    (label) =>
+      detail.structures.find(
+        (node: { labelAr: string }) => node.labelAr === label,
+      )?.id,
+  );
+  expect(chapterIds.every(Boolean)).toBe(true);
+  expect(
+    detail.articles.map(
+      (article: { structureNodeId: string }) => article.structureNodeId,
+    ),
+  ).toEqual([
+    chapterIds[0],
+    chapterIds[0],
+    chapterIds[1],
+    chapterIds[1],
+    chapterIds[1],
+    chapterIds[1],
+  ]);
+  const texts = detail.articles.map(
+    (article: { textOriginal: string }) => article.textOriginal,
+  );
+  expect(texts.join("\n")).not.toMatch(/[*\\]/u);
+  expect(texts[1]).toContain("- الوكيل: وكيل الهيئة العامة للزكاة.");
+  expect(texts[3]).toContain("المادة (٢٣)");
+  expect(texts[5]).toMatch(/\n١$/u);
+
+  const importResponse = await page.request.get(`/api/v1/imports/${upload.id}`);
+  expect(importResponse.ok()).toBeTruthy();
+  const imported = await importResponse.json();
+  expect(imported.extracted_text).toBe(source.trim());
+  expect(imported.analysis.summary).toMatchObject({
+    fasls: 2,
+    articles: 6,
+    reviewRequired: 0,
+  });
+  const download = await page.request.get(
+    `/api/v1/imports/${upload.id}/source`,
+  );
+  expect(download.ok()).toBeTruthy();
+  expect(await download.body()).toEqual(Buffer.from(source));
 });
 
 test("imports and persists the complete Arabic legal hierarchy", async ({

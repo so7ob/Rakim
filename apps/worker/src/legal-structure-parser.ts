@@ -143,6 +143,59 @@ function compact(value: string): string {
   return value.replace(/[\t ]+/gu, " ").trim();
 }
 
+function isEscaped(value: string, index: number): boolean {
+  let backslashes = 0;
+  while (index > 0 && value[index - 1] === "\\") {
+    backslashes += 1;
+    index -= 1;
+  }
+  return backslashes % 2 === 1;
+}
+
+/**
+ * Unwrap only balanced, word-delimited asterisk emphasis on one source line.
+ * Matching whole runs of 1–3 stars keeps unmatched markers, list bullets and
+ * arithmetic (including 2*3*4 and (2+3)*(4+5)*(6+7)) literal. No general
+ * Markdown rendering occurs.
+ */
+function cleanMarkdownLine(line: string, hasFollowingLine: boolean): string {
+  if (
+    hasFollowingLine &&
+    line.endsWith("\\") &&
+    !isEscaped(line, line.length - 1)
+  )
+    line = line.slice(0, -1);
+
+  const openers: Array<{ index: number; width: number }> = [];
+  const removed = new Set<number>();
+  const wordCharacter = /[\p{L}\p{M}\p{N}]/u;
+  for (const match of line.matchAll(/\*+/gu)) {
+    const index = match.index;
+    const width = match[0].length;
+    if (width > 3 || isEscaped(line, index)) continue;
+    const before = line[index - 1] ?? "";
+    const after = line[index + width] ?? "";
+    const canOpen =
+      !!after &&
+      !/\s/u.test(after) &&
+      !wordCharacter.test(before) &&
+      !/\p{Pe}/u.test(before);
+    const canClose =
+      !!before && !/\s/u.test(before) && !wordCharacter.test(after);
+    const opener = openers.at(-1);
+    if (canClose && opener?.width === width) {
+      removed.add(opener.index);
+      removed.add(index);
+      openers.pop();
+    } else if (canOpen) {
+      openers.push({ index, width });
+    }
+  }
+  return line.replace(/\*+/gu, (marker, index: number) =>
+    removed.has(index) ? "" : marker,
+  );
+}
+
 function parseStructureHeading(line: string) {
   const match = compact(line).match(
     /^(الباب|الفصل|القسم)\s+(?:رقم\s*)?([0-9٠-٩]+|[\p{L}]+(?:\s+[\p{L}]+)?)(?:\s*[:：\-–—ـ]+\s*|\s+)?(.*)$/u,
@@ -200,7 +253,14 @@ function excerpt(lines: string[]): string {
  * context in document order.
  */
 export function parseLegalStructure(text: string): ParsedLegalStructure {
-  const lines = text.replace(/\r\n?/gu, "\n").split("\n");
+  // Keep one cleaned line per source line so diagnostics retain their offsets.
+  // The worker stores the original extracted text separately from this result.
+  const lines = text
+    .replace(/\r\n?/gu, "\n")
+    .split("\n")
+    .map((line, index, sourceLines) =>
+      cleanMarkdownLine(line, index < sourceLines.length - 1),
+    );
   const nodes: ParsedStructureNode[] = [];
   const articles: ParsedArticle[] = [];
   const issues: ParseIssue[] = [];
@@ -237,8 +297,8 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
   };
 
   for (let index = 0; index < lines.length; index += 1) {
-    const rawLine = lines[index]!;
-    const line = compact(rawLine);
+    const contentLine = lines[index]!;
+    const line = compact(contentLine);
     if (pageMarker.test(line)) continue;
     const structureHeading = parseStructureHeading(line);
     if (structureHeading) {
@@ -348,12 +408,12 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
     }
 
     if (currentArticle) {
-      currentArticle.bodyLines.push(rawLine.trimEnd());
+      currentArticle.bodyLines.push(contentLine.trimEnd());
     } else if (!sawLegalToken) {
-      preambleLines.push(rawLine.trimEnd());
+      preambleLines.push(contentLine.trimEnd());
     } else if (line) {
       if (!unassignedLines.length) unassignedStartLine = index + 1;
-      unassignedLines.push(rawLine.trimEnd());
+      unassignedLines.push(contentLine.trimEnd());
     }
   }
   flushArticle();
@@ -361,7 +421,7 @@ export function parseLegalStructure(text: string): ParsedLegalStructure {
 
   if (!articles.length) {
     documentOrder += 1;
-    const fallbackText = text.trim();
+    const fallbackText = lines.join("\n").trim();
     articles.push({
       key: "article-0001",
       label: "1",
