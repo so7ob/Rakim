@@ -6,7 +6,7 @@ import { UiIcon, type UiIconName } from "./UiIcon";
 interface NavigationItem {
   to: string;
   label: string;
-  permission: string;
+  permission: string | string[];
   end?: boolean;
 }
 interface NavigationGroup {
@@ -36,6 +36,11 @@ const groups: NavigationGroup[] = [
         to: "/ar/admin/amendments",
         label: "التعديلات",
         permission: "amendment.view",
+      },
+      {
+        to: "/ar/admin/trash",
+        label: "سلة المحذوفات",
+        permission: ["legislation.view", "source.view"],
       },
       {
         to: "/ar/admin/reference-data",
@@ -145,7 +150,11 @@ export function AdminLayout() {
         .map((group) => ({
           ...group,
           items: group.items.filter((item) =>
-            auth.hasPermission(item.permission),
+            Array.isArray(item.permission)
+              ? item.permission.some((permission) =>
+                  auth.hasPermission(permission),
+                )
+              : auth.hasPermission(item.permission),
           ),
         }))
         .filter((group) => group.items.length),

@@ -12,7 +12,7 @@ import {
   type FormEvent,
 } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
-import { apiRequest } from "../../api";
+import { ApiError, apiGet, apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { StatusBadge } from "../../components/StatusBadge";
@@ -180,10 +180,17 @@ export function AdminImportsPage() {
               >
                 <span>الحالة الإدارية:</span>
                 <LifecycleActions
-                  kind="sources"
-                  id={item.sourceDocumentId}
+                  kind="imports"
+                  id={item.id}
                   label={item.originalName}
                   onDone={imports.retry}
+                  allowState={false}
+                  allowDelete={
+                    !item.legislationId ||
+                    (auth.hasPermission("legislation.view") &&
+                      auth.hasPermission("legislation.delete"))
+                  }
+                  showStatus={false}
                 />
               </div>
               <details className="import-row">
@@ -275,11 +282,23 @@ function UploadSourceDialog({
   const [busy, setBusy] = useState(false);
   const [dirty, setDirty] = useState(false);
   const [error, setError] = useState("");
+  const [trashConflict, setTrashConflict] = useState<{
+    deletionBatchId: string;
+    rootLabel: string;
+    status: string;
+    restoreUntil: string;
+  } | null>(null);
+  const [trashAction, setTrashAction] = useState<"restore" | "purge" | null>(
+    null,
+  );
+  const [trashReason, setTrashReason] = useState("");
+  const [pendingBody, setPendingBody] = useState<FormData | null>(null);
   const pending = useRef(false);
   const upload = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
     if (pending.current) return;
     const body = new FormData(event.currentTarget);
+    setPendingBody(body);
     pending.current = true;
     setBusy(true);
     setError("");
@@ -293,59 +312,187 @@ function UploadSourceDialog({
           : "تم رفع المصدر ووضعه في طابور الاستخراج.",
       );
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "تعذر رفع المصدر.");
+      const apiError = reason instanceof ApiError ? reason : null;
+      const details = apiError?.details;
+      if (details?.code === "SOURCE_IN_TRASH" && details.deletion) {
+        setTrashConflict(
+          details.deletion as {
+            deletionBatchId: string;
+            rootLabel: string;
+            status: string;
+            restoreUntil: string;
+          },
+        );
+        setError("");
+      } else
+        setError(reason instanceof Error ? reason.message : "تعذر رفع المصدر.");
     } finally {
       pending.current = false;
       setBusy(false);
     }
   };
+  const waitForPurge = async (batchId: string) => {
+    for (let attempt = 0; attempt < 60; attempt += 1) {
+      const batch = await apiGet<{ status: string; lastError: string | null }>(
+        `/admin/deletions/${batchId}`,
+      );
+      if (batch.status === "PURGED") return;
+      if (batch.status === "PURGE_FAILED")
+        throw new Error(batch.lastError || "فشل إتلاف الدفعة القديمة.");
+      await new Promise((resolve) => window.setTimeout(resolve, 1_000));
+    }
+    throw new Error(
+      "استغرق الإتلاف وقتًا أطول من المتوقع؛ راجع سلة المحذوفات ثم أعد الرفع.",
+    );
+  };
   return (
-    <AdminDialog
-      title="إضافة مصدر"
-      description="استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية للمقارنة والتنزيل من صفحة التشريع."
-      dirty={dirty && !busy}
-      onClose={() => {
-        if (!pending.current) onClose();
-      }}
-    >
-      <form
-        className="edit-form"
-        onSubmit={upload}
-        onChange={() => setDirty(true)}
+    <>
+      <AdminDialog
+        title="إضافة مصدر"
+        description="استعمل ملف النص لاستخراج المواد والبنية، وأرفق نسخة PDF الرسمية للمقارنة والتنزيل من صفحة التشريع."
+        dirty={dirty && !busy}
+        onClose={() => {
+          if (!pending.current) onClose();
+        }}
       >
-        {error && (
-          <p role="alert" className="form-error">
-            {error}
-          </p>
-        )}
-        <fieldset className="admin-fieldset edit-form" disabled={busy}>
+        <form
+          className="edit-form"
+          onSubmit={upload}
+          onChange={() => {
+            setDirty(true);
+            setTrashConflict(null);
+          }}
+        >
+          {error && (
+            <p role="alert" className="form-error">
+              {error}
+            </p>
+          )}
+          {trashConflict && (
+            <div className="form-message source-trash-choice" role="alert">
+              <strong>الملف موجود في سلة المحذوفات</strong>
+              <p>
+                الدفعة: {trashConflict.rootLabel}.
+                {trashConflict.status === "TRASHED"
+                  ? " يمكنك استعادتها كاملة أو إتلافها ثم بدء استيراد جديد."
+                  : trashConflict.status === "PURGE_FAILED"
+                    ? " فشل إتلافها السابق؛ أعد محاولة الإتلاف قبل الرفع."
+                    : " ما زالت عملية الإلغاء أو الإتلاف جارية؛ تابع حالتها في السلة."}
+              </p>
+              <div className="admin-entity-actions">
+                {trashConflict.status === "TRASHED" && (
+                  <button
+                    type="button"
+                    className="button secondary"
+                    onClick={() => {
+                      setTrashReason("");
+                      setTrashAction("restore");
+                    }}
+                  >
+                    استعادة الدفعة
+                  </button>
+                )}
+                {["TRASHED", "PURGE_FAILED"].includes(trashConflict.status) && (
+                  <button
+                    type="button"
+                    className="button danger"
+                    onClick={() => {
+                      setTrashReason("");
+                      setTrashAction("purge");
+                    }}
+                  >
+                    {trashConflict.status === "PURGE_FAILED"
+                      ? "إعادة الإتلاف وبدء الاستيراد"
+                      : "إتلاف وبدء استيراد جديد"}
+                  </button>
+                )}
+                <Link className="button secondary" to="/ar/admin/trash">
+                  عرض السلة
+                </Link>
+              </div>
+            </div>
+          )}
+          <fieldset className="admin-fieldset edit-form" disabled={busy}>
+            <label>
+              ملف النص للاستخراج
+              <input
+                name="file"
+                type="file"
+                accept=".txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.csv,.xlsx"
+                required
+              />
+            </label>
+            <label>
+              نسخة PDF الرسمية (اختيارية)
+              <input name="referencePdf" type="file" accept=".pdf" />
+            </label>
+            <label>
+              جهة الحصول
+              <input
+                name="obtainedFrom"
+                required
+                placeholder="مثال: أرشيف الجريدة الرسمية"
+              />
+            </label>
+          </fieldset>
+          <button className="button" disabled={busy}>
+            {busy ? "جار الرفع…" : "إضافة وبدء الاستخراج"}
+          </button>
+        </form>
+      </AdminDialog>
+      {trashAction && trashConflict && (
+        <ConfirmDialog
+          title={
+            trashAction === "restore"
+              ? "استعادة الدفعة المحذوفة"
+              : "إتلاف الدفعة ورفع الملف من جديد"
+          }
+          description={
+            trashAction === "restore"
+              ? "ستُستعاد عملية الاستيراد والتشريع وعلاقاتهما كما كانت."
+              : "سيُتلف المحتوى السابق وملفاته نهائيًا، ثم يبدأ رفع الملف المحدد من جديد."
+          }
+          confirmLabel={
+            trashAction === "restore" ? "استعادة" : "إتلاف وإعادة الرفع"
+          }
+          destructive={trashAction === "purge"}
+          onClose={() => setTrashAction(null)}
+          onConfirm={async () => {
+            if (trashReason.trim().length < 3)
+              throw new Error("اكتب سببًا واضحًا من ثلاثة أحرف على الأقل.");
+            if (trashAction === "restore") {
+              await apiRequest(
+                `/admin/deletions/${trashConflict.deletionBatchId}/restore`,
+                { body: { reason: trashReason } },
+              );
+              setDirty(false);
+              onDone("تمت استعادة الدفعة المحذوفة وعلاقاتها.");
+              return;
+            }
+            await apiRequest(
+              `/admin/deletions/${trashConflict.deletionBatchId}/purge`,
+              { body: { reason: trashReason } },
+            );
+            await waitForPurge(trashConflict.deletionBatchId);
+            if (!pendingBody)
+              throw new Error("أعد اختيار الملف لبدء الاستيراد الجديد.");
+            await apiRequest("/imports", { body: pendingBody });
+            setDirty(false);
+            onDone("أُتلفت الدفعة السابقة وبدأ استيراد الملف من جديد.");
+          }}
+        >
           <label>
-            ملف النص للاستخراج
+            سبب الإجراء
             <input
-              name="file"
-              type="file"
-              accept=".txt,.md,.docx,.pdf,.png,.jpg,.jpeg,.csv,.xlsx"
+              value={trashReason}
+              onChange={(event) => setTrashReason(event.target.value)}
+              maxLength={1000}
               required
             />
           </label>
-          <label>
-            نسخة PDF الرسمية (اختيارية)
-            <input name="referencePdf" type="file" accept=".pdf" />
-          </label>
-          <label>
-            جهة الحصول
-            <input
-              name="obtainedFrom"
-              required
-              placeholder="مثال: أرشيف الجريدة الرسمية"
-            />
-          </label>
-        </fieldset>
-        <button className="button" disabled={busy}>
-          {busy ? "جار الرفع…" : "إضافة وبدء الاستخراج"}
-        </button>
-      </form>
-    </AdminDialog>
+        </ConfirmDialog>
+      )}
+    </>
   );
 }
 

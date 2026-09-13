@@ -72,6 +72,18 @@ export class ApiExceptionFilter implements ExceptionFilter {
       ...(typeof raw === "object" && raw !== null && "conflict" in raw
         ? { conflict: raw.conflict }
         : {}),
+      ...(typeof raw === "object" && raw !== null && "code" in raw
+        ? { code: raw.code }
+        : {}),
+      ...(typeof raw === "object" && raw !== null && "blockers" in raw
+        ? { blockers: raw.blockers }
+        : {}),
+      ...(typeof raw === "object" && raw !== null && "impact" in raw
+        ? { impact: raw.impact }
+        : {}),
+      ...(typeof raw === "object" && raw !== null && "deletion" in raw
+        ? { deletion: raw.deletion }
+        : {}),
       timestamp: new Date().toISOString(),
     });
   }

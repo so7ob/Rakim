@@ -55,6 +55,11 @@ const targets: Record<string, Target> = {
     resource: "source",
     view: "source.view",
   },
+  imports: {
+    table: "source_imports",
+    resource: "source",
+    view: "source.view",
+  },
   amendments: {
     table: "amendments",
     resource: "amendment",

@@ -24,7 +24,7 @@ const isoDate = (value: unknown) =>
   value instanceof Date
     ? value.toISOString().slice(0, 10)
     : String(value).slice(0, 10);
-const db = new DataSource({
+export const workerDatabase = new DataSource({
   type: "mariadb",
   host: process.env.DATABASE_HOST ?? "127.0.0.1",
   port: Number(process.env.DATABASE_PORT ?? 3306),
@@ -39,18 +39,70 @@ const db = new DataSource({
     enableKeepAlive: true,
   },
 });
+const db = workerDatabase;
 
-interface Job {
+export interface Job {
   id: string;
   job_type: string;
   payload_json: string | Record<string, string>;
 }
 interface JobPayload {
-  importId: string;
-  sourceDocumentId: string;
-  storageKey: string;
-  mediaType: string;
+  importId?: string;
+  sourceDocumentId?: string;
+  storageKey?: string;
+  mediaType?: string;
   legislationId?: string;
+  deletionBatchId?: string;
+}
+
+class JobCancelledError extends Error {
+  constructor() {
+    super("JOB_CANCELLED");
+  }
+}
+
+async function assertNotCancelled(jobId: string) {
+  const [job] = await db.query(
+    "SELECT cancel_requested_at cancelRequestedAt FROM job_queue WHERE id=?",
+    [jobId],
+  );
+  if (job?.cancelRequestedAt) throw new JobCancelledError();
+}
+
+async function cancellableExecFile(
+  jobId: string,
+  command: string,
+  args: string[],
+  options: { maxBuffer: number },
+) {
+  const controller = new AbortController();
+  let polling = false;
+  const timer = setInterval(() => {
+    if (polling) return;
+    polling = true;
+    void db
+      .query(
+        "SELECT cancel_requested_at cancelRequestedAt FROM job_queue WHERE id=?",
+        [jobId],
+      )
+      .then(([job]) => {
+        if (job?.cancelRequestedAt) controller.abort();
+      })
+      .finally(() => {
+        polling = false;
+      });
+  }, 250);
+  try {
+    return await execFile(command, args, {
+      ...options,
+      signal: controller.signal,
+    });
+  } catch (error) {
+    if (controller.signal.aborted) throw new JobCancelledError();
+    throw error;
+  } finally {
+    clearInterval(timer);
+  }
 }
 
 async function claim(manager: EntityManager): Promise<Job | null> {
@@ -78,12 +130,21 @@ export function parseStructure(text: string) {
 
 async function pdfText(
   path: string,
+  jobId?: string,
 ): Promise<{ text: string; pages: number | null }> {
   const [{ stdout }, { stdout: info }] = await Promise.all([
-    execFile("pdftotext", ["-layout", path, "-"], {
-      maxBuffer: 50 * 1024 * 1024,
-    }),
-    execFile("pdfinfo", [path], { maxBuffer: 1024 * 1024 }),
+    jobId
+      ? cancellableExecFile(jobId, "pdftotext", ["-layout", path, "-"], {
+          maxBuffer: 50 * 1024 * 1024,
+        })
+      : execFile("pdftotext", ["-layout", path, "-"], {
+          maxBuffer: 50 * 1024 * 1024,
+        }),
+    jobId
+      ? cancellableExecFile(jobId, "pdfinfo", [path], {
+          maxBuffer: 1024 * 1024,
+        })
+      : execFile("pdfinfo", [path], { maxBuffer: 1024 * 1024 }),
   ]);
   const pages = Number(info.match(/^Pages:\s+(\d+)/m)?.[1] ?? 0) || null;
   return { text: stdout, pages };
@@ -92,6 +153,7 @@ async function pdfText(
 export async function extract(
   path: string,
   mediaType: string,
+  jobId = "",
 ): Promise<{ text: string; pages: number | null }> {
   const extension = extname(path).toLowerCase();
   if ([".txt", ".md", ".csv"].includes(extension))
@@ -113,21 +175,45 @@ export async function extract(
     };
   }
   if (mediaType === "application/pdf" || extension === ".pdf")
-    return pdfText(path);
+    return pdfText(path, jobId || undefined);
   if (mediaType.startsWith("image/")) return { text: "", pages: 1 };
   throw new Error(`UNSUPPORTED_FORMAT:${extension}`);
 }
 
-async function processImport(payload: JobPayload, jobId: string) {
+export async function processImport(payload: JobPayload, jobId: string) {
+  if (
+    !payload.importId ||
+    !payload.sourceDocumentId ||
+    !payload.storageKey ||
+    !payload.mediaType
+  )
+    throw new Error("INVALID_IMPORT_JOB_PAYLOAD");
+  await assertNotCancelled(jobId);
   const path = targetPath(payload.storageKey);
-  await db.query("UPDATE source_imports SET status='EXTRACTING' WHERE id=?", [
-    payload.importId,
-  ]);
-  await db.query("UPDATE job_queue SET progress=15 WHERE id=?", [jobId]);
-  const result = await extract(path, payload.mediaType);
+  const started = await db.query(
+    `UPDATE source_imports si JOIN job_queue jq ON jq.id=?
+     SET si.status='EXTRACTING',si.updated_at=NOW(3)
+     WHERE si.id=? AND si.deleted_at IS NULL AND jq.cancel_requested_at IS NULL`,
+    [jobId, payload.importId],
+  );
+  if (!started.affectedRows) {
+    await assertNotCancelled(jobId);
+    throw new Error("SOURCE_IMPORT_NOT_ACTIVE");
+  }
+  await db.query(
+    "UPDATE job_queue SET progress=15 WHERE id=? AND cancel_requested_at IS NULL",
+    [jobId],
+  );
+  const result = await extract(path, payload.mediaType, jobId);
+  await assertNotCancelled(jobId);
   const text = result.text.replace(/\u0000/g, "").trim();
   if (!text || (payload.mediaType === "application/pdf" && text.length < 40)) {
     await db.transaction(async (m) => {
+      const [currentJob] = await m.query(
+        "SELECT cancel_requested_at cancelRequestedAt FROM job_queue WHERE id=? FOR UPDATE",
+        [jobId],
+      );
+      if (currentJob?.cancelRequestedAt) throw new JobCancelledError();
       await m.query(
         "UPDATE source_documents SET extraction_status='OCR_REQUIRED',page_count=? WHERE id=?",
         [result.pages, payload.sourceDocumentId],
@@ -149,6 +235,11 @@ async function processImport(payload: JobPayload, jobId: string) {
   }
   const structured = parseStructure(text);
   await db.transaction(async (m) => {
+    const [currentJob] = await m.query(
+      "SELECT cancel_requested_at cancelRequestedAt FROM job_queue WHERE id=? FOR UPDATE",
+      [jobId],
+    );
+    if (currentJob?.cancelRequestedAt) throw new JobCancelledError();
     await m.query(
       "UPDATE source_documents SET extraction_status='EXTRACTED',page_count=? WHERE id=?",
       [result.pages, payload.sourceDocumentId],
@@ -166,12 +257,20 @@ async function processImport(payload: JobPayload, jobId: string) {
 
 export async function recognizeImage(
   path: string,
+  jobId?: string,
 ): Promise<{ text: string; confidence: number }> {
-  const { stdout } = await execFile(
-    "tesseract",
-    [path, "stdout", "-l", process.env.OCR_LANGUAGES ?? "ara+eng", "tsv"],
-    { maxBuffer: 50 * 1024 * 1024 },
-  );
+  const args = [
+    path,
+    "stdout",
+    "-l",
+    process.env.OCR_LANGUAGES ?? "ara+eng",
+    "tsv",
+  ];
+  const { stdout } = jobId
+    ? await cancellableExecFile(jobId, "tesseract", args, {
+        maxBuffer: 50 * 1024 * 1024,
+      })
+    : await execFile("tesseract", args, { maxBuffer: 50 * 1024 * 1024 });
   const lines = stdout.split("\n").slice(1);
   const words: Array<{ text: string; confidence: number; line: string }> = [];
   for (const line of lines) {
@@ -200,15 +299,31 @@ export async function recognizeImage(
 }
 
 async function processOcr(payload: JobPayload, jobId: string) {
+  if (
+    !payload.importId ||
+    !payload.sourceDocumentId ||
+    !payload.storageKey ||
+    !payload.mediaType
+  )
+    throw new Error("INVALID_OCR_JOB_PAYLOAD");
+  await assertNotCancelled(jobId);
   const path = targetPath(payload.storageKey);
-  await db.query("UPDATE source_imports SET status='OCR_RUNNING' WHERE id=?", [
-    payload.importId,
-  ]);
+  const started = await db.query(
+    `UPDATE source_imports si JOIN job_queue jq ON jq.id=?
+     SET si.status='OCR_RUNNING',si.updated_at=NOW(3)
+     WHERE si.id=? AND si.deleted_at IS NULL AND jq.cancel_requested_at IS NULL`,
+    [jobId, payload.importId],
+  );
+  if (!started.affectedRows) {
+    await assertNotCancelled(jobId);
+    throw new Error("SOURCE_IMPORT_NOT_ACTIVE");
+  }
   let files = [path];
   let temporary: string | undefined;
   if (payload.mediaType === "application/pdf") {
     temporary = await mkdtemp(resolve(tmpdir(), "ylp-ocr-"));
-    await execFile(
+    await cancellableExecFile(
+      jobId,
       "pdftoppm",
       ["-png", "-r", "200", path, resolve(temporary, "page")],
       { maxBuffer: 5 * 1024 * 1024 },
@@ -221,11 +336,16 @@ async function processOcr(payload: JobPayload, jobId: string) {
   try {
     const outputs = [];
     for (const [index, file] of files.entries()) {
-      outputs.push(await recognizeImage(file));
-      await db.query("UPDATE job_queue SET progress=? WHERE id=?", [
-        Math.min(95, 10 + Math.round(((index + 1) / files.length) * 80)),
-        jobId,
-      ]);
+      await assertNotCancelled(jobId);
+      outputs.push(await recognizeImage(file, jobId));
+      await assertNotCancelled(jobId);
+      await db.query(
+        "UPDATE job_queue SET progress=? WHERE id=? AND cancel_requested_at IS NULL",
+        [
+          Math.min(95, 10 + Math.round(((index + 1) / files.length) * 80)),
+          jobId,
+        ],
+      );
     }
     const text = outputs
       .map((item, index) => `[صفحة ${index + 1}]\n${item.text}`)
@@ -236,6 +356,11 @@ async function processOcr(payload: JobPayload, jobId: string) {
       : 0;
     if (!text) throw new Error("OCR_EMPTY_RESULT");
     await db.transaction(async (m) => {
+      const [currentJob] = await m.query(
+        "SELECT cancel_requested_at cancelRequestedAt FROM job_queue WHERE id=? FOR UPDATE",
+        [jobId],
+      );
+      if (currentJob?.cancelRequestedAt) throw new JobCancelledError();
       await m.query(
         "UPDATE source_documents SET extraction_status='OCR_UNREVIEWED',ocr_confidence=?,page_count=? WHERE id=?",
         [confidence, files.length, payload.sourceDocumentId],
@@ -393,6 +518,247 @@ async function reindexLegislation(legislationId: string, jobId: string) {
   });
 }
 
+async function finishDeletionCancellation(importId: string) {
+  const batches = await db.query(
+    `SELECT DISTINCT db.id FROM deletion_batches db
+     JOIN deletion_batch_items dbi ON dbi.batch_id=db.id
+     WHERE db.status='CANCELLING' AND dbi.item_kind='source_imports' AND dbi.item_id=?`,
+    [importId],
+  );
+  for (const batch of batches) {
+    const running = await db.query(
+      `SELECT jq.id FROM job_queue jq
+       JOIN deletion_batch_items dbi
+         ON dbi.batch_id=? AND dbi.item_kind='source_imports'
+         AND JSON_UNQUOTE(JSON_EXTRACT(jq.payload_json,'$.importId'))=dbi.item_id
+       WHERE jq.status='RUNNING' LIMIT 1`,
+      [batch.id],
+    );
+    if (!running.length)
+      await db.query(
+        "UPDATE deletion_batches SET status='TRASHED' WHERE id=? AND status='CANCELLING'",
+        [batch.id],
+      );
+  }
+}
+
+function itemIds(items: Array<Record<string, any>>, kind: string) {
+  return items
+    .filter((item) => item.item_kind === kind)
+    .map((item) => String(item.item_id));
+}
+
+async function deleteByIds(
+  manager: EntityManager,
+  table: string,
+  field: string,
+  ids: string[],
+) {
+  if (!ids.length) return;
+  await manager.query(
+    `DELETE FROM ${table} WHERE ${field} IN (${ids.map(() => "?").join(",")})`,
+    ids,
+  );
+}
+
+export async function processPurge(payload: JobPayload, jobId: string) {
+  if (!payload.deletionBatchId) throw new Error("INVALID_PURGE_JOB_PAYLOAD");
+  const batchId = payload.deletionBatchId;
+  const [batch] = await db.query(
+    "SELECT status,restore_until restoreUntil FROM deletion_batches WHERE id=?",
+    [batchId],
+  );
+  if (!batch || ["RESTORED", "PURGED"].includes(batch.status)) {
+    await db.query(
+      "UPDATE job_queue SET status='SUCCEEDED',progress=100,completed_at=NOW(3) WHERE id=?",
+      [jobId],
+    );
+    return;
+  }
+  if (batch.status === "CANCELLING")
+    throw new Error("DELETION_CANCELLATION_PENDING");
+  if (
+    batch.status === "TRASHED" &&
+    new Date(batch.restoreUntil).getTime() > Date.now()
+  )
+    throw new Error("DELETION_RETENTION_NOT_EXPIRED");
+  if (!["TRASHED", "PURGING", "PURGE_FAILED"].includes(batch.status))
+    throw new Error(`INVALID_DELETION_BATCH_STATUS:${batch.status}`);
+  await db.query(
+    "UPDATE deletion_batches SET status='PURGING',last_error=NULL WHERE id=?",
+    [batchId],
+  );
+  const items = await db.query(
+    "SELECT item_kind,item_id FROM deletion_batch_items WHERE batch_id=?",
+    [batchId],
+  );
+  const lawIds = itemIds(items, "legislations");
+  const articleIds = itemIds(items, "articles");
+  const structureIds = itemIds(items, "structure_nodes");
+  const annexIds = itemIds(items, "annexes");
+  const amendmentIds = itemIds(items, "amendments");
+  const operationIds = itemIds(items, "amendment_operations");
+  const relationIds = itemIds(items, "legal_relations");
+  const importIds = itemIds(items, "source_imports");
+  const sourceIds = itemIds(items, "source_documents");
+  const entityIds = Array.from(
+    new Set<string>(
+      items.map((item: Record<string, any>) => String(item.item_id)),
+    ),
+  );
+
+  const storedFiles: Array<{ storage_key: string }> = [];
+  if (sourceIds.length)
+    storedFiles.push(
+      ...(await db.query(
+        `SELECT storage_key FROM source_documents WHERE id IN (${sourceIds.map(() => "?").join(",")})`,
+        sourceIds,
+      )),
+    );
+  if (annexIds.length)
+    storedFiles.push(
+      ...(await db.query(
+        `SELECT af.storage_key FROM annex_files af JOIN annex_versions av ON av.id=af.annex_version_id
+         WHERE av.annex_id IN (${annexIds.map(() => "?").join(",")})`,
+        annexIds,
+      )),
+    );
+  for (const file of storedFiles)
+    await rm(targetPath(file.storage_key), { force: true });
+
+  await db.transaction(async (m) => {
+    const modificationRows =
+      articleIds.length || operationIds.length
+        ? await m.query(
+            `SELECT DISTINCT id FROM article_modifications
+             WHERE ${[
+               articleIds.length
+                 ? `article_id IN (${articleIds.map(() => "?").join(",")})`
+                 : null,
+               operationIds.length
+                 ? `operation_id IN (${operationIds.map(() => "?").join(",")})`
+                 : null,
+             ]
+               .filter(Boolean)
+               .join(" OR ")}`,
+            [...articleIds, ...operationIds],
+          )
+        : [];
+    const modificationIds = modificationRows.map((row: any) => String(row.id));
+    await deleteByIds(
+      m,
+      "previous_text_snapshots",
+      "modification_id",
+      modificationIds,
+    );
+    await deleteByIds(m, "article_modifications", "id", modificationIds);
+    if (articleIds.length) {
+      await m.query(
+        `DELETE pts FROM previous_text_snapshots pts
+         JOIN article_versions av ON av.id=pts.article_version_id
+         WHERE av.article_id IN (${articleIds.map(() => "?").join(",")})`,
+        articleIds,
+      );
+      await m.query(
+        `UPDATE article_versions SET previous_version_id=NULL WHERE article_id IN (${articleIds.map(() => "?").join(",")})`,
+        articleIds,
+      );
+      await m.query(
+        `DELETE FROM article_versions WHERE article_id IN (${articleIds.map(() => "?").join(",")})`,
+        articleIds,
+      );
+    }
+    for (const table of ["verification_records", "user_notes", "reports"])
+      await deleteByIds(m, table, "entity_id", entityIds);
+    await deleteByIds(m, "amendment_operations", "id", operationIds);
+    await deleteByIds(m, "amendments", "id", amendmentIds);
+    await deleteByIds(m, "legal_relations", "id", relationIds);
+    if (annexIds.length) {
+      await m.query(
+        `UPDATE annex_versions SET previous_version_id=NULL WHERE annex_id IN (${annexIds.map(() => "?").join(",")})`,
+        annexIds,
+      );
+      await m.query(
+        `DELETE af FROM annex_files af JOIN annex_versions av ON av.id=af.annex_version_id
+         WHERE av.annex_id IN (${annexIds.map(() => "?").join(",")})`,
+        annexIds,
+      );
+      await m.query(
+        `DELETE FROM annex_versions WHERE annex_id IN (${annexIds.map(() => "?").join(",")})`,
+        annexIds,
+      );
+    }
+    await deleteByIds(m, "annexes", "id", annexIds);
+    if (lawIds.length) {
+      await deleteByIds(m, "workflow_events", "legislation_id", lawIds);
+      await deleteByIds(
+        m,
+        "content_responsibilities",
+        "legislation_id",
+        lawIds,
+      );
+      await deleteByIds(m, "quality_issues", "legislation_id", lawIds);
+      await deleteByIds(m, "legislation_subjects", "legislation_id", lawIds);
+      await deleteByIds(
+        m,
+        "legislation_source_documents",
+        "legislation_id",
+        lawIds,
+      );
+      await m.query(
+        `UPDATE legislation_versions SET previous_version_id=NULL WHERE legislation_id IN (${lawIds.map(() => "?").join(",")})`,
+        lawIds,
+      );
+      await deleteByIds(m, "legislation_versions", "legislation_id", lawIds);
+    }
+    await deleteByIds(
+      m,
+      "source_import_attachments",
+      "source_import_id",
+      importIds,
+    );
+    await deleteByIds(m, "source_imports", "id", importIds);
+    await deleteByIds(m, "articles", "id", articleIds);
+    if (structureIds.length)
+      await m.query(
+        `UPDATE structure_nodes SET parent_id=NULL WHERE id IN (${structureIds.map(() => "?").join(",")})`,
+        structureIds,
+      );
+    await deleteByIds(m, "structure_nodes", "id", structureIds);
+    if (lawIds.length)
+      await m.query(
+        `UPDATE source_imports SET legislation_id=NULL
+         WHERE legislation_id IN (${lawIds.map(() => "?").join(",")})`,
+        lawIds,
+      );
+    await deleteByIds(m, "legislations", "id", lawIds);
+    if (sourceIds.length) {
+      await deleteByIds(
+        m,
+        "source_import_attachments",
+        "source_document_id",
+        sourceIds,
+      );
+      await deleteByIds(m, "quality_issues", "source_document_id", sourceIds);
+      await deleteByIds(
+        m,
+        "legislation_source_documents",
+        "source_document_id",
+        sourceIds,
+      );
+      await deleteByIds(m, "source_documents", "id", sourceIds);
+    }
+    await m.query(
+      "UPDATE deletion_batches SET status='PURGED',purged_at=NOW(3),last_error=NULL WHERE id=?",
+      [batchId],
+    );
+    await m.query(
+      "UPDATE job_queue SET status='SUCCEEDED',progress=100,completed_at=NOW(3) WHERE id=?",
+      [jobId],
+    );
+  });
+}
+
 function normalize(value: string) {
   return value
     .normalize("NFKC")
@@ -405,19 +771,15 @@ function normalize(value: string) {
     .trim();
 }
 
-async function tick(): Promise<void> {
-  await db.query(
-    "INSERT INTO service_heartbeats (service_id,service_type,last_seen_at,metadata_json) VALUES (?,'WORKER',NOW(3),JSON_OBJECT('pid',?,'host',?)) ON DUPLICATE KEY UPDATE last_seen_at=VALUES(last_seen_at),metadata_json=VALUES(metadata_json)",
-    [workerId, process.pid, hostname()],
-  );
-  const job = await db.transaction((manager) => claim(manager));
-  if (!job) return;
+export async function executeJob(job: Job): Promise<void> {
   const payload = (typeof job.payload_json === "string"
     ? JSON.parse(job.payload_json)
     : job.payload_json) as unknown as JobPayload;
   try {
     if (job.job_type === "IMPORT_SOURCE") await processImport(payload, job.id);
     else if (job.job_type === "OCR_SOURCE") await processOcr(payload, job.id);
+    else if (job.job_type === "PURGE_DELETION_BATCH")
+      await processPurge(payload, job.id);
     else if (job.job_type === "REINDEX_ENTITY" && payload.legislationId)
       await reindexLegislation(payload.legislationId, job.id);
     else throw new Error(`نوع مهمة غير مدعوم: ${job.job_type}`);
@@ -430,6 +792,21 @@ async function tick(): Promise<void> {
     );
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
+    if (error instanceof JobCancelledError) {
+      await db.query(
+        "UPDATE job_queue SET status='CANCELLED',cancelled_at=NOW(3),completed_at=NOW(3),last_error=NULL WHERE id=?",
+        [job.id],
+      );
+      if (payload.importId) await finishDeletionCancellation(payload.importId);
+      console.log(
+        JSON.stringify({
+          event: "job.cancelled",
+          jobId: job.id,
+          type: job.job_type,
+        }),
+      );
+      return;
+    }
     await db.query(
       "UPDATE job_queue SET status='FAILED',last_error=?,completed_at=NOW(3) WHERE id=?",
       [message.slice(0, 4000), job.id],
@@ -438,6 +815,11 @@ async function tick(): Promise<void> {
       await db.query(
         "UPDATE source_imports SET status=IF(status='OCR_RUNNING','OCR_REQUIRED','FAILED'),error_details=? WHERE id=?",
         [message.slice(0, 4000), payload.importId],
+      );
+    if (payload.deletionBatchId)
+      await db.query(
+        "UPDATE deletion_batches SET status='PURGE_FAILED',last_error=? WHERE id=? AND status='PURGING'",
+        [message.slice(0, 4000), payload.deletionBatchId],
       );
     console.error(
       JSON.stringify({
@@ -448,6 +830,15 @@ async function tick(): Promise<void> {
       }),
     );
   }
+}
+
+async function tick(): Promise<void> {
+  await db.query(
+    "INSERT INTO service_heartbeats (service_id,service_type,last_seen_at,metadata_json) VALUES (?,'WORKER',NOW(3),JSON_OBJECT('pid',?,'host',?)) ON DUPLICATE KEY UPDATE last_seen_at=VALUES(last_seen_at),metadata_json=VALUES(metadata_json)",
+    [workerId, process.pid, hostname()],
+  );
+  const job = await db.transaction((manager) => claim(manager));
+  if (job) await executeJob(job);
 }
 
 async function main() {
@@ -467,7 +858,15 @@ async function main() {
     [workerId, process.pid, hostname()],
   );
   await db.query(
-    "UPDATE job_queue SET status='READY',locked_by=NULL,locked_at=NULL WHERE status='RUNNING' AND locked_at<DATE_SUB(NOW(3),INTERVAL 15 MINUTE)",
+    "UPDATE job_queue SET status=IF(cancel_requested_at IS NULL,'READY','CANCELLED'),cancelled_at=IF(cancel_requested_at IS NULL,cancelled_at,NOW(3)),completed_at=IF(cancel_requested_at IS NULL,completed_at,NOW(3)),locked_by=NULL,locked_at=NULL WHERE status='RUNNING' AND locked_at<DATE_SUB(NOW(3),INTERVAL 15 MINUTE)",
+  );
+  await db.query(
+    `UPDATE deletion_batches db SET db.status='TRASHED'
+     WHERE db.status='CANCELLING' AND NOT EXISTS (
+       SELECT 1 FROM deletion_batch_items dbi JOIN job_queue jq
+         ON JSON_UNQUOTE(JSON_EXTRACT(jq.payload_json,'$.importId'))=dbi.item_id
+       WHERE dbi.batch_id=db.id AND dbi.item_kind='source_imports' AND jq.status='RUNNING'
+     )`,
   );
   if (process.argv.includes("--once")) {
     await tick();

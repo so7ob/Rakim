@@ -3,6 +3,7 @@ import { apiRequest } from "../../api";
 import { useAuth } from "../../auth/AuthContext";
 import { useApi } from "../../hooks/use-api";
 import { ConfirmDialog } from "./ConfirmDialog";
+import { DeleteImpactDialog } from "./DeleteImpactDialog";
 
 export function LifecycleActions({
   kind,
@@ -97,40 +98,53 @@ export function LifecycleActions({
           حذف
         </button>
       )}
-      {action && (
-        <ConfirmDialog
-          title={`${verb}: ${label}`}
-          description={
-            action === "delete"
-              ? "سيزال السجل من قوائم الإدارة بحذف منطقي. يمنع الخادم حذف السجلات المنشورة أو المرتبطة بعلاقات تمنع الحذف؛ يبقى التاريخ محفوظاً."
-              : "يغيّر هذا الإجراء الإتاحة الإدارية داخل المنصة فقط. لا يغيّر النفاذ القانوني ولا يسجل إلغاءً تشريعياً؛ يبقى السجل وعلاقاته قابلين للإدارة."
-          }
-          confirmLabel={verb}
-          destructive={action !== "enable"}
-          onClose={() => setAction(null)}
-          onConfirm={async () => {
-            if (reason.trim().length < 3)
-              throw new Error("اكتب سبباً واضحاً من ثلاثة أحرف على الأقل.");
-            await apiRequest(path, {
-              method: "PATCH",
-              body: { action, reason },
-            });
-            setAction(null);
-            if (action !== "delete") state.retry();
-            onDone(action);
-          }}
-        >
-          <label>
-            سبب الإجراء
-            <input
-              value={reason}
-              onChange={(e) => setReason(e.target.value)}
-              maxLength={1000}
-              required
-            />
-          </label>
-        </ConfirmDialog>
-      )}
+      {action &&
+        (action === "delete" &&
+        (kind === "legislations" || kind === "imports") ? (
+          <DeleteImpactDialog
+            kind={kind}
+            id={id}
+            label={label}
+            onClose={() => setAction(null)}
+            onDone={() => {
+              setAction(null);
+              onDone("delete");
+            }}
+          />
+        ) : (
+          <ConfirmDialog
+            title={`${verb}: ${label}`}
+            description={
+              action === "delete"
+                ? "سيزال السجل من قوائم الإدارة بحذف منطقي. يمنع الخادم حذف السجلات المنشورة أو المرتبطة بعلاقات تمنع الحذف؛ يبقى التاريخ محفوظاً."
+                : "يغيّر هذا الإجراء الإتاحة الإدارية داخل المنصة فقط. لا يغيّر النفاذ القانوني ولا يسجل إلغاءً تشريعياً؛ يبقى السجل وعلاقاته قابلين للإدارة."
+            }
+            confirmLabel={verb}
+            destructive={action !== "enable"}
+            onClose={() => setAction(null)}
+            onConfirm={async () => {
+              if (reason.trim().length < 3)
+                throw new Error("اكتب سبباً واضحاً من ثلاثة أحرف على الأقل.");
+              await apiRequest(path, {
+                method: "PATCH",
+                body: { action, reason },
+              });
+              setAction(null);
+              if (action !== "delete") state.retry();
+              onDone(action);
+            }}
+          >
+            <label>
+              سبب الإجراء
+              <input
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                maxLength={1000}
+                required
+              />
+            </label>
+          </ConfirmDialog>
+        ))}
     </>
   );
 }

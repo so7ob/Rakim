@@ -8,14 +8,20 @@ import {
   Req,
   UseGuards,
 } from "@nestjs/common";
-import { IsIn, IsString, Length } from "class-validator";
+import { IsArray, IsIn, IsOptional, IsString, Length } from "class-validator";
 import type { AuthenticatedRequest } from "../auth/auth.types.js";
 import { SessionGuard } from "../auth/session.guard.js";
 import { LifecycleService } from "./lifecycle.service.js";
+import { DeletionService } from "./deletion.service.js";
 class LifecycleDto {
   @IsIn(["delete", "enable", "disable"]) action!:
     "delete" | "enable" | "disable";
   @IsString() @Length(3, 1000) reason!: string;
+  @IsOptional() @IsString() impactToken?: string;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  selectedOptionalKeys?: string[];
 }
 // The service checks the exact resource.action and record authority for every request.
 @Controller("admin/lifecycle")
@@ -23,6 +29,7 @@ class LifecycleDto {
 export class LifecycleController {
   constructor(
     @Inject(LifecycleService) private readonly service: LifecycleService,
+    @Inject(DeletionService) private readonly deletions: DeletionService,
   ) {}
   @Get(":kind/:id") state(
     @Param("kind") kind: string,
@@ -31,12 +38,32 @@ export class LifecycleController {
   ) {
     return this.service.state(kind, id, req.user!);
   }
+  @Get(":kind/:id/delete-impact")
+  deleteImpact(
+    @Param("kind") kind: string,
+    @Param("id") id: string,
+    @Req() req: AuthenticatedRequest,
+  ) {
+    return this.deletions.impact(kind, id, req.user!);
+  }
   @Patch(":kind/:id") change(
     @Param("kind") kind: string,
     @Param("id") id: string,
     @Body() dto: LifecycleDto,
     @Req() req: AuthenticatedRequest,
   ) {
+    if (
+      dto.action === "delete" &&
+      (kind === "legislations" || kind === "imports")
+    )
+      return this.deletions.remove(
+        kind,
+        id,
+        req.user!,
+        dto.reason,
+        dto.impactToken,
+        dto.selectedOptionalKeys,
+      );
     return this.service.change(kind, id, dto.action, req.user!, dto.reason);
   }
 }

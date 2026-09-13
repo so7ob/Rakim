@@ -15,6 +15,21 @@ test.afterEach(async () => {
     await q.query("SET @ylp_maintenance=1");
     for (const id of Object.values(records).flat())
       await q.query("DELETE FROM audit_logs WHERE entity_id=?", [id]);
+    const rootIds = Object.values(records).flat();
+    const deletionBatches = rootIds.length
+      ? await q.query(
+          `SELECT id FROM deletion_batches WHERE root_id IN (${rootIds.map(() => "?").join(",")})`,
+          rootIds,
+        )
+      : [];
+    for (const batch of deletionBatches) {
+      await q.query(
+        "DELETE FROM job_queue WHERE JSON_UNQUOTE(JSON_EXTRACT(payload_json,'$.deletionBatchId'))=?",
+        [batch.id],
+      );
+      await q.query("DELETE FROM audit_logs WHERE entity_id=?", [batch.id]);
+      await q.query("DELETE FROM deletion_batches WHERE id=?", [batch.id]);
+    }
     for (const id of records.legislations ?? []) {
       for (const table of [
         "legislation_versions",
@@ -53,8 +68,16 @@ test.afterEach(async () => {
 async function remove(page: Page, row: Locator) {
   await row.getByRole("button", { name: "حذف", exact: true }).first().click();
   const dialog = page.getByRole("dialog");
-  await dialog.getByLabel("سبب الإجراء").fill("حذف سجل اختبار مستقل");
-  await dialog.getByRole("button", { name: "حذف", exact: true }).click();
+  const deletionImpact = await dialog.getByText("نقل إلى السلة").count();
+  await dialog
+    .getByLabel(deletionImpact ? "سبب الحذف" : "سبب الإجراء")
+    .fill("حذف سجل اختبار مستقل");
+  await dialog
+    .getByRole("button", {
+      name: deletionImpact ? "نقل إلى السلة" : "حذف",
+      exact: true,
+    })
+    .click();
   await expect(dialog).toBeHidden();
   await expect(row).toHaveCount(0);
   await page.reload();

@@ -16,6 +16,7 @@ const pages = [
   ["no-permission", "/ar/admin/no-permission"],
   ["imports-queue", "/ar/admin/imports/queue"],
   ["imports-add-dialog", "/ar/admin/imports/upload"],
+  ["trash", "/ar/admin/trash"],
   ["legislations", "/ar/admin/content"],
   ["amendments-list", "/ar/admin/amendments/list"],
   ["amendments-add-dialog", "/ar/admin/amendments/create"],

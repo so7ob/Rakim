@@ -41,6 +41,7 @@ import { AdminRolesPage } from "./pages/admin/AdminRolesPage";
 import { AdminRoleDetailPage } from "./pages/admin/AdminRoleDetailPage";
 import { AdminPermissionsPage } from "./pages/admin/AdminPermissionsPage";
 import { AdminUserDetailPage } from "./pages/admin/AdminUserDetailPage";
+import { AdminTrashPage } from "./pages/admin/AdminTrashPage";
 
 export function App() {
   useEffect(() => {
@@ -174,6 +175,14 @@ export function App() {
               element={
                 <RequirePermission anyOf={["legislation.view"]}>
                   <AdminContentPage />
+                </RequirePermission>
+              }
+            />
+            <Route
+              path="trash"
+              element={
+                <RequirePermission anyOf={["legislation.view", "source.view"]}>
+                  <AdminTrashPage />
                 </RequirePermission>
               }
             />

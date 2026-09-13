@@ -212,6 +212,23 @@ export class ImportsService {
         message: "هذا الملف مستورد سابقًا بالبصمة نفسها.",
         duplicateSource: duplicate[0],
       });
+    const trashed = await this.db.query(
+      `SELECT db.id deletionBatchId,db.root_label rootLabel,db.status,db.restore_until restoreUntil
+       FROM source_documents sd
+       JOIN deletion_batch_items dbi ON dbi.item_kind='source_documents' AND dbi.item_id=sd.id
+       JOIN deletion_batches db ON db.id=dbi.batch_id
+       WHERE sd.sha256 IN (${referenceSha256 ? "?,?" : "?"})
+         AND db.status IN ('CANCELLING','TRASHED','PURGING','PURGE_FAILED')
+       ORDER BY db.created_at DESC LIMIT 1`,
+      referenceSha256 ? [sha256, referenceSha256] : [sha256],
+    );
+    if (trashed[0])
+      throw new ConflictException({
+        code: "SOURCE_IN_TRASH",
+        message:
+          "هذا الملف موجود في سلة المحذوفات؛ استعد الدفعة أو أتلفها ثم أعد الرفع.",
+        deletion: trashed[0],
+      });
     const sourceId = randomUUID();
     const referenceSourceId = referencePdf ? randomUUID() : null;
     const importId = randomUUID();
@@ -354,7 +371,7 @@ export class ImportsService {
     requireExactPermission(actor, remove ? "source.delete" : "source.update");
     return this.db.transaction(async (m) => {
       const [bundle] = await m.query(
-        "SELECT si.*,sd.deleted_at,sd.is_active FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE si.id=? FOR UPDATE",
+        "SELECT si.*,sd.deleted_at,sd.is_active FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE si.id=? AND si.deleted_at IS NULL FOR UPDATE",
         [id],
       );
       if (!bundle || bundle.deleted_at || !bundle.is_active)
@@ -429,7 +446,8 @@ export class ImportsService {
 
   async list(status?: string) {
     const where =
-      "WHERE sd.deleted_at IS NULL" + (status ? " AND si.status=?" : "");
+      "WHERE sd.deleted_at IS NULL AND si.deleted_at IS NULL" +
+      (status ? " AND si.status=?" : "");
     return this.db.query(
       `SELECT si.id,si.status,si.detected_format detectedFormat,
     si.created_at createdAt,si.updated_at updatedAt,sd.id sourceDocumentId,sd.original_name originalName,sd.media_type mediaType,
@@ -450,7 +468,7 @@ export class ImportsService {
       `SELECT si.*,sd.original_name originalName,sd.media_type mediaType,sd.byte_size byteSize,
     sd.sha256,sd.obtained_from obtainedFrom,sd.page_count pageCount,sd.extraction_status extractionStatus,sd.ocr_confidence ocrConfidence,
     sd.reviewed_at reviewedAt,u.display_name uploadedBy FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
-    JOIN users u ON u.id=si.uploaded_by WHERE sd.deleted_at IS NULL AND si.id=?`,
+    JOIN users u ON u.id=si.uploaded_by WHERE sd.deleted_at IS NULL AND si.deleted_at IS NULL AND si.id=?`,
       [id],
     );
     if (!rows[0]) throw new NotFoundException("عملية الاستيراد غير موجودة.");
@@ -478,7 +496,7 @@ export class ImportsService {
 
   async source(id: string) {
     const rows = await this.db.query(
-      `SELECT sd.storage_key storageKey,sd.original_name fileName,sd.media_type mediaType FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND si.id=?`,
+      `SELECT sd.storage_key storageKey,sd.original_name fileName,sd.media_type mediaType FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND si.deleted_at IS NULL AND si.id=?`,
       [id],
     );
     if (!rows[0]) throw new NotFoundException("ملف المصدر غير موجود.");
@@ -494,8 +512,10 @@ export class ImportsService {
       `SELECT sd.storage_key storageKey,sd.original_name fileName,
        sd.media_type mediaType
        FROM source_import_attachments sia
+       JOIN source_imports si ON si.id=sia.source_import_id
        JOIN source_documents sd ON sd.id=sia.source_document_id
-       WHERE sia.source_import_id=? AND sia.source_document_id=?`,
+       WHERE si.deleted_at IS NULL AND sd.deleted_at IS NULL
+         AND sia.source_import_id=? AND sia.source_document_id=?`,
       [id, sourceDocumentId],
     );
     if (!rows[0]) throw new NotFoundException("ملف المصدر المرفق غير موجود.");
@@ -509,7 +529,7 @@ export class ImportsService {
   async review(id: string, actor: AuthUser, notes: string) {
     return this.db.transaction(async (m) => {
       const rows = await m.query(
-        `SELECT si.*,sd.extraction_status extractionStatus FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND sd.is_active=TRUE AND si.id=? FOR UPDATE`,
+        `SELECT si.*,sd.extraction_status extractionStatus FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id WHERE sd.deleted_at IS NULL AND si.deleted_at IS NULL AND sd.is_active=TRUE AND si.id=? FOR UPDATE`,
         [id],
       );
       const item = rows[0];
@@ -562,7 +582,7 @@ export class ImportsService {
       const rows = await m.query(
         `SELECT si.*,sd.extraction_status,l.status legislation_status
          FROM source_imports si JOIN source_documents sd ON sd.id=si.source_document_id
-         LEFT JOIN legislations l ON l.id=si.legislation_id WHERE sd.deleted_at IS NULL AND sd.is_active=TRUE AND si.id=? FOR UPDATE`,
+         LEFT JOIN legislations l ON l.id=si.legislation_id WHERE sd.deleted_at IS NULL AND si.deleted_at IS NULL AND sd.is_active=TRUE AND si.id=? FOR UPDATE`,
         [id],
       );
       const item = rows[0];
