@@ -19,6 +19,7 @@ import { normalizeArabic } from "../search/arabic-normalizer.js";
 import { DATABASE } from "../database/database.module.js";
 import {
   assertWorkflowPolicy,
+  evaluateWorkflowPolicy,
   enforceOperationPolicy,
   parsePolicyBoolean,
   workflowPolicy,
@@ -44,7 +45,7 @@ type WorkflowStatus =
 type AnnexWriteInput = {
   annexType: string;
   titleAr: string;
-  status: string;
+  status?: string;
   contentFormat?: string;
   textContent?: string;
   structuredTableJson?: string;
@@ -61,6 +62,7 @@ const annexVersionContent = (record: any, version: any) => ({
   annexType: record.annex_type,
   titleAr: record.title_ar,
   status: record.status,
+  workflowRevision: Number(record.workflow_revision ?? 1),
   versionId: version.id,
   versionNo: Number(version.version_no),
   validFrom:
@@ -607,7 +609,11 @@ export class AdminService {
     };
   }
 
-  async legislation(id: string, includeArticleText = false) {
+  async legislation(
+    id: string,
+    includeArticleText = false,
+    actor?: AuthUser,
+  ) {
     const rows = await this.db.query(
       `SELECT l.*,lt.name_ar typeName,au.name_ar authorityName
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id WHERE l.id=? AND l.deleted_at IS NULL`,
@@ -695,7 +701,19 @@ export class AdminService {
         [id],
       ),
       this.db.query(
-        `SELECT ax.id,ax.annex_type annexType,ax.title_ar titleAr,ax.status,COUNT(av.id) versionCount FROM annexes ax LEFT JOIN annex_versions av ON av.annex_id=ax.id WHERE ax.deleted_at IS NULL AND ax.legislation_id=? GROUP BY ax.id ORDER BY ax.title_ar`,
+        `SELECT ax.id,ax.annex_type annexType,ax.title_ar titleAr,ax.status,
+         ax.reviewed_by reviewedBy,ax.reviewed_at reviewedAt,ax.workflow_revision workflowRevision,
+         reviewer.display_name reviewerName,COUNT(av.id) versionCount,
+         latest_source.extraction_status source_extraction_status,latest_source.reviewed_at source_reviewed_at,
+         (SELECT c.id FROM content_corrections c WHERE c.target_kind='ANNEX' AND c.target_id=ax.id AND c.status IN ('DRAFT','APPROVED') ORDER BY c.created_at DESC LIMIT 1) pendingCorrectionId
+         FROM annexes ax
+         LEFT JOIN annex_versions av ON av.annex_id=ax.id
+         LEFT JOIN users reviewer ON reviewer.id=ax.reviewed_by
+         LEFT JOIN annex_versions latest_av ON latest_av.id=(SELECT newest.id FROM annex_versions newest WHERE newest.annex_id=ax.id ORDER BY newest.version_no DESC LIMIT 1)
+         LEFT JOIN source_documents latest_source ON latest_source.id=latest_av.source_document_id
+         WHERE ax.deleted_at IS NULL AND ax.legislation_id=?
+         GROUP BY ax.id,latest_source.extraction_status,latest_source.reviewed_at
+         ORDER BY ax.title_ar`,
         [id],
       ),
       this.db.query(
@@ -719,10 +737,15 @@ export class AdminService {
       articles,
       gazette: gazette[0] ?? null,
       structures,
-      annexes: annexes.map((annex: any) => ({
-        ...annex,
-        annexTypeLabel: annexTypeOption(annex.annexType).labelAr,
-      })),
+      annexes: await Promise.all(
+        annexes.map(async (annex: any) => ({
+          ...annex,
+          annexTypeLabel: annexTypeOption(annex.annexType).labelAr,
+          actions: actor
+            ? await this.annexActions(this.db.manager, annex, actor)
+            : undefined,
+        })),
+      ),
       relations,
       selectedSubjectIds: selectedSubjects.map(
         (subject: { id: string }) => subject.id,
@@ -1493,11 +1516,16 @@ export class AdminService {
   async annex(id: string, actor: AuthUser) {
     this.requirePermission(actor, "legislation.view");
     const [row] = await this.db.query(
-      `SELECT ax.*,av.id version_id,av.version_no,av.valid_from,av.valid_to,av.source_document_id,
+      `SELECT ax.*,reviewer.display_name reviewer_name,av.id version_id,av.version_no,av.valid_from,av.valid_to,av.source_document_id,
       av.content_format,av.text_content,av.structured_table_json,
-      sd.original_name source_name,sd.media_type source_media_type,sd.byte_size source_byte_size,sd.page_count source_page_count
+      sd.original_name source_name,sd.media_type source_media_type,sd.byte_size source_byte_size,sd.page_count source_page_count,
+      sd.extraction_status source_extraction_status,sd.reviewed_at source_reviewed_at,
+      af.id attachment_id,af.original_name attachment_name,af.media_type attachment_media_type,af.byte_size attachment_byte_size,af.page_count attachment_page_count,
+      (SELECT c.id FROM content_corrections c WHERE c.target_kind='ANNEX' AND c.target_id=ax.id AND c.status IN ('DRAFT','APPROVED') ORDER BY c.created_at DESC LIMIT 1) pending_correction_id
       FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id
       JOIN source_documents sd ON sd.id=av.source_document_id
+      LEFT JOIN annex_files af ON af.annex_version_id=av.id
+      LEFT JOIN users reviewer ON reviewer.id=ax.reviewed_by
       WHERE ax.id=? AND ax.deleted_at IS NULL
       ORDER BY av.version_no DESC LIMIT 1`,
       [id],
@@ -1514,6 +1542,7 @@ export class AdminService {
       structured_table_json: row.structured_table_json,
     };
     const content = annexVersionContent(row, version);
+    const actions = await this.annexActions(this.db.manager, row, actor);
     return {
       id: row.id,
       legislationId: row.legislation_id,
@@ -1521,6 +1550,12 @@ export class AdminService {
       annexTypeLabel: annexTypeOption(row.annex_type).labelAr,
       titleAr: row.title_ar,
       status: row.status,
+      reviewedBy: row.reviewed_by,
+      reviewerName: row.reviewer_name,
+      reviewedAt: row.reviewed_at,
+      workflowRevision: Number(row.workflow_revision),
+      pendingCorrectionId: row.pending_correction_id,
+      actions,
       version: {
         ...content,
         source: {
@@ -1533,8 +1568,253 @@ export class AdminService {
               ? null
               : Number(row.source_page_count),
         },
+        contentFile:
+          content.contentFormat === "FILE"
+            ? {
+                id: row.attachment_id ?? row.source_document_id,
+                originalName: row.attachment_name ?? row.source_name,
+                mediaType: row.attachment_media_type ?? row.source_media_type,
+                byteSize: Number(
+                  row.attachment_byte_size ?? row.source_byte_size,
+                ),
+                pageCount:
+                  row.attachment_page_count == null &&
+                  row.source_page_count == null
+                    ? null
+                    : Number(
+                        row.attachment_page_count ?? row.source_page_count,
+                      ),
+              }
+            : null,
+        attachment: row.attachment_id
+          ? {
+              id: row.attachment_id,
+              originalName: row.attachment_name,
+              mediaType: row.attachment_media_type,
+            }
+          : null,
       },
       editFingerprint: annexFingerprint(content),
+    };
+  }
+
+  private async annexActions(
+    manager: EntityManager,
+    row: any,
+    actor: AuthUser,
+  ) {
+    const canReview = actor.permissions.includes("annex.review");
+    const canPublish = actor.permissions.includes("annex.publish");
+    const canReturn = actor.permissions.includes("annex.return");
+    const publishState = ["DRAFT", "REVIEWED"].includes(row.status);
+    const policyChecks = publishState
+      ? [
+          await evaluateWorkflowPolicy(
+            manager,
+            "ANNEX_WORKFLOW_ORDER",
+            actor,
+            row.status !== "REVIEWED",
+          ),
+          await evaluateWorkflowPolicy(
+            manager,
+            "ANNEX_REVIEWED_SOURCE",
+            actor,
+            row.source_extraction_status !== "REVIEWED" ||
+              !row.source_reviewed_at,
+          ),
+        ]
+      : [];
+    return {
+      review: {
+        available: row.status === "DRAFT",
+        allowed: row.status === "DRAFT" && canReview,
+        message: canReview ? null : "تتطلب العملية صلاحية مراجعة الملحق.",
+        policyChecks: [],
+      },
+      publish: {
+        available: publishState,
+        allowed:
+          publishState &&
+          canPublish &&
+          policyChecks.every((check) => check.allowed),
+        message: !canPublish
+          ? "تتطلب العملية صلاحية نشر الملحق."
+          : policyChecks.find((check) => !check.allowed)?.message ?? null,
+        policyChecks,
+      },
+      return: {
+        available: row.status === "REVIEWED",
+        allowed: row.status === "REVIEWED" && canReturn,
+        message: canReturn
+          ? null
+          : "تتطلب العملية صلاحية إعادة الملحق إلى المسودة.",
+        policyChecks: [],
+      },
+    };
+  }
+
+  async annexFile(id: string, versionId?: string, role?: string) {
+    if (role && !["content", "source", "attachment"].includes(role))
+      throw new BadRequestException("نوع ملف الملحق غير صالح.");
+    const [file] = await this.db.query(
+      `SELECT
+       CASE WHEN ?='source' THEN sd.storage_key WHEN ?='attachment' THEN af.storage_key
+            WHEN av.content_format='FILE' THEN COALESCE(af.storage_key,sd.storage_key) END storageKey,
+       CASE WHEN ?='source' THEN sd.original_name WHEN ?='attachment' THEN af.original_name
+            WHEN av.content_format='FILE' THEN COALESCE(af.original_name,sd.original_name) END fileName,
+       CASE WHEN ?='source' THEN sd.media_type WHEN ?='attachment' THEN af.media_type
+            WHEN av.content_format='FILE' THEN COALESCE(af.media_type,sd.media_type) END mediaType
+       FROM annex_versions av JOIN annexes ax ON ax.id=av.annex_id
+       JOIN source_documents sd ON sd.id=av.source_document_id AND sd.deleted_at IS NULL
+       LEFT JOIN annex_files af ON af.annex_version_id=av.id
+       WHERE ax.id=? AND ax.deleted_at IS NULL AND (? IS NULL OR av.id=?)
+       ORDER BY av.version_no DESC LIMIT 1`,
+      [
+        role ?? "content",
+        role ?? "content",
+        role ?? "content",
+        role ?? "content",
+        role ?? "content",
+        role ?? "content",
+        id,
+        versionId ?? null,
+        versionId ?? null,
+      ],
+    );
+    if (!file?.storageKey)
+      throw new NotFoundException("لا يوجد ملف قابل للعرض لهذه النسخة.");
+    return file as { storageKey: string; fileName: string; mediaType: string };
+  }
+
+  async transitionAnnex(
+    id: string,
+    action: "review" | "publish" | "return",
+    editFingerprint: string,
+    actor: AuthUser,
+    reason: string,
+  ) {
+    return this.db.transaction((manager) =>
+      this.transitionAnnexWithManager(
+        manager,
+        id,
+        action,
+        editFingerprint,
+        actor,
+        reason,
+      ),
+    );
+  }
+
+  private async transitionAnnexWithManager(
+    manager: EntityManager,
+    id: string,
+    action: "review" | "publish" | "return",
+    editFingerprint: string,
+    actor: AuthUser,
+    reason: string,
+  ) {
+    const [row] = await manager.query(
+      `SELECT ax.*,av.id version_id,av.version_no,av.valid_from,av.valid_to,
+       av.source_document_id,av.content_format,av.text_content,av.structured_table_json,
+       sd.extraction_status source_extraction_status,sd.reviewed_at source_reviewed_at
+       FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id
+       JOIN source_documents sd ON sd.id=av.source_document_id
+       WHERE ax.id=? AND ax.deleted_at IS NULL
+       ORDER BY av.version_no DESC LIMIT 1 FOR UPDATE`,
+      [id],
+    );
+    if (!row) throw new NotFoundException("الملحق غير موجود.");
+    const current = annexVersionContent(row, {
+      id: row.version_id,
+      version_no: row.version_no,
+      valid_from: row.valid_from,
+      valid_to: row.valid_to,
+      source_document_id: row.source_document_id,
+      content_format: row.content_format,
+      text_content: row.text_content,
+      structured_table_json: row.structured_table_json,
+    });
+    if (annexFingerprint(current) !== editFingerprint)
+      throw new ConflictException(
+        "تغير الملحق بعد فتحه. أعد تحميله قبل تنفيذ الإجراء.",
+      );
+    const requiredPermission = {
+      review: "annex.review",
+      publish: "annex.publish",
+      return: "annex.return",
+    }[action];
+    this.requirePermission(actor, requiredPermission);
+    const allowedStatus = {
+      review: ["DRAFT"],
+      publish: ["DRAFT", "REVIEWED"],
+      return: ["REVIEWED"],
+    }[action];
+    if (!allowedStatus.includes(row.status))
+      throw new ConflictException("حالة الملحق لا تسمح بهذا الإجراء.");
+    const policyChecks = [];
+    if (action === "publish") {
+      policyChecks.push(
+        await enforceOperationPolicy(
+          manager,
+          "ANNEX_WORKFLOW_ORDER",
+          actor,
+          row.status !== "REVIEWED",
+          id,
+          reason,
+        ),
+      );
+      policyChecks.push(
+        await enforceOperationPolicy(
+          manager,
+          "ANNEX_REVIEWED_SOURCE",
+          actor,
+          row.source_extraction_status !== "REVIEWED" ||
+            !row.source_reviewed_at,
+          id,
+          reason,
+        ),
+      );
+    }
+    const nextStatus =
+      action === "review"
+        ? "REVIEWED"
+        : action === "publish"
+          ? "PUBLISHED"
+          : "DRAFT";
+    await manager.query(
+      `UPDATE annexes SET status=?,
+       reviewed_by=CASE WHEN ?='REVIEWED' THEN ? WHEN ?='DRAFT' THEN NULL ELSE reviewed_by END,
+       reviewed_at=CASE WHEN ?='REVIEWED' THEN NOW(3) WHEN ?='DRAFT' THEN NULL ELSE reviewed_at END,
+       workflow_revision=workflow_revision+1 WHERE id=?`,
+      [
+        nextStatus,
+        nextStatus,
+        actor.id,
+        nextStatus,
+        nextStatus,
+        nextStatus,
+        id,
+      ],
+    );
+    await this.auditWith(
+      manager,
+      actor.id,
+      {
+        review: "REVIEW_ANNEX",
+        publish: "PUBLISH_ANNEX",
+        return: "RETURN_ANNEX_TO_DRAFT",
+      }[action],
+      "ANNEX",
+      id,
+      current,
+      { status: nextStatus, policyChecks },
+      reason.trim(),
+    );
+    return {
+      id,
+      status: nextStatus,
+      reviewCleared: action === "return",
+      policyChecks,
     };
   }
 
@@ -1641,7 +1921,6 @@ export class AdminService {
     reason: string,
   ) {
     this.requirePermission(actor, "annex.update");
-    this.requireAnnexStatusPermission(actor, input.status);
     return this.db.transaction(async (manager) => {
       const [record] = await manager.query(
         "SELECT * FROM annexes WHERE id=? AND deleted_at IS NULL FOR UPDATE",
@@ -1654,6 +1933,14 @@ export class AdminService {
       );
       if (!version) throw new ConflictException("لا توجد نسخة محفوظة للملحق.");
       const current = annexVersionContent(record, version);
+      if (
+        input.status !== undefined &&
+        input.status !== record.status &&
+        input.editFingerprint !== annexFingerprint(current)
+      )
+        throw new ConflictException(
+          "تغير الملحق بعد فتحه. أعد تحميله قبل تنفيذ الإجراء.",
+        );
       const touchesContent = [
         "contentFormat",
         "textContent",
@@ -1674,8 +1961,17 @@ export class AdminService {
         current.contentFormat !== content.format ||
         current.textContent !== content.textContent ||
         current.structuredTableJson !== content.structuredTableJson ||
-        current.sourceDocumentId !== sourceDocumentId;
-      if (record.status !== "DRAFT" && changed)
+        current.sourceDocumentId !== sourceDocumentId ||
+        (input.validFrom != null && input.validFrom !== current.validFrom);
+      if (
+        record.status === "REVIEWED" &&
+        changed &&
+        input.editFingerprint !== annexFingerprint(current)
+      )
+        throw new ConflictException(
+          "عُدّل الملحق بعد فتحه. أعد تحميله ثم طبّق التغيير على النسخة الأحدث.",
+        );
+      if (!["DRAFT", "REVIEWED"].includes(record.status) && changed)
         return stageCorrection(
           manager,
           "ANNEX",
@@ -1695,13 +1991,15 @@ export class AdminService {
           actor,
           reason,
         );
-      if (record.status !== "DRAFT" && input.status === "DRAFT")
+      if (
+        !["DRAFT", "REVIEWED"].includes(record.status) &&
+        input.status === "DRAFT"
+      )
         throw new BadRequestException(
           "لا يدعم نموذج الصلاحيات الحالي سحب نشر الملحق إلى مسودة.",
         );
-      const source =
-        touchesContent || input.status === "PUBLISHED"
-          ? await this.annexSource(
+      if (touchesContent)
+        await this.annexSource(
               manager,
               record.legislation_id,
               sourceDocumentId,
@@ -1709,18 +2007,8 @@ export class AdminService {
               sourceDocumentId === current.sourceDocumentId
                 ? current.versionId
                 : undefined,
-            )
-          : null;
-      if (input.status === "PUBLISHED")
-        await enforceOperationPolicy(
-          manager,
-          "ANNEX_REVIEWED_SOURCE",
-          actor,
-          source!.extraction_status !== "REVIEWED",
-          id,
-          reason,
-        );
-      if (record.status === "DRAFT" && touchesContent)
+            );
+      if (["DRAFT", "REVIEWED"].includes(record.status) && touchesContent)
         await manager.query(
           `UPDATE annex_versions SET valid_from=?,source_document_id=?,content_format=?,text_content=?,structured_table_json=? WHERE id=?`,
           [
@@ -1732,9 +2020,42 @@ export class AdminService {
             version.id,
           ],
         );
+      const transitionAction =
+        input.status === "PUBLISHED"
+          ? "publish"
+          : input.status === "REVIEWED"
+            ? "review"
+            : input.status === "DRAFT" && record.status === "REVIEWED"
+              ? "return"
+              : null;
+      if (
+        input.status &&
+        input.status !== record.status &&
+        !transitionAction &&
+        !["REPLACED", "REPEALED"].includes(input.status)
+      )
+        throw new ConflictException("حالة الملحق لا تسمح بهذا الانتقال.");
+      if (["REPLACED", "REPEALED"].includes(input.status ?? ""))
+        this.requireAnnexStatusPermission(actor, input.status!);
+      const editingReviewed = record.status === "REVIEWED" && changed;
+      const storedStatus = transitionAction
+        ? editingReviewed
+          ? "DRAFT"
+          : record.status
+        : (input.status ?? (editingReviewed ? "DRAFT" : record.status));
       await manager.query(
-        "UPDATE annexes SET annex_type=?,title_ar=?,status=? WHERE id=?",
-        [input.annexType, input.titleAr.trim(), input.status, id],
+        `UPDATE annexes SET annex_type=?,title_ar=?,status=?,
+         reviewed_by=IF(?='DRAFT',NULL,reviewed_by),
+         reviewed_at=IF(?='DRAFT',NULL,reviewed_at),
+         workflow_revision=workflow_revision+1 WHERE id=?`,
+        [
+          input.annexType,
+          input.titleAr.trim(),
+          storedStatus,
+          storedStatus,
+          storedStatus,
+          id,
+        ],
       );
       await this.auditWith(
         manager,
@@ -1743,10 +2064,38 @@ export class AdminService {
         "ANNEX",
         id,
         current,
-        { ...input, ...content, sourceDocumentId },
+        {
+          ...input,
+          ...content,
+          sourceDocumentId,
+          status: storedStatus,
+          reviewCleared: editingReviewed,
+        },
         reason,
       );
-      return { id };
+      if (transitionAction) {
+        const [updatedRecord] = await manager.query(
+          "SELECT * FROM annexes WHERE id=?",
+          [id],
+        );
+        const updatedContent = annexVersionContent(updatedRecord, {
+          ...version,
+          valid_from: input.validFrom ?? current.validFrom,
+          source_document_id: sourceDocumentId,
+          content_format: content.format,
+          text_content: content.textContent,
+          structured_table_json: content.structuredTableJson,
+        });
+        return this.transitionAnnexWithManager(
+          manager,
+          id,
+          transitionAction,
+          annexFingerprint(updatedContent),
+          actor,
+          reason,
+        );
+      }
+      return { id, status: storedStatus, reviewCleared: editingReviewed };
     });
   }
 
@@ -1757,25 +2106,20 @@ export class AdminService {
     reason: string,
   ) {
     this.requirePermission(actor, "annex.create");
-    this.requireAnnexStatusPermission(actor, input.status);
+    if (input.status && input.status !== "DRAFT")
+      throw new BadRequestException(
+        "يُنشأ الملحق كمسودة ثم يُراجع ويُنشر من أزرار سير العمل.",
+      );
     const content = this.annexContent(input);
     const id = randomUUID();
     const versionId = randomUUID();
     await this.db.transaction(async (manager) => {
       await assertActiveReference(manager, "legislations", legislationId);
-      const source = await this.annexSource(
+      await this.annexSource(
         manager,
         legislationId,
         input.sourceDocumentId,
         content.format,
-      );
-      await enforceOperationPolicy(
-        manager,
-        "ANNEX_REVIEWED_SOURCE",
-        actor,
-        input.status === "PUBLISHED" && source.extraction_status !== "REVIEWED",
-        id,
-        reason,
       );
       await manager.query(
         `INSERT INTO annexes (id,legislation_id,annex_type,title_ar,status) VALUES (?,?,?,?,?)`,
@@ -1784,7 +2128,7 @@ export class AdminService {
           legislationId,
           input.annexType,
           input.titleAr.trim(),
-          input.status,
+          "DRAFT",
         ],
       );
       await manager.query(
@@ -1806,7 +2150,7 @@ export class AdminService {
         "ANNEX",
         id,
         null,
-        { ...input, ...content },
+        { ...input, ...content, status: "DRAFT" },
         reason,
       );
     });

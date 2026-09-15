@@ -1,5 +1,6 @@
 import { AdditionalOperationPolicies1700000000023 } from "./migrations/1700000000023-additional-operation-policies.js";
 import { AnnexContentFormats1700000000024 } from "./migrations/1700000000024-annex-content-formats.js";
+import { AnnexReviewWorkflow1700000000025 } from "./migrations/1700000000025-annex-review-workflow.js";
 import { ContentCorrections1700000000022 } from "./migrations/1700000000022-content-corrections.js";
 import { OperationPolicies1700000000021 } from "./migrations/1700000000021-operation-policies.js";
 import { RecoveryEditRevisions1700000000017 } from "./migrations/1700000000017-recovery-edit-revisions.js";
@@ -75,6 +76,7 @@ export const createDataSource = () =>
       ContentCorrections1700000000022,
       AdditionalOperationPolicies1700000000023,
       AnnexContentFormats1700000000024,
+      AnnexReviewWorkflow1700000000025,
     ],
     migrationsTableName: "schema_migrations",
   });

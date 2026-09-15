@@ -16,6 +16,9 @@ const fields = [
   ["content_corrections", "base_hash"],
   ["annex_versions", "content_format"],
   ["annex_versions", "text_content"],
+  ["annexes", "workflow_revision"],
+  ["annexes", "reviewed_by"],
+  ["annexes", "reviewed_at"],
   ...[
     "legislation_types",
     "subjects",

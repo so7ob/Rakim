@@ -25,10 +25,16 @@ const labels: Record<string, string> = {
   WARNING: "تحذير",
   INFO: "معلومة",
 };
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({
+  status,
+  label,
+}: {
+  status: string;
+  label?: string;
+}) {
   return (
     <span className={`status-badge status-${status.toLowerCase()}`}>
-      {labels[status] ?? status}
+      {label ?? labels[status] ?? status}
     </span>
   );
 }

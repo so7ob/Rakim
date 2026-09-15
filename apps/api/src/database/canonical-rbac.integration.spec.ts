@@ -6,6 +6,7 @@ import {
   CANONICAL_PERMISSION_CATALOG,
   CANONICAL_ROLE_PERMISSION_MAP,
 } from "../common/canonical-permission-catalog.js";
+import { ROLE_PERMISSION_MAP } from "../common/permission-catalog.js";
 import { createDataSource } from "./config.js";
 
 describe("canonical RBAC database migration", () => {
@@ -65,7 +66,7 @@ describe("canonical RBAC database migration", () => {
         [roleCode],
       );
       expect(rows.map((row: { code: string }) => row.code).sort()).toEqual(
-        [...expected].sort(),
+        [...(ROLE_PERMISSION_MAP[roleCode] ?? expected)].sort(),
       );
     }
   });

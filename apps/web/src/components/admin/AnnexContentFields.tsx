@@ -23,6 +23,26 @@ export interface AnnexDetail {
   annexTypeLabel: string;
   titleAr: string;
   status: string;
+  reviewedBy: string | null;
+  reviewerName: string | null;
+  reviewedAt: string | null;
+  workflowRevision: number;
+  pendingCorrectionId: string | null;
+  actions: Record<
+    "review" | "publish" | "return",
+    {
+      available: boolean;
+      allowed: boolean;
+      message: string | null;
+      policyChecks: Array<{
+        code: string;
+        message: string;
+        applies: boolean;
+        allowed: boolean;
+        result: string;
+      }>;
+    }
+  >;
   editFingerprint: string;
   version: {
     versionId: string;
@@ -36,23 +56,28 @@ export interface AnnexDetail {
       id: string;
       originalName: string;
       mediaType: string;
+      pageCount: number | null;
     };
+    contentFile: {
+      id: string;
+      originalName: string;
+      mediaType: string;
+      byteSize: number;
+      pageCount: number | null;
+    } | null;
+    attachment: {
+      id: string;
+      originalName: string;
+      mediaType: string;
+    } | null;
   };
 }
-
-const statusLabels: Record<string, string> = {
-  DRAFT: "مسودة",
-  PUBLISHED: "منشور",
-  REPLACED: "مستبدل",
-  REPEALED: "ملغى",
-};
 
 export function AnnexContentFields({
   options,
   sources,
   legislationId,
   initial,
-  canPublish,
   canReplace = false,
   canRepeal = false,
 }: {
@@ -60,7 +85,7 @@ export function AnnexContentFields({
   sources: Array<{ id: string; originalName: string; mediaType: string }>;
   legislationId: string;
   initial?: AnnexDetail;
-  canPublish: boolean;
+  canPublish?: boolean;
   canReplace?: boolean;
   canRepeal?: boolean;
 }) {
@@ -160,14 +185,13 @@ export function AnnexContentFields({
     }
     setAnnexType(next);
   };
-  const statusOptions = initial
+  const administrativeStatuses = initial
     ? [
-        ...(initial.status === "DRAFT" ? ["DRAFT"] : []),
-        ...(initial.status === "PUBLISHED" || canPublish ? ["PUBLISHED"] : []),
-        ...(initial.status === "REPLACED" || canReplace ? ["REPLACED"] : []),
-        ...(initial.status === "REPEALED" || canRepeal ? ["REPEALED"] : []),
+        initial.status,
+        ...(canReplace && initial.status !== "REPLACED" ? ["REPLACED"] : []),
+        ...(canRepeal && initial.status !== "REPEALED" ? ["REPEALED"] : []),
       ]
-    : ["DRAFT", ...(canPublish ? ["PUBLISHED"] : [])];
+    : [];
   return (
     <>
       <div className="form-columns">
@@ -190,16 +214,6 @@ export function AnnexContentFields({
           </select>
         </label>
         <label>
-          الحالة
-          <select name="status" defaultValue={initial?.status ?? "DRAFT"}>
-            {statusOptions.map((status) => (
-              <option key={status} value={status}>
-                {statusLabels[status] ?? status}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
           {initial?.status === "PUBLISHED" ? "تاريخ نفاذ التصحيح" : "النفاذ"}
           <input
             name={
@@ -215,6 +229,26 @@ export function AnnexContentFields({
             required
           />
         </label>
+        {administrativeStatuses.length > 1 && (
+          <label>
+            الحالة الإدارية
+            <select name="status" defaultValue={initial?.status}>
+              {administrativeStatuses.map((status) => (
+                <option key={status} value={status}>
+                  {
+                    {
+                      DRAFT: "مسودة",
+                      REVIEWED: "مراجع وجاهز للنشر",
+                      PUBLISHED: "منشور",
+                      REPLACED: "مستبدل",
+                      REPEALED: "ملغى",
+                    }[status]
+                  }
+                </option>
+              ))}
+            </select>
+          </label>
+        )}
       </div>
       <fieldset className="annex-content-methods">
         <legend>طريقة إدخال المحتوى</legend>

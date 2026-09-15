@@ -270,6 +270,17 @@ export const OPERATION_POLICIES = [
     requiredRole: "",
   },
   {
+    code: "ANNEX_WORKFLOW_ORDER",
+    category: "PUBLICATION",
+    settingKey: "workflow.enforce_annex_workflow_order",
+    permissionCode: "workflow.annex_workflow_order.override",
+    labelAr: "اشتراط مراجعة الملحق قبل النشر",
+    descriptionAr:
+      "اشتراط اعتماد مراجعة الملحق أو الجدول قبل نشره؛ يمكن تعطيل السياسة أو منح استثناء لمستخدم محدد مع بقاء صلاحية النشر إلزامية.",
+    requiredPermissions: ["annex.publish"],
+    requiredRole: "",
+  },
+  {
     code: "AMENDMENT_REVIEWED_SOURCE",
     category: "PUBLICATION",
     settingKey: "workflow.enforce_amendment_reviewed_source",

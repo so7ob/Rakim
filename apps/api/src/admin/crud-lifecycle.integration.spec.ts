@@ -946,6 +946,188 @@ describe("complete administrative lifecycle on MariaDB", () => {
       "إعادة المصدر",
     );
   });
+  it("reviews, returns, resets and publishes annexes through guarded transitions", async () => {
+    const id = await law(marker + " annex workflow");
+    await db.query(
+      "INSERT INTO legislation_source_documents (legislation_id,source_document_id,source_role) VALUES (?,?,'SUPPORTING')",
+      [id, sourceId],
+    );
+    const annex = await admin.createAnnex(
+      id,
+      {
+        annexType: "TABLE",
+        titleAr: "جدول دورة النشر",
+        sourceDocumentId: sourceId,
+        validFrom: "2026-01-01",
+        structuredTableJson: '{"columns":["الحقل"],"rows":[["قيمة"]]}',
+      },
+      actor,
+      "إنشاء مسودة ملحق",
+    );
+    const draft = await admin.annex(annex.id, actor);
+    expect(draft.actions.publish).toMatchObject({
+      available: true,
+      allowed: false,
+    });
+    await expect(
+      admin.transitionAnnex(
+        annex.id,
+        "publish",
+        draft.editFingerprint,
+        actor,
+        "محاولة نشر قبل المراجعة",
+      ),
+    ).rejects.toThrow(/مراجعة الملحق/);
+    const withoutReview = {
+      ...actor,
+      permissions: actor.permissions.filter((code) => code !== "annex.review"),
+    };
+    await expect(
+      admin.transitionAnnex(
+        annex.id,
+        "review",
+        draft.editFingerprint,
+        withoutReview,
+        "اختبار صلاحية المراجعة",
+      ),
+    ).rejects.toThrow(/الصلاحية/);
+    await admin.transitionAnnex(
+      annex.id,
+      "review",
+      draft.editFingerprint,
+      reviewer,
+      "اعتماد مراجعة الملحق",
+    );
+    const reviewed = await admin.annex(annex.id, actor);
+    expect(reviewed).toMatchObject({
+      status: "REVIEWED",
+      reviewedBy: reviewer.id,
+      actions: { publish: { allowed: true }, return: { allowed: true } },
+    });
+    await expect(
+      admin.transitionAnnex(
+        annex.id,
+        "return",
+        draft.editFingerprint,
+        reviewer,
+        "بصمة قديمة",
+      ),
+    ).rejects.toThrow(/تغير الملحق/);
+    await admin.updateAnnex(
+      annex.id,
+      {
+        annexType: "TABLE",
+        titleAr: "جدول دورة النشر المعدل",
+        contentFormat: "STRUCTURED_TABLE",
+        structuredTableJson:
+          '{"columns":["الحقل"],"rows":[["قيمة معدلة"]]}',
+        sourceDocumentId: sourceId,
+        validFrom: "2026-01-02",
+        editFingerprint: reviewed.editFingerprint,
+      },
+      actor,
+      "تعديل محتوى مراجع",
+    );
+    const reset = await admin.annex(annex.id, actor);
+    expect(reset).toMatchObject({
+      status: "DRAFT",
+      reviewedBy: null,
+      reviewedAt: null,
+    });
+    await admin.transitionAnnex(
+      annex.id,
+      "review",
+      reset.editFingerprint,
+      reviewer,
+      "إعادة اعتماد المراجعة",
+    );
+    const ready = await admin.annex(annex.id, publisher);
+    await admin.transitionAnnex(
+      annex.id,
+      "publish",
+      ready.editFingerprint,
+      publisher,
+      "نشر الملحق المراجع",
+    );
+    expect(await admin.annex(annex.id, actor)).toMatchObject({
+      status: "PUBLISHED",
+      reviewedBy: reviewer.id,
+    });
+
+    const disabledPolicyAnnex = await admin.createAnnex(
+      id,
+      {
+        annexType: "ANNEX",
+        titleAr: "ملحق نشر بسياسة معطلة",
+        sourceDocumentId: sourceId,
+        validFrom: "2026-01-01",
+        contentFormat: "TEXT",
+        textContent: "محتوى الاختبار",
+      },
+      actor,
+      "إنشاء ملحق لاختبار تعطيل السياسة",
+    );
+    await db.query(
+      "UPDATE platform_settings SET value_json='false' WHERE setting_key='workflow.enforce_annex_workflow_order'",
+    );
+    try {
+      const disabledDraft = await admin.annex(disabledPolicyAnnex.id, actor);
+      expect(disabledDraft.actions.publish).toMatchObject({
+        allowed: true,
+      });
+      await admin.transitionAnnex(
+        disabledPolicyAnnex.id,
+        "publish",
+        disabledDraft.editFingerprint,
+        publisher,
+        "نشر مع تعطيل سياسة ترتيب المراجعة",
+      );
+    } finally {
+      await db.query(
+        "UPDATE platform_settings SET value_json='true' WHERE setting_key='workflow.enforce_annex_workflow_order'",
+      );
+    }
+
+    const overrideAnnex = await admin.createAnnex(
+      id,
+      {
+        annexType: "ANNEX",
+        titleAr: "ملحق نشر باستثناء شخصي",
+        sourceDocumentId: sourceId,
+        validFrom: "2026-01-01",
+        contentFormat: "TEXT",
+        textContent: "محتوى الاستثناء",
+      },
+      actor,
+      "إنشاء ملحق لاختبار الاستثناء",
+    );
+    await db.query(
+      "INSERT IGNORE INTO user_permissions (user_id,permission_code) VALUES (?,'workflow.annex_workflow_order.override')",
+      [actor.id],
+    );
+    try {
+      const overrideDraft = await admin.annex(overrideAnnex.id, actor);
+      await admin.updateAnnex(
+        overrideAnnex.id,
+        {
+          annexType: "ANNEX",
+          titleAr: "ملحق نشر باستثناء شخصي",
+          status: "PUBLISHED",
+          editFingerprint: overrideDraft.editFingerprint,
+        },
+        actor,
+        "نشر طلب قديم باستثناء شخصي",
+      );
+      expect(await admin.annex(overrideAnnex.id, actor)).toMatchObject({
+        status: "PUBLISHED",
+      });
+    } finally {
+      await db.query(
+        "DELETE FROM user_permissions WHERE user_id=? AND permission_code='workflow.annex_workflow_order.override'",
+        [actor.id],
+      );
+    }
+  });
   it("filters disabled article text from stale search indexes and suggestions immediately", async () => {
     const id = await law(marker + " indexed"),
       a = await article(id, "1", "مصطلحاختبارمعطل");
