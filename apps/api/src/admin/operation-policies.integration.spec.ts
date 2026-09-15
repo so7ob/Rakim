@@ -100,6 +100,156 @@ describe("operation policies and correction drafts on MariaDB", () => {
     "DELETE_LEGISLATION_VERSIONS",
     "DELETE_ARTICLE_HISTORY",
   ];
+  it.each(["legislations", "imports"])(
+    "retains external amendments when deleting their instrument through %s",
+    async (kind) => {
+      const instrument = await fixture(),
+        outside = await fixture();
+      const amendmentId = randomUUID(),
+        operationId = randomUUID(),
+        importId = randomUUID();
+      await db.query(
+        "INSERT INTO amendments (id,amended_legislation_id,instrument_legislation_id,title_ar,effective_from,source_document_id,status) VALUES (?,?,?,'وثيقة محفوظة على قانون آخر','2026-01-01',?,'PUBLISHED')",
+        [amendmentId, outside.lawId, instrument.lawId, outside.sourceId],
+      );
+      await db.query(
+        "INSERT INTO amendment_operations (id,amendment_id,operation_type,target_kind,target_id,effective_from,application_order,citation_text,source_document_id) VALUES (?,?,'REPEAL','ARTICLE',?,'2026-01-01',1,'استناد محفوظ',?)",
+        [operationId, amendmentId, outside.articleId, outside.sourceId],
+      );
+      if (kind === "imports")
+        await db.query(
+          "INSERT INTO source_imports (id,source_document_id,legislation_id,uploaded_by,status,detected_format) VALUES (?,?,?,?,'REVIEWED','TXT')",
+          [importId, instrument.sourceId, instrument.lawId, actorId],
+        );
+      const rootId = kind === "imports" ? importId : instrument.lawId;
+      try {
+        await grants(deleteCodes);
+        await db.query(
+          "UPDATE amendment_operations SET target_id=? WHERE id=?",
+          [instrument.articleId, operationId],
+        );
+        expect((await deletion.impact(kind, rootId, actor)).allowed).toBe(
+          false,
+        );
+        await db.query(
+          "UPDATE amendment_operations SET target_id=? WHERE id=?",
+          [outside.articleId, operationId],
+        );
+        await db.query(
+          "INSERT INTO legislation_source_documents (legislation_id,source_document_id,source_role) VALUES (?,?,'EXTRACTION')",
+          [instrument.lawId, instrument.sourceId],
+        );
+        await db.query(
+          "UPDATE amendments SET source_document_id=? WHERE id=?",
+          [instrument.sourceId, amendmentId],
+        );
+        const shared: any = await deletion.impact(kind, rootId, actor);
+        expect(
+          shared.groups.find(
+            (group: any) => group.key === "imports-and-sources",
+          ).blockers.length,
+        ).toBeGreaterThan(0);
+        if (kind === "imports") expect(shared.allowed).toBe(false);
+        await db.query(
+          "UPDATE amendments SET source_document_id=? WHERE id=?",
+          [outside.sourceId, amendmentId],
+        );
+        let impact: any = await deletion.impact(kind, rootId, actor);
+        expect(impact.allowed).toBe(true);
+        expect(
+          impact.groups.find(
+            (group: any) => group.key === "retained-amendment-links",
+          ).items[0].id,
+        ).toBe(amendmentId);
+        const missingUpdate = {
+          ...actor,
+          permissions: actor.permissions.filter(
+            (p) => p !== "amendment.update",
+          ),
+        };
+        expect(
+          (await deletion.impact(kind, rootId, missingUpdate)).allowed,
+        ).toBe(false);
+        await expect(
+          deletion.remove(
+            kind,
+            rootId,
+            missingUpdate,
+            "حذف بلا صلاحية فك الارتباط",
+            impact.impactToken,
+          ),
+        ).rejects.toThrow();
+        await db.query("UPDATE amendments SET revision=revision+1 WHERE id=?", [
+          amendmentId,
+        ]);
+        await expect(
+          deletion.remove(kind, rootId, actor, "أثر قديم", impact.impactToken),
+        ).rejects.toThrow(/تغيرت العلاقات/);
+        impact = await deletion.impact(kind, rootId, actor);
+        const batch = await deletion.remove(
+          kind,
+          rootId,
+          actor,
+          "حذف السند مع حفظ التعديل",
+          impact.impactToken,
+        );
+        batches.push(batch.batchId);
+        const [document] = await db.query(
+          "SELECT * FROM amendments WHERE id=?",
+          [amendmentId],
+        );
+        expect(document.deleted_at).toBeNull();
+        expect(document.status).toBe("PUBLISHED");
+        expect(document.instrument_legislation_id).toBe(instrument.lawId);
+        expect(
+          (
+            await db.query(
+              "SELECT deleted_at FROM amendment_operations WHERE id=?",
+              [operationId],
+            )
+          )[0].deleted_at,
+        ).toBeNull();
+        expect(
+          (
+            await db.query("SELECT deleted_at FROM legislations WHERE id=?", [
+              outside.lawId,
+            ])
+          )[0].deleted_at,
+        ).toBeNull();
+        const detail: any = await deletion.detail(batch.batchId, actor);
+        expect(
+          detail.items.some(
+            (item: any) =>
+              item.kind === "amendments" && item.id === amendmentId,
+          ),
+        ).toBe(false);
+        expect(
+          detail.items.find(
+            (item: any) => item.kind === "amendment_instrument_link",
+          ).snapshot.instrumentLegislationId,
+        ).toBe(instrument.lawId);
+        await grants([]);
+        await db.query(
+          "UPDATE amendments SET instrument_legislation_id=NULL WHERE id=?",
+          [amendmentId],
+        );
+        await expect(
+          deletion.restore(batch.batchId, actor, "استعادة مع ارتباط متغير"),
+        ).rejects.toThrow(/تغير ارتباط سند/);
+        await db.query(
+          "UPDATE amendments SET instrument_legislation_id=? WHERE id=?",
+          [instrument.lawId, amendmentId],
+        );
+        expect(
+          (await deletion.restore(batch.batchId, actor, "استعادة سند التعديل"))
+            .status,
+        ).toBe("RESTORED");
+      } finally {
+        await db.query("DELETE FROM amendments WHERE id=?", [amendmentId]);
+        await db.query("DELETE FROM source_imports WHERE id=?", [importId]);
+      }
+    },
+  );
   it("keeps external relations and shared sources blocked despite all deletion exceptions", async () => {
     const f = await fixture();
     const outside = await fixture();

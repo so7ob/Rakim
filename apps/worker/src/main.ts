@@ -561,6 +561,43 @@ async function deleteByIds(
   );
 }
 
+async function verifyRetainedAmendmentLinks(m: EntityManager, batchId: string) {
+  const links = await m.query(
+    `SELECT i.item_id,i.snapshot_json,am.id amendment_id,am.instrument_legislation_id,am.amended_legislation_id,
+     EXISTS(SELECT 1 FROM deletion_batch_items law WHERE law.batch_id=i.batch_id AND law.item_kind='legislations' AND law.item_id=am.instrument_legislation_id) instrument_in_batch,
+     EXISTS(SELECT 1 FROM deletion_batch_items target WHERE target.batch_id=i.batch_id AND target.item_kind='legislations' AND target.item_id=am.amended_legislation_id) target_in_batch,
+     EXISTS(SELECT 1 FROM deletion_batch_items source WHERE source.batch_id=i.batch_id AND source.item_kind='source_documents' AND source.item_id=am.source_document_id) source_in_batch
+     FROM deletion_batch_items i LEFT JOIN amendments am ON am.id=i.item_id
+     WHERE i.batch_id=? AND i.item_kind='amendment_instrument_link' FOR UPDATE`,
+    [batchId],
+  );
+  for (const link of links) {
+    const snapshot =
+      typeof link.snapshot_json === "string"
+        ? JSON.parse(link.snapshot_json)
+        : link.snapshot_json;
+    if (
+      !link.amendment_id ||
+      !snapshot ||
+      link.instrument_legislation_id !== snapshot.instrumentLegislationId ||
+      link.amended_legislation_id !== snapshot.amendedLegislationId ||
+      !Number(link.instrument_in_batch) ||
+      Number(link.target_in_batch) ||
+      Number(link.source_in_batch)
+    )
+      throw new Error("RETAINED_AMENDMENT_LINK_CHANGED");
+  }
+  const unapproved = await m.query(
+    `SELECT am.id FROM amendments am
+     JOIN deletion_batch_items law ON law.batch_id=? AND law.item_kind='legislations' AND law.item_id=am.instrument_legislation_id
+     LEFT JOIN deletion_batch_items approved ON approved.batch_id=law.batch_id AND approved.item_id=am.id
+       AND approved.item_kind IN ('amendments','amendment_instrument_link')
+     WHERE approved.item_id IS NULL LIMIT 1 FOR UPDATE`,
+    [batchId],
+  );
+  if (unapproved.length) throw new Error("AMENDMENT_INSTRUMENT_OUTSIDE_BATCH");
+}
+
 export async function processPurge(payload: JobPayload, jobId: string) {
   if (!payload.deletionBatchId) throw new Error("INVALID_PURGE_JOB_PAYLOAD");
   const batchId = payload.deletionBatchId;
@@ -585,6 +622,7 @@ export async function processPurge(payload: JobPayload, jobId: string) {
       throw new Error("DELETION_RETENTION_NOT_EXPIRED");
     if (!["TRASHED", "PURGING", "PURGE_FAILED"].includes(batch.status))
       throw new Error(`INVALID_DELETION_BATCH_STATUS:${batch.status}`);
+    await verifyRetainedAmendmentLinks(m, batchId);
     const published = await m.query(
       `SELECT av.id FROM article_versions av
       JOIN deletion_batch_items a ON a.item_kind='articles' AND a.item_id=av.article_id AND a.batch_id=?
@@ -626,7 +664,7 @@ export async function processPurge(payload: JobPayload, jobId: string) {
   });
   if (!shouldPurge) return;
   const items = await db.query(
-    "SELECT item_kind,item_id FROM deletion_batch_items WHERE batch_id=?",
+    "SELECT item_kind,item_id,snapshot_json FROM deletion_batch_items WHERE batch_id=?",
     [batchId],
   );
   const lawIds = itemIds(items, "legislations");
@@ -640,7 +678,14 @@ export async function processPurge(payload: JobPayload, jobId: string) {
   const sourceIds = itemIds(items, "source_documents");
   const entityIds = Array.from(
     new Set<string>(
-      items.map((item: Record<string, any>) => String(item.item_id)),
+      items
+        .filter(
+          (item: any) =>
+            !["amendment_instrument_link", "source_import_link"].includes(
+              item.item_kind,
+            ),
+        )
+        .map((item: Record<string, any>) => String(item.item_id)),
     ),
   );
 
@@ -664,6 +709,33 @@ export async function processPurge(payload: JobPayload, jobId: string) {
     await rm(targetPath(file.storage_key), { force: true });
 
   await db.transaction(async (m) => {
+    await verifyRetainedAmendmentLinks(m, batchId);
+    for (const item of items.filter(
+      (item: any) => item.item_kind === "amendment_instrument_link",
+    )) {
+      const snapshot =
+        typeof item.snapshot_json === "string"
+          ? JSON.parse(item.snapshot_json)
+          : item.snapshot_json;
+      await m.query(
+        "UPDATE amendments SET instrument_legislation_id=NULL,revision=revision+1 WHERE id=? AND instrument_legislation_id=?",
+        [item.item_id, snapshot.instrumentLegislationId],
+      );
+      await m.query(
+        `INSERT INTO audit_logs (id,actor_id,action,entity_type,entity_id,before_json,after_json,reason)
+         SELECT ?,actor_id,'DETACH_AMENDMENT_INSTRUMENT','AMENDMENT',?,?,?,reason FROM deletion_batches WHERE id=?`,
+        [
+          randomUUID(),
+          item.item_id,
+          JSON.stringify(snapshot),
+          JSON.stringify({
+            instrumentLegislationId: null,
+            deletionBatchId: batchId,
+          }),
+          batchId,
+        ],
+      );
+    }
     const modificationRows =
       articleIds.length || operationIds.length
         ? await m.query(

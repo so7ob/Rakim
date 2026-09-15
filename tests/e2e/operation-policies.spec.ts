@@ -303,3 +303,108 @@ test("correction UI stages text and enforces API permissions and CSRF", async ({
     await f.cleanup();
   }
 });
+
+test("deletes an instrument while preserving its external amendment and restoring the link", async ({
+  page,
+}, info) => {
+  test.skip(!["desktop-1440", "mobile-390"].includes(info.project.name));
+  const f = await fixture(),
+    outside = await fixture(),
+    amendmentId = randomUUID();
+  try {
+    await f.db.query(
+      "UPDATE legislations SET title_ar='سند تعديل اصطناعي للاختبار' WHERE id=?",
+      [f.lawId],
+    );
+    await f.db.query(
+      "INSERT INTO amendments (id,amended_legislation_id,instrument_legislation_id,title_ar,effective_from,source_document_id,status) VALUES (?,?,?,'وثيقة تعديل محفوظة للقانون الآخر','2026-01-01',?,'PUBLISHED')",
+      [amendmentId, outside.lawId, f.lawId, outside.sourceId],
+    );
+    for (const [index, operation] of ["REPEAL", "ADD"].entries())
+      await f.db.query(
+        "INSERT INTO amendment_operations (id,amendment_id,operation_type,target_kind,target_id,effective_from,application_order,citation_text,source_document_id) VALUES (?,?,?,'ARTICLE',?,'2026-01-01',?,'استناد اختبار',?)",
+        [
+          randomUUID(),
+          amendmentId,
+          operation,
+          outside.articleId,
+          index + 1,
+          outside.sourceId,
+        ],
+      );
+    for (const permission of [
+      "workflow.delete_legislation_history.override",
+      "workflow.delete_legislation_versions.override",
+      "workflow.delete_article_history.override",
+    ])
+      await f.db.query(
+        "INSERT INTO user_permissions (user_id,permission_code,granted_by,grant_reason) VALUES (?,?,?,'استثناء اختبار السند')",
+        [f.userId, permission, f.userId],
+      );
+    await login(page, f.username);
+    await page.goto(`/ar/admin/content/${f.lawId}/general`);
+    await page.getByRole("button", { name: "حذف", exact: true }).click();
+    const dialog = page.getByRole("dialog", { name: /أثر حذف/ });
+    const retained = dialog
+      .locator("details")
+      .filter({ hasText: "وثائق تعديل ستبقى محفوظة" });
+    await expect(retained).toContainText("وثيقة تعديل محفوظة للقانون الآخر");
+    await expect(
+      dialog.getByRole("button", { name: "نقل إلى السلة" }),
+    ).toBeEnabled();
+    await expect(dialog.getByText("لا يمكن حذف هذه المجموعة:")).toHaveCount(0);
+    await retained.scrollIntoViewIfNeeded();
+    expect(
+      await page.evaluate(
+        () => document.documentElement.scrollWidth <= innerWidth + 1,
+      ),
+    ).toBe(true);
+    await page.screenshot({
+      path: info.outputPath("retained-amendment-instrument.png"),
+      scale: "css",
+    });
+    await dialog
+      .getByLabel("سبب الحذف")
+      .fill("حذف السند مع الاحتفاظ بوثيقة التعديل");
+    const response = page.waitForResponse(
+      (r) =>
+        r.url().endsWith(`/admin/lifecycle/legislations/${f.lawId}`) &&
+        r.request().method() === "PATCH",
+    );
+    await dialog.getByRole("button", { name: "نقل إلى السلة" }).click();
+    const deletion = await response;
+    expect(deletion.ok()).toBe(true);
+    const { batchId } = await deletion.json();
+    const [am] = await f.db.query(
+      "SELECT deleted_at,status,instrument_legislation_id FROM amendments WHERE id=?",
+      [amendmentId],
+    );
+    expect(am.deleted_at).toBeNull();
+    expect(am.status).toBe("PUBLISHED");
+    expect(am.instrument_legislation_id).toBe(f.lawId);
+    const publicLaw = await page.request.get(
+      `/api/v1/legislations/${outside.lawId}`,
+    );
+    expect(publicLaw.ok()).toBe(true);
+    const status = await (await page.request.get("/api/v1/auth/status")).json();
+    expect(
+      (
+        await page.request.post(`/api/v1/admin/deletions/${batchId}/restore`, {
+          headers: { "x-csrf-token": status.csrfToken },
+          data: { reason: "استعادة سند التعديل" },
+        })
+      ).ok(),
+    ).toBe(true);
+    expect(
+      (
+        await f.db.query("SELECT deleted_at FROM legislations WHERE id=?", [
+          f.lawId,
+        ])
+      )[0].deleted_at,
+    ).toBeNull();
+  } finally {
+    await f.db.query("DELETE FROM amendments WHERE id=?", [amendmentId]);
+    await outside.cleanup();
+    await f.cleanup();
+  }
+});
