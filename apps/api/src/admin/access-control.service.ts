@@ -1,3 +1,4 @@
+import { WORKFLOW_POLICIES } from "./workflow-policies.js";
 import { EFFECTIVE_ROLE_GRANTS_SQL } from "../common/effective-role-grants.js";
 import {
   BadRequestException,
@@ -352,7 +353,25 @@ export class AccessControlService {
         [id],
       ),
     ]);
+    const policyGrants = await this.db.query(
+      "SELECT permission_code,grant_reason FROM user_permissions WHERE user_id=? ORDER BY permission_code",
+      [id],
+    );
     return {
+      policyOverrides: policyGrants.flatMap((grant: any) => {
+        const policy = WORKFLOW_POLICIES.find(
+          (item) => item.permissionCode === grant.permission_code,
+        );
+        return policy
+          ? [
+              {
+                code: policy.code,
+                labelAr: policy.labelAr,
+                reason: grant.grant_reason,
+              },
+            ]
+          : [];
+      }),
       directOverrides: overrides,
       effectivePermissions: this.effectivePermissions(roleGrants, overrides),
     };

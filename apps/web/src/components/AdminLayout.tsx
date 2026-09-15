@@ -1,3 +1,4 @@
+import { PolicyChecks, type PolicyCheck } from "./admin/PolicyChecks";
 import { useEffect, useMemo, useState } from "react";
 import { NavLink, Outlet, useLocation, useNavigate } from "react-router-dom";
 import { useAuth } from "../auth/AuthContext";
@@ -140,6 +141,20 @@ export function AdminLayout() {
   const auth = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
+  const [blockedPolicies, setBlockedPolicies] = useState<PolicyCheck[]>([]);
+  useEffect(() => {
+    const listener = (event: Event) =>
+      setBlockedPolicies(
+        (event as CustomEvent<PolicyCheck[]>).detail.filter(
+          (check) => !check.allowed,
+        ),
+      );
+    window.addEventListener("operation-policy-blocked", listener);
+    return () =>
+      window.removeEventListener("operation-policy-blocked", listener);
+  }, []);
+  useEffect(() => setBlockedPolicies([]), [location.key]);
+
   const [collapsed, setCollapsed] = useState(
     () => window.localStorage.getItem("admin-sidebar-collapsed") === "true",
   );
@@ -314,6 +329,18 @@ export function AdminLayout() {
         </button>
       </aside>
       <main className="admin-main" id="admin-content">
+        {blockedPolicies.length > 0 && (
+          <aside className="admin-card" role="status">
+            <strong>السياسات التي منعت العملية</strong>
+            <PolicyChecks checks={blockedPolicies} />
+            <button
+              className="link-button"
+              onClick={() => setBlockedPolicies([])}
+            >
+              إخفاء الرسالة
+            </button>
+          </aside>
+        )}
         <Outlet />
       </main>
     </div>

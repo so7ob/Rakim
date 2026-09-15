@@ -1,3 +1,6 @@
+import { AdditionalOperationPolicies1700000000023 } from "./migrations/1700000000023-additional-operation-policies.js";
+import { ContentCorrections1700000000022 } from "./migrations/1700000000022-content-corrections.js";
+import { OperationPolicies1700000000021 } from "./migrations/1700000000021-operation-policies.js";
 import { RecoveryEditRevisions1700000000017 } from "./migrations/1700000000017-recovery-edit-revisions.js";
 import { ReferenceLifecycle1700000000016 } from "./migrations/1700000000016-reference-lifecycle.js";
 import "reflect-metadata";
@@ -67,6 +70,9 @@ export const createDataSource = () =>
       SourceDocHashUniqueness1700000000018,
       SourceDocActiveHashConstraint1700000000019,
       RelationalDeletionTrash1700000000020,
+      OperationPolicies1700000000021,
+      ContentCorrections1700000000022,
+      AdditionalOperationPolicies1700000000023,
     ],
     migrationsTableName: "schema_migrations",
   });

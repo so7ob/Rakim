@@ -1,3 +1,4 @@
+import { useOperationPolicies } from "../../hooks/use-operation-policies";
 import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { RecordFormDialog } from "../../components/admin/RecordFormDialog";
 import { useMemo, useState, type FormEvent } from "react";
@@ -20,6 +21,7 @@ interface Synonym {
   publishedAt: string | null;
 }
 export function AdminSynonymsPage() {
+  const policies = useOperationPolicies();
   const { hasPermission } = useAuth();
   const canCreate = hasPermission("search.synonym.create");
   const canDelete = hasPermission("search.synonym.delete");
@@ -262,7 +264,8 @@ export function AdminSynonymsPage() {
                       />
                     )}
                     {item.id &&
-                      item.status === "DRAFT" &&
+                      (item.status === "DRAFT" ||
+                        policies.allows("EDIT_SYNONYM_HISTORY")) &&
                       hasPermission("search.synonym.update") && (
                         <button
                           className="link-button"
@@ -271,14 +274,17 @@ export function AdminSynonymsPage() {
                           تعديل
                         </button>
                       )}
-                    {canDelete && item.id && item.status === "DRAFT" && (
-                      <button
-                        className="link-button danger"
-                        onClick={() => setDeleting(item)}
-                      >
-                        حذف
-                      </button>
-                    )}
+                    {canDelete &&
+                      item.id &&
+                      (item.status === "DRAFT" ||
+                        policies.allows("DELETE_SYNONYM_HISTORY")) && (
+                        <button
+                          className="link-button danger"
+                          onClick={() => setDeleting(item)}
+                        >
+                          حذف
+                        </button>
+                      )}
                   </td>
                 </tr>
               ))}

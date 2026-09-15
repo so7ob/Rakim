@@ -1,3 +1,4 @@
+import { useOperationPolicies } from "../../hooks/use-operation-policies";
 import { useEffect, useState } from "react";
 import {
   Link,
@@ -24,6 +25,7 @@ import {
 } from "./AdminAmendmentsPage";
 
 export function AdminAmendmentDetailPage() {
+  const policies = useOperationPolicies();
   const { id, tab = "general" } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -58,7 +60,10 @@ export function AdminAmendmentDetailPage() {
   const document = item.data;
   const canEdit =
     Boolean(document.isActive) &&
-    document.status === "DRAFT" &&
+    (document.status === "DRAFT" ||
+      policies.allows("EDIT_AMENDMENT_REVIEWED")) &&
+    (document.status !== "PUBLISHED" ||
+      auth.hasPermission("amendment.create")) &&
     auth.hasPermission("amendment.update");
   const canReview =
     Boolean(document.isActive) &&
@@ -66,7 +71,9 @@ export function AdminAmendmentDetailPage() {
     auth.hasPermission("amendment.review");
   const canPublish =
     Boolean(document.isActive) &&
-    document.status === "REVIEWED" &&
+    (document.status === "REVIEWED" ||
+      (document.status === "DRAFT" &&
+        policies.allows("AMENDMENT_WORKFLOW_ORDER"))) &&
     auth.hasPermission("amendment.publish");
   const openDecision = (action: "review" | "publish") => {
     setReason("");
@@ -285,8 +292,12 @@ export function AdminAmendmentDetailPage() {
         <AmendmentFormDialog
           document={document}
           onClose={() => setEditing(false)}
-          onDone={() => {
+          onDone={(savedId) => {
             setEditing(false);
+            if (savedId && savedId !== document.id) {
+              window.location.assign(`/ar/admin/amendments/${savedId}/general`);
+              return;
+            }
             setMessage("حُفظت الوثيقة دون فقد عناصرها الأخرى.");
             item.retry();
           }}

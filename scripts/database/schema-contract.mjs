@@ -20,6 +20,9 @@ export const expectedMigrations = [
   "SourceDocHashUniqueness1700000000018",
   "SourceDocActiveHashConstraint1700000000019",
   "RelationalDeletionTrash1700000000020",
+  "OperationPolicies1700000000021",
+  "ContentCorrections1700000000022",
+  "AdditionalOperationPolicies1700000000023",
 ];
 // Historical development migration (8496639), superseded by CanonicalRbacSecurity
 // 0012. It only synchronized permission data; it is not a replacement for the
@@ -46,7 +49,7 @@ export async function assertSchemaCompatible(query) {
       `DATABASE_SCHEMA_INCOMPATIBLE: الترحيلات الناقصة: ${missing.join(", ") || "لا يوجد"}. ترحيلات غير معروفة لهذه النسخة: ${unknown.join(", ") || "لا يوجد"}. طبّق الترحيلات الناقصة عبر npm run db:migrate قبل التشغيل، أو استخدم إصدار التطبيق المطابق عند وجود ترحيلات غير معروفة. لم يُغيّر فحص التوافق قاعدة البيانات.`,
     );
   const columns = await query(
-    "SELECT table_name tableName,column_name columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND (column_name IN ('deleted_at','edit_revision','cancel_requested_at') OR table_name IN ('password_recovery_requests','deletion_batches','deletion_batch_items') OR (table_name='source_documents' AND column_name='active_sha256'))",
+    "SELECT table_name tableName,column_name columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND (column_name IN ('deleted_at','edit_revision','cancel_requested_at') OR table_name IN ('password_recovery_requests','deletion_batches','deletion_batch_items','content_corrections') OR (table_name='source_documents' AND column_name='active_sha256'))",
   );
   for (const [table, column] of [
     ["users", "deleted_at"],
@@ -56,6 +59,8 @@ export async function assertSchemaCompatible(query) {
     ["job_queue", "cancel_requested_at"],
     ["deletion_batches", "id"],
     ["deletion_batch_items", "batch_id"],
+    ["deletion_batches", "policy_checks_json"],
+    ["content_corrections", "base_hash"],
     ...[
       "legislation_types",
       "subjects",

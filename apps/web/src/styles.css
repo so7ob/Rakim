@@ -3967,7 +3967,7 @@ button:disabled {
 }
 .law-row-title > span,
 .law-row-title > small {
-  color: #7b8a98;
+  color: #596a7b;
   font-size: 11px;
 }
 .law-row-title > small {
@@ -7173,3 +7173,7 @@ main .reference-relations .relation-label {
   .deletion-impact-group summary label { flex-wrap: wrap; }
   .deletion-impact-group summary span:not(.tag) { margin-inline-start: 0; }
 }
+
+.correction-text { white-space: pre-wrap; overflow-wrap: anywhere; padding: 1rem; background: var(--surface-muted, #f8f5ef); border-radius: 0.5rem; }
+.policy-checks { padding-inline-start: 1.4rem; overflow-wrap: anywhere; }
+.policy-checks li { margin-block: 0.5rem; }

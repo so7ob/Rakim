@@ -40,7 +40,7 @@ describe("canonical RBAC database migration", () => {
     );
   });
 
-  it("keeps the five workflow exception capabilities outside the RBAC catalog", async () => {
+  it("keeps all workflow exception capabilities outside the RBAC catalog", async () => {
     const policyCodes = WORKFLOW_POLICIES.map(
       (policy) => policy.permissionCode,
     );
@@ -51,7 +51,7 @@ describe("canonical RBAC database migration", () => {
       policyCodes,
     );
     expect(rows).toEqual([]);
-    expect(new Set(policyCodes).size).toBe(5);
+    expect(new Set(policyCodes).size).toBe(WORKFLOW_POLICIES.length);
   });
 
   it("matches every approved standard-role grant exactly", async () => {

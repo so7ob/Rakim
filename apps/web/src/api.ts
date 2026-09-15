@@ -115,6 +115,12 @@ async function sendApiRequest<T>(
       : typeof body?.message === "object"
         ? JSON.stringify(body.message)
         : body?.message;
+    const policyChecks = (body as { policyChecks?: unknown[] } | null)
+      ?.policyChecks;
+    if (policyChecks?.length && typeof window !== "undefined")
+      window.dispatchEvent(
+        new CustomEvent("operation-policy-blocked", { detail: policyChecks }),
+      );
     throw new ApiError(
       message ?? "تعذر تنفيذ الطلب.",
       response.status,

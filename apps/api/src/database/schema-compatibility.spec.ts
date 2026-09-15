@@ -12,6 +12,8 @@ const fields = [
   ["job_queue", "cancel_requested_at"],
   ["deletion_batches", "id"],
   ["deletion_batch_items", "batch_id"],
+  ["deletion_batches", "policy_checks_json"],
+  ["content_corrections", "base_hash"],
   ...[
     "legislation_types",
     "subjects",

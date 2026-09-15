@@ -50,12 +50,44 @@ try {
       path: join(output, `${label}-workflow-policies.png`),
       animations: "disabled",
     });
-    const policyTabs = policiesCard.getByRole("tab");
-    for (let index = 0; index < (await policyTabs.count()); index += 1) {
-      await policyTabs.nth(index).click();
-      await policiesCard.getByRole("tabpanel").screenshot({
-        path: join(output, `${label}-workflow-policy-${index + 1}.png`),
+    const categories = await policiesCard
+      .getByRole("navigation", { name: "تصنيفات السياسات" })
+      .getByRole("link")
+      .evaluateAll((links) =>
+        links.map((link) => ({
+          href: link.getAttribute("href"),
+          label: link.textContent,
+        })),
+      );
+    const categoryCaptures = [];
+    for (const [categoryIndex, category] of categories.entries()) {
+      await page.goto(new URL(category.href, baseUrl).href, {
+        waitUntil: "networkidle",
+      });
+      await policiesCard.getByRole("tabpanel").waitFor();
+      await policiesCard.screenshot({
+        path: join(output, `${label}-category-${categoryIndex + 1}.png`),
         animations: "disabled",
+      });
+      const policyTabs = policiesCard.getByRole("tab");
+      for (let index = 0; index < (await policyTabs.count()); index += 1) {
+        const panelId = await policyTabs
+          .nth(index)
+          .getAttribute("aria-controls");
+        await policyTabs.nth(index).click();
+        await policiesCard.locator(`#${panelId}`).screenshot({
+          path: join(
+            output,
+            `${label}-category-${categoryIndex + 1}-policy-${index + 1}.png`,
+          ),
+          animations: "disabled",
+        });
+      }
+      categoryCaptures.push({
+        label: category.label,
+        overflow: await page.evaluate(
+          () => document.documentElement.scrollWidth > innerWidth + 1,
+        ),
       });
     }
 
@@ -77,6 +109,7 @@ try {
 
     manifest.captures.push({
       label,
+      categories: categoryCaptures,
       overflow: await page.evaluate(
         () => document.documentElement.scrollWidth > innerWidth + 1,
       ),

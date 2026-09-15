@@ -564,30 +564,67 @@ async function deleteByIds(
 export async function processPurge(payload: JobPayload, jobId: string) {
   if (!payload.deletionBatchId) throw new Error("INVALID_PURGE_JOB_PAYLOAD");
   const batchId = payload.deletionBatchId;
-  const [batch] = await db.query(
-    "SELECT status,restore_until restoreUntil FROM deletion_batches WHERE id=?",
-    [batchId],
-  );
-  if (!batch || ["RESTORED", "PURGED"].includes(batch.status)) {
-    await db.query(
-      "UPDATE job_queue SET status='SUCCEEDED',progress=100,completed_at=NOW(3) WHERE id=?",
-      [jobId],
+  const shouldPurge = await db.transaction(async (m) => {
+    const [batch] = await m.query(
+      "SELECT * FROM deletion_batches WHERE id=? FOR UPDATE",
+      [batchId],
     );
-    return;
-  }
-  if (batch.status === "CANCELLING")
-    throw new Error("DELETION_CANCELLATION_PENDING");
-  if (
-    batch.status === "TRASHED" &&
-    new Date(batch.restoreUntil).getTime() > Date.now()
-  )
-    throw new Error("DELETION_RETENTION_NOT_EXPIRED");
-  if (!["TRASHED", "PURGING", "PURGE_FAILED"].includes(batch.status))
-    throw new Error(`INVALID_DELETION_BATCH_STATUS:${batch.status}`);
-  await db.query(
-    "UPDATE deletion_batches SET status='PURGING',last_error=NULL WHERE id=?",
-    [batchId],
-  );
+    if (!batch || ["RESTORED", "PURGED"].includes(batch.status)) {
+      await m.query(
+        "UPDATE job_queue SET status='SUCCEEDED',progress=100,completed_at=NOW(3) WHERE id=?",
+        [jobId],
+      );
+      return false;
+    }
+    if (batch.status === "CANCELLING")
+      throw new Error("DELETION_CANCELLATION_PENDING");
+    if (
+      batch.status === "TRASHED" &&
+      new Date(batch.restore_until).getTime() > Date.now()
+    )
+      throw new Error("DELETION_RETENTION_NOT_EXPIRED");
+    if (!["TRASHED", "PURGING", "PURGE_FAILED"].includes(batch.status))
+      throw new Error(`INVALID_DELETION_BATCH_STATUS:${batch.status}`);
+    const published = await m.query(
+      `SELECT av.id FROM article_versions av
+      JOIN deletion_batch_items a ON a.item_kind='articles' AND a.item_id=av.article_id AND a.batch_id=?
+      WHERE av.status<>'DRAFT'`,
+      [batchId],
+    );
+    if (published.length) {
+      const checks =
+        typeof batch.policy_checks_json === "string"
+          ? JSON.parse(batch.policy_checks_json)
+          : batch.policy_checks_json;
+      if (
+        !Array.isArray(checks) ||
+        !checks.some(
+          (check) =>
+            check.code === "DELETE_ARTICLE_HISTORY" &&
+            check.allowed === true &&
+            check.applies === true,
+        )
+      )
+        throw new Error("PUBLISHED_PURGE_POLICY_AUTHORIZATION_REQUIRED");
+      const members = await m.query(
+        "SELECT item_id FROM deletion_batch_items WHERE batch_id=? AND item_kind='article_versions'",
+        [batchId],
+      );
+      if (
+        published.some(
+          (version: any) =>
+            !members.some((member: any) => member.item_id === version.id),
+        )
+      )
+        throw new Error("PUBLISHED_PURGE_VERSION_OUTSIDE_BATCH");
+    }
+    await m.query(
+      "UPDATE deletion_batches SET status='PURGING',last_error=NULL WHERE id=?",
+      [batchId],
+    );
+    return true;
+  });
+  if (!shouldPurge) return;
   const items = await db.query(
     "SELECT item_kind,item_id FROM deletion_batch_items WHERE batch_id=?",
     [batchId],

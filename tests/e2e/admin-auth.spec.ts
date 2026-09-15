@@ -157,7 +157,8 @@ test("platform settings and full legislation metadata are manageable with audite
   });
   expect(policyResponse.ok()).toBeTruthy();
   const policyState = await policyResponse.json();
-  expect(policyState.policies).toHaveLength(5);
+  expect(policyState.policies.length).toBeGreaterThan(5);
+  expect(policyState.categories).toHaveLength(4);
   expect(policyState.users).toEqual([]);
   expect(
     policyState.policies.every(

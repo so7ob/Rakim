@@ -1,3 +1,5 @@
+import { CorrectionsService } from "./corrections.service.js";
+import { CorrectionsController } from "./corrections.controller.js";
 import { LifecycleController } from "./lifecycle.controller.js";
 import { LifecycleService } from "./lifecycle.service.js";
 import { Module } from "@nestjs/common";
@@ -23,6 +25,7 @@ import { DeletionsController } from "./deletions.controller.js";
     PublicationsController,
     ReindexController,
     DeletionsController,
+    CorrectionsController,
   ],
   providers: [
     PermissionGuard,
@@ -31,6 +34,7 @@ import { DeletionsController } from "./deletions.controller.js";
     LifecycleService,
     AccessControlService,
     DeletionService,
+    CorrectionsService,
   ],
 })
 export class AdminModule {}

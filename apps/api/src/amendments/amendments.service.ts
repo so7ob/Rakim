@@ -8,7 +8,11 @@ import {
 import { randomUUID } from "node:crypto";
 import type { DataSource, EntityManager } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
-import { assertWorkflowPolicy } from "../admin/workflow-policies.js";
+import {
+  assertWorkflowPolicy,
+  enforceOperationPolicy,
+  evaluateWorkflowPolicy,
+} from "../admin/workflow-policies.js";
 import { requireExactPermission } from "../admin/lifecycle.service.js";
 import { DATABASE } from "../database/database.module.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
@@ -48,13 +52,23 @@ const isoDate = (v: unknown) =>
 @Injectable()
 export class AmendmentsService {
   constructor(@Inject(DATABASE) private readonly db: DataSource) {}
-  async candidates() {
+  async candidates(actor?: AuthUser) {
+    const allowUnreviewed = actor
+      ? (
+          await evaluateWorkflowPolicy(
+            this.db.manager,
+            "AMENDMENT_REVIEWED_SOURCE",
+            actor,
+            true,
+          )
+        ).allowed
+      : false;
     const [articles, sources, legislations] = await Promise.all([
       this.db.query(
         `SELECT a.id,a.legislation_id legislationId,a.current_label currentLabel,l.title_ar legislationTitle,av.text_original currentText FROM articles a JOIN legislations l ON l.id=a.legislation_id JOIN article_versions av ON av.article_id=a.id WHERE a.deleted_at IS NULL AND a.is_active=TRUE AND l.deleted_at IS NULL AND l.is_active=TRUE AND l.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') AND av.status IN ('PUBLISHED','REPEALED') AND av.valid_from<=CURRENT_DATE() AND (av.valid_to IS NULL OR av.valid_to>CURRENT_DATE()) ORDER BY l.title_ar,a.sort_key,a.id`,
       ),
       this.db.query(
-        "SELECT id,original_name originalName FROM source_documents WHERE deleted_at IS NULL AND is_active=TRUE AND extraction_status='REVIEWED' ORDER BY received_at DESC",
+        `SELECT id,original_name originalName FROM source_documents WHERE deleted_at IS NULL AND is_active=TRUE ${allowUnreviewed ? "" : "AND extraction_status='REVIEWED'"} ORDER BY received_at DESC`,
       ),
       this.db.query(
         "SELECT id,title_ar titleAr FROM legislations WHERE deleted_at IS NULL AND is_active=TRUE AND status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED') ORDER BY title_ar",
@@ -170,11 +184,42 @@ export class AmendmentsService {
           )
         : [];
       if (id && !before) throw new NotFoundException("الوثيقة غير موجودة.");
-      if (before && before.status !== "DRAFT")
-        throw new ConflictException(
-          "تعدل وثيقة التعديل في حالة المسودة فقط؛ لا يغير المحتوى بعد المراجعة أو النشر.",
+      const publishedOriginalId =
+        before?.status === "PUBLISHED" ? id : undefined;
+      if (publishedOriginalId) {
+        requireExactPermission(actor, "amendment.create");
+        await enforceOperationPolicy(
+          m,
+          "EDIT_AMENDMENT_REVIEWED",
+          actor,
+          true,
+          publishedOriginalId,
+          reason,
         );
-      if (before && input.revision !== Number(before.revision))
+        if (input.revision !== Number(before.revision))
+          throw new ConflictException("تغيرت الوثيقة؛ حدّث الصفحة.");
+        id = undefined;
+        for (const op of operations) {
+          op.id = undefined;
+          if (op.operationType === "ADD" && op.articleId)
+            op.operationType = "CORRECT";
+        }
+      }
+      if (id && before && before.status !== "DRAFT") {
+        await enforceOperationPolicy(
+          m,
+          "EDIT_AMENDMENT_REVIEWED",
+          actor,
+          true,
+          id!,
+          reason,
+        );
+        await m.query(
+          "UPDATE amendments SET status='DRAFT',reviewed_by=NULL,reviewed_at=NULL WHERE id=?",
+          [id],
+        );
+      }
+      if (id && before && input.revision !== Number(before.revision))
         throw new ConflictException(
           "عدّل مستخدم آخر الوثيقة؛ أعد تحميلها قبل الحفظ حتى لا تفقد عناصره.",
         );
@@ -202,11 +247,19 @@ export class AmendmentsService {
       if (before && legislationId !== before.amended_legislation_id)
         throw new ConflictException("لا يمكن نقل وثيقة التعديل إلى تشريع آخر.");
       const [source] = await m.query(
-        "SELECT id FROM source_documents WHERE id=? AND deleted_at IS NULL AND is_active=TRUE AND extraction_status='REVIEWED' FOR UPDATE",
+        "SELECT id,extraction_status FROM source_documents WHERE id=? AND deleted_at IS NULL AND is_active=TRUE FOR UPDATE",
         [input.sourceDocumentId],
       );
       if (!source)
-        throw new ConflictException("يلزم مصدر فعال ومدقق قبل تسجيل التعديل.");
+        throw new ConflictException("يلزم مصدر فعال قبل تسجيل التعديل.");
+      await enforceOperationPolicy(
+        m,
+        "AMENDMENT_REVIEWED_SOURCE",
+        actor,
+        source.extraction_status !== "REVIEWED",
+        id ?? legislationId,
+        reason,
+      );
       if (input.instrumentLegislationId) {
         const [instrument] = await m.query(
           "SELECT id FROM legislations WHERE id=? AND deleted_at IS NULL AND is_active=TRUE",
@@ -219,6 +272,7 @@ export class AmendmentsService {
       }
       if (
         !id &&
+        !publishedOriginalId &&
         (
           await m.query(
             "SELECT id FROM amendments WHERE amended_legislation_id=? AND source_document_id=? AND title_ar=? AND effective_from=? AND deleted_at IS NULL LIMIT 1",
@@ -235,6 +289,16 @@ export class AmendmentsService {
           "توجد وثيقة مطابقة؛ افتحها لاستكمال عناصرها بدلاً من إنشاء وثيقة مكررة.",
         );
       const documentId = id ?? randomUUID();
+      if (publishedOriginalId)
+        await this.audit(
+          m,
+          actor,
+          "CREATE_AMENDMENT_CORRECTION",
+          documentId,
+          { originalId: publishedOriginalId },
+          { originalId: publishedOriginalId, status: "DRAFT" },
+          reason,
+        );
       const oldOps = id
         ? await m.query(
             "SELECT * FROM amendment_operations WHERE amendment_id=? AND deleted_at IS NULL FOR UPDATE",
@@ -417,7 +481,7 @@ export class AmendmentsService {
   async publish(id: string, actor: AuthUser, reason: string) {
     requireExactPermission(actor, "amendment.publish");
     return this.db.transaction(async (m) => {
-      const doc = await this.document(m, id, "REVIEWED");
+      const doc = await this.document(m, id, "REVIEWED", actor, reason);
       const [law] = await m.query(
         "SELECT status FROM legislations WHERE id=? AND is_active=TRUE AND deleted_at IS NULL FOR UPDATE",
         [doc.amended_legislation_id],
@@ -428,11 +492,18 @@ export class AmendmentsService {
       )
         throw new ConflictException("التشريع المستهدف غير متاح للنشر.");
       const [source] = await m.query(
-        "SELECT id FROM source_documents WHERE id=? AND is_active=TRUE AND deleted_at IS NULL AND extraction_status='REVIEWED' FOR UPDATE",
+        "SELECT id,extraction_status FROM source_documents WHERE id=? AND is_active=TRUE AND deleted_at IS NULL FOR UPDATE",
         [doc.source_document_id],
       );
-      if (!source)
-        throw new ConflictException("مصدر الوثيقة غير فعال أو غير مدقق.");
+      if (!source) throw new ConflictException("مصدر الوثيقة غير فعال.");
+      await enforceOperationPolicy(
+        m,
+        "AMENDMENT_REVIEWED_SOURCE",
+        actor,
+        source.extraction_status !== "REVIEWED",
+        id,
+        reason,
+      );
       const operations = await this.operations(m, id);
       if (!operations.length)
         throw new ConflictException("الوثيقة لا تحتوي عناصر فعالة.");
@@ -628,14 +699,30 @@ export class AmendmentsService {
       afterVersionId: afterId,
     };
   }
-  private async document(m: EntityManager, id: string, status: string) {
+  private async document(
+    m: EntityManager,
+    id: string,
+    status: string,
+    actor?: AuthUser,
+    reason = "",
+  ) {
     const [doc] = await m.query(
       "SELECT * FROM amendments WHERE id=? AND deleted_at IS NULL AND is_active=TRUE FOR UPDATE",
       [id],
     );
     if (!doc) throw new NotFoundException("وثيقة التعديل غير موجودة أو معطلة.");
-    if (doc.status !== status)
-      throw new ConflictException("حالة الوثيقة لا تسمح بهذا الإجراء.");
+    if (doc.status !== status) {
+      if (actor && status === "REVIEWED" && doc.status === "DRAFT")
+        await enforceOperationPolicy(
+          m,
+          "AMENDMENT_WORKFLOW_ORDER",
+          actor,
+          true,
+          id,
+          reason,
+        );
+      else throw new ConflictException("حالة الوثيقة لا تسمح بهذا الإجراء.");
+    }
     return doc;
   }
   private operations(m: EntityManager, id: string) {

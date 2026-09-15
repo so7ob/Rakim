@@ -1,3 +1,5 @@
+import { useOperationPolicies } from "../../hooks/use-operation-policies";
+import { ContentCorrectionsPanel } from "../../components/admin/ContentCorrectionsPanel";
 import {
   LegislationStatus,
   LegalStatusBadge,
@@ -108,6 +110,7 @@ interface Detail {
   responsibilities: Array<{ duty: string; userName: string }>;
 }
 export function AdminContentDetailPage() {
+  const policies = useOperationPolicies();
   const { id, tab = "general" } = useParams();
   const location = useLocation();
   const navigate = useNavigate();
@@ -258,6 +261,10 @@ export function AdminContentDetailPage() {
             count: law.sources.length,
           },
           {
+            label: "مسودات التصحيح",
+            to: `/ar/admin/content/${id}/corrections`,
+          },
+          {
             label: "سير العمل",
             to: `/ar/admin/content/${id}/workflow`,
             count: law.events.length,
@@ -268,6 +275,14 @@ export function AdminContentDetailPage() {
         <p role="status" className="form-message admin-content-message">
           {msg}
         </p>
+      )}
+      {tab === "corrections" && (
+        <ContentCorrectionsPanel
+          lawId={law.id}
+          articles={law.articles}
+          annexes={law.annexes}
+          onChange={item.retry}
+        />
       )}
       {metadataOpen && canEditMetadata && (
         <AdminDialog
@@ -575,7 +590,9 @@ export function AdminContentDetailPage() {
         </section>
       )}
       {tab === "articles" &&
-        ["INBOX", "DRAFT"].includes(law.status) &&
+        (["INBOX", "DRAFT"].includes(law.status) ||
+          (["IN_REVIEW", "APPROVED_FOR_PUBLISHING"].includes(law.status) &&
+            policies.allows("CREATE_ARTICLE_REVIEWED"))) &&
         auth.hasPermission("article.create") && (
           <button className="button" onClick={() => setCreatingArticle(true)}>
             + إضافة مادة
@@ -640,8 +657,8 @@ export function AdminContentDetailPage() {
         <section className="admin-card">
           <h2>مواد النسخة الحالية</h2>
           <p>
-            النص المستخرج قابل للتحرير ما دام مسودة فقط؛ لا يسمح النظام بتغيير
-            نسخة منشورة في مكانها.
+            تُحفظ تعديلات النص المنشور كمسودات تصحيح عند وجود استثناء من
+            السياسة، وتُنشر من تبويب مسودات التصحيح.
           </p>
           <div className="draft-articles">
             {law.articles.map((article) => (
@@ -651,7 +668,8 @@ export function AdminContentDetailPage() {
                 nodes={law.structures}
                 editable={
                   auth.hasPermission("article.update") &&
-                  article.status === "DRAFT"
+                  (article.status === "DRAFT" ||
+                    policies.allows("EDIT_ARTICLE_HISTORY"))
                 }
                 done={(message) => {
                   setMsg(message);
@@ -1104,21 +1122,28 @@ function ArticleEditor({
               setSaving(true);
               setError("");
               try {
-                await apiRequest(`/admin/articles/${article.id}/metadata`, {
-                  method: "PATCH",
-                  body: {
-                    currentLabel: form.get("currentLabel"),
-                    publishedLabel: form.get("publishedLabel"),
-                    sortKey: form.get("sortKey"),
-                    structureNodeId: form.get("structureNodeId") || undefined,
-                    validFrom: form.get("validFrom"),
-                    text: form.get("text"),
-                    reason: form.get("reason"),
+                const result = await apiRequest<{ correctionId?: string }>(
+                  `/admin/articles/${article.id}/metadata`,
+                  {
+                    method: "PATCH",
+                    body: {
+                      currentLabel: form.get("currentLabel"),
+                      publishedLabel: form.get("publishedLabel"),
+                      sortKey: form.get("sortKey"),
+                      structureNodeId: form.get("structureNodeId") || undefined,
+                      validFrom: form.get("validFrom"),
+                      text: form.get("text"),
+                      reason: form.get("reason"),
+                    },
                   },
-                });
+                );
                 setDirty(false);
                 setEditing(false);
-                done(`حُفظ نص المادة ${article.currentLabel}.`);
+                done(
+                  result.correctionId
+                    ? "حُفظت مسودة التصحيح؛ اعتمدها وانشرها من تبويب مسودات التصحيح."
+                    : `حُفظ نص المادة ${article.currentLabel}.`,
+                );
               } catch (error) {
                 setError(
                   error instanceof Error ? error.message : "تعذر حفظ المادة.",
@@ -1561,17 +1586,24 @@ function AnnexEditor({
               setSaving(true);
               setError("");
               try {
-                await apiRequest(`/admin/annexes/${annex.id}`, {
-                  method: "PATCH",
-                  body: {
-                    annexType: f.get("annexType"),
-                    titleAr: f.get("titleAr"),
-                    status: f.get("status"),
-                    reason: f.get("reason"),
+                const result = await apiRequest<{ correctionId?: string }>(
+                  `/admin/annexes/${annex.id}`,
+                  {
+                    method: "PATCH",
+                    body: {
+                      annexType: f.get("annexType"),
+                      titleAr: f.get("titleAr"),
+                      status: f.get("status"),
+                      reason: f.get("reason"),
+                    },
                   },
-                });
+                );
                 setEditing(false);
-                done("حُفظت بيانات الملحق.");
+                done(
+                  result.correctionId
+                    ? "حُفظت مسودة تصحيح الملحق؛ تابعها من تبويب مسودات التصحيح."
+                    : "حُفظت بيانات الملحق.",
+                );
               } catch (error) {
                 setError(
                   error instanceof Error ? error.message : "تعذر الحفظ.",
@@ -2338,20 +2370,31 @@ function WorkflowActions({
   done: (result: { to: string; publishedArticleCount: number }) => void;
   setMessage: (x: string) => void;
 }) {
+  const policies = useOperationPolicies();
+  const skipOrder =
+    policies.allows("LEGISLATION_WORKFLOW_ORDER") &&
+    ["INBOX", "DRAFT", "IN_REVIEW", "APPROVED_FOR_PUBLISHING"].includes(status);
   const actions = [] as Array<{ target: string; label: string }>;
   if (status === "INBOX" && permissions.includes("legislation.prepare"))
     actions.push({ target: "DRAFT", label: "تجهيز كمسودة" });
-  if (status === "DRAFT" && permissions.includes("legislation.submit"))
+  if (
+    (status === "DRAFT" || (skipOrder && status !== "IN_REVIEW")) &&
+    permissions.includes("legislation.submit")
+  )
     actions.push({ target: "IN_REVIEW", label: "إرسال للمراجعة" });
   if (status === "IN_REVIEW" && permissions.includes("legislation.return"))
     actions.push({ target: "DRAFT", label: "إعادة للمسودة" });
-  if (status === "IN_REVIEW" && permissions.includes("legislation.approve"))
+  if (
+    (status === "IN_REVIEW" ||
+      (skipOrder && status !== "APPROVED_FOR_PUBLISHING")) &&
+    permissions.includes("legislation.approve")
+  )
     actions.push({
       target: "APPROVED_FOR_PUBLISHING",
       label: "اعتماد للنشر",
     });
   if (
-    status === "APPROVED_FOR_PUBLISHING" &&
+    (status === "APPROVED_FOR_PUBLISHING" || skipOrder) &&
     permissions.includes("legislation.publish")
   )
     actions.push({ target: "PUBLISHED", label: "نشر" });

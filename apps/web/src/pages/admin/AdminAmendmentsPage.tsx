@@ -1,3 +1,4 @@
+import { useOperationPolicies } from "../../hooks/use-operation-policies";
 import { useRef, useState, type FormEvent } from "react";
 import { Link, useNavigate, useParams } from "react-router-dom";
 import { apiRequest } from "../../api";
@@ -75,6 +76,7 @@ const emptyOperation = (): Operation => ({
   paragraphLocator: "",
 });
 export function AdminAmendmentsPage() {
+  const policies = useOperationPolicies();
   const { tab = "list" } = useParams(),
     auth = useAuth(),
     navigate = useNavigate();
@@ -172,7 +174,10 @@ export function AdminAmendmentsPage() {
                         >
                           عرض
                         </Link>
-                        {doc.status === "DRAFT" &&
+                        {(doc.status === "DRAFT" ||
+                          policies.allows("EDIT_AMENDMENT_REVIEWED")) &&
+                          (doc.status !== "PUBLISHED" ||
+                            auth.hasPermission("amendment.create")) &&
                           Boolean(doc.isActive) &&
                           auth.hasPermission("amendment.update") && (
                             <Link
@@ -212,7 +217,7 @@ export function AmendmentFormDialog({
   onClose,
 }: {
   document?: Document;
-  onDone: () => void;
+  onDone: (id?: string) => void;
   onClose: () => void;
 }) {
   const auth = useAuth();
@@ -238,31 +243,34 @@ export function AmendmentFormDialog({
     setError("");
     const f = new FormData(e.currentTarget);
     try {
-      await apiRequest(`/admin/amendments${doc ? `/${doc.id}` : ""}`, {
-        method: doc ? "PATCH" : "POST",
-        body: {
-          legislationId,
-          titleAr: f.get("titleAr"),
-          sourceDocumentId: f.get("sourceDocumentId"),
-          instrumentLegislationId:
-            f.get("instrumentLegislationId") || undefined,
-          issueDate: f.get("issueDate") || undefined,
-          effectiveFrom: f.get("effectiveFrom"),
-          ...(doc ? { revision: doc.revision, reason: f.get("reason") } : {}),
-          operations: operations.map((op) => ({
-            id: op.id,
-            articleId: op.operationType === "ADD" ? undefined : op.articleId,
-            operationType: op.operationType,
-            citationText: op.citationText,
-            newText: op.newText ?? undefined,
-            newLabel: op.newLabel ?? undefined,
-            sortKey: op.sortKey ?? undefined,
-            paragraphLocator: op.paragraphLocator ?? undefined,
-            replacementFrom: op.replacementFrom ?? undefined,
-          })),
+      const saved = await apiRequest<{ id: string }>(
+        `/admin/amendments${doc ? `/${doc.id}` : ""}`,
+        {
+          method: doc ? "PATCH" : "POST",
+          body: {
+            legislationId,
+            titleAr: f.get("titleAr"),
+            sourceDocumentId: f.get("sourceDocumentId"),
+            instrumentLegislationId:
+              f.get("instrumentLegislationId") || undefined,
+            issueDate: f.get("issueDate") || undefined,
+            effectiveFrom: f.get("effectiveFrom"),
+            ...(doc ? { revision: doc.revision, reason: f.get("reason") } : {}),
+            operations: operations.map((op) => ({
+              id: op.id,
+              articleId: op.operationType === "ADD" ? undefined : op.articleId,
+              operationType: op.operationType,
+              citationText: op.citationText,
+              newText: op.newText ?? undefined,
+              newLabel: op.newLabel ?? undefined,
+              sortKey: op.sortKey ?? undefined,
+              paragraphLocator: op.paragraphLocator ?? undefined,
+              replacementFrom: op.replacementFrom ?? undefined,
+            })),
+          },
         },
-      });
-      onDone();
+      );
+      onDone(saved.id);
     } catch (e) {
       setError(e instanceof Error ? e.message : "تعذر الحفظ.");
     } finally {

@@ -39,13 +39,15 @@ function harness(
 
 describe("central workflow policies", () => {
   it("registers every human separation-of-duties constraint", () => {
-    expect(WORKFLOW_POLICIES.map((policy) => policy.code)).toEqual([
-      "SOURCE_IMPORT_SELF_REVIEW",
-      "LEGISLATION_SELF_APPROVAL",
-      "LEGISLATION_SELF_PUBLICATION",
-      "AMENDMENT_SELF_REVIEW",
-      "AMENDMENT_SELF_PUBLICATION",
-    ]);
+    expect(WORKFLOW_POLICIES.map((policy) => policy.code)).toEqual(
+      expect.arrayContaining([
+        "SOURCE_IMPORT_SELF_REVIEW",
+        "LEGISLATION_SELF_APPROVAL",
+        "LEGISLATION_SELF_PUBLICATION",
+        "AMENDMENT_SELF_REVIEW",
+        "AMENDMENT_SELF_PUBLICATION",
+      ]),
+    );
   });
 
   it.each(WORKFLOW_POLICIES)(

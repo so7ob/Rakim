@@ -4,7 +4,7 @@ export function LegislationDocumentMark() {
       className="legislation-document-mark"
       viewBox="0 0 72 84"
       role="img"
-      aria-label="رمز قانوني لمنصة التشريعات اليمنية"
+      aria-label="رمز قانوني لمنصة رقيم"
     >
       <path d="M36 8v56M22 20h28M17 25l-9 18h18l-9-18Zm38 0-9 18h18l-9-18ZM12 47h10M50 47h10" />
       <path d="M28 16c2-5 14-5 16 0M23 65h26M17 72h38" />

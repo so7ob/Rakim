@@ -135,7 +135,7 @@ describe("relational deletion trash on MariaDB", () => {
 
   it("shows the full impact, trashes a reviewed import and restores its draft graph", async () => {
     const record = await fixture({
-      lawStatus: "APPROVED_FOR_PUBLISHING",
+      lawStatus: "DRAFT",
       jobStatus: "READY",
     });
     const sourceOnly = {
@@ -213,7 +213,7 @@ describe("relational deletion trash on MariaDB", () => {
     expect(restoredImport.is_active).toBe(1);
     expect(restoredImport.status).toBe("REVIEWED");
     expect(restoredLaw.deleted_at).toBeNull();
-    expect(restoredLaw.status).toBe("APPROVED_FOR_PUBLISHING");
+    expect(restoredLaw.status).toBe("DRAFT");
   });
 
   it("keeps an unselected import and source usable when trashing only a draft law", async () => {

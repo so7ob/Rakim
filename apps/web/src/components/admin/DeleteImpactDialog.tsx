@@ -1,3 +1,4 @@
+import { PolicyChecks, type PolicyCheck } from "./PolicyChecks";
 import { useEffect, useRef, useState } from "react";
 import { apiRequest } from "../../api";
 import { useApi } from "../../hooks/use-api";
@@ -23,6 +24,7 @@ interface ImpactGroup {
 interface DeleteImpact {
   root: { kind: string; id: string; label: string };
   allowed: boolean;
+  policyChecks?: PolicyCheck[];
   blockers: string[];
   groups: ImpactGroup[];
   impactToken: string;
@@ -143,6 +145,7 @@ export function DeleteImpactDialog({
               راجع العناصر التالية. يمكن استعادة الدفعة كاملة قبل موعد الإتلاف.
             </p>
           )}
+          <PolicyChecks checks={impact.data?.policyChecks ?? []} />
           {impact.data?.groups.map((group) => {
             const checked = group.required || selected.has(group.key);
             return (
