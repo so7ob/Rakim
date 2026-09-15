@@ -24,6 +24,7 @@ export const expectedMigrations = [
   "ContentCorrections1700000000022",
   "AdditionalOperationPolicies1700000000023",
   "AnnexContentFormats1700000000024",
+  "AnnexReviewWorkflow1700000000025",
 ];
 // Historical development migration (8496639), superseded by CanonicalRbacSecurity
 // 0012. It only synchronized permission data; it is not a replacement for the
@@ -50,7 +51,7 @@ export async function assertSchemaCompatible(query) {
       `DATABASE_SCHEMA_INCOMPATIBLE: الترحيلات الناقصة: ${missing.join(", ") || "لا يوجد"}. ترحيلات غير معروفة لهذه النسخة: ${unknown.join(", ") || "لا يوجد"}. طبّق الترحيلات الناقصة عبر npm run db:migrate قبل التشغيل، أو استخدم إصدار التطبيق المطابق عند وجود ترحيلات غير معروفة. لم يُغيّر فحص التوافق قاعدة البيانات.`,
     );
   const columns = await query(
-    "SELECT table_name tableName,column_name columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND (column_name IN ('deleted_at','edit_revision','cancel_requested_at') OR table_name IN ('password_recovery_requests','deletion_batches','deletion_batch_items','content_corrections','annex_versions') OR (table_name='source_documents' AND column_name='active_sha256'))",
+    "SELECT table_name tableName,column_name columnName FROM information_schema.columns WHERE table_schema=DATABASE() AND (column_name IN ('deleted_at','edit_revision','cancel_requested_at') OR table_name IN ('password_recovery_requests','deletion_batches','deletion_batch_items','content_corrections','annex_versions') OR (table_name='source_documents' AND column_name='active_sha256') OR (table_name='annexes' AND column_name IN ('workflow_revision','reviewed_by','reviewed_at')))",
   );
   for (const [table, column] of [
     ["users", "deleted_at"],
@@ -64,6 +65,9 @@ export async function assertSchemaCompatible(query) {
     ["content_corrections", "base_hash"],
     ["annex_versions", "content_format"],
     ["annex_versions", "text_content"],
+    ["annexes", "workflow_revision"],
+    ["annexes", "reviewed_by"],
+    ["annexes", "reviewed_at"],
     ...[
       "legislation_types",
       "subjects",

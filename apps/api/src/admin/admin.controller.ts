@@ -239,7 +239,9 @@ class UpdateAnnexDto {
   ])
   annexType!: string;
   @IsString() @Length(1, 1000) titleAr!: string;
-  @IsIn(["DRAFT", "PUBLISHED", "REPLACED", "REPEALED"]) status!: string;
+  @IsOptional()
+  @IsIn(["DRAFT", "REVIEWED", "PUBLISHED", "REPLACED", "REPEALED"])
+  status?: string;
   @IsOptional()
   @IsIn(["TEXT", "STRUCTURED_TABLE", "FILE"])
   contentFormat?: string;
@@ -257,6 +259,12 @@ class UpdateAnnexDto {
 class CreateAnnexDto extends UpdateAnnexDto {
   @IsString() declare sourceDocumentId: string;
   @IsDateString() declare validFrom: string;
+}
+class AnnexTransitionDto {
+  @IsIn(["review", "publish", "return"])
+  action!: "review" | "publish" | "return";
+  @IsString() @Length(64, 64) editFingerprint!: string;
+  @IsString() @Length(3, 1000) reason!: string;
 }
 class UpdateRelationDto {
   @IsIn([
@@ -387,8 +395,13 @@ export class AdminController {
   legislation(
     @Param("id") id: string,
     @Query("articleContent") articleContent?: string,
+    @Req() request?: AuthenticatedRequest,
   ) {
-    return this.service.legislation(id, articleContent === "full");
+    return this.service.legislation(
+      id,
+      articleContent === "full",
+      request?.user,
+    );
   }
   @Patch("legislations/:id")
   @Permissions("legislation.update", "legislation.published_metadata.update")
@@ -557,8 +570,45 @@ export class AdminController {
   annex(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
     return this.service.annex(id, request.user!);
   }
+  @Get("annexes/:id/file")
+  @Permissions("legislation.view")
+  async annexFile(
+    @Param("id") id: string,
+    @Query("version") version: string | undefined,
+    @Query("role") role: string | undefined,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const file = await this.service.annexFile(id, version, role);
+    const root = resolve(
+      process.env.DATA_ROOT ?? resolve(process.cwd(), "../../data"),
+    );
+    const target = resolve(root, file.storageKey);
+    if (!target.startsWith(`${root}${sep}`))
+      throw new NotFoundException("مسار الملف غير صالح.");
+    response.setHeader("Content-Type", file.mediaType);
+    response.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(file.fileName)}`,
+    );
+    return new StreamableFile(createReadStream(target));
+  }
+  @Post("annexes/:id/transition")
+  @Permissions("annex.review", "annex.publish", "annex.return")
+  transitionAnnex(
+    @Param("id") id: string,
+    @Body() dto: AnnexTransitionDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.service.transitionAnnex(
+      id,
+      dto.action,
+      dto.editFingerprint,
+      request.user!,
+      dto.reason,
+    );
+  }
   @Post("legislations/:id/annexes")
-  @Permissions("annex.create", "annex.publish", "annex.replace", "annex.repeal")
+  @Permissions("annex.create")
   createAnnex(
     @Param("id") id: string,
     @Body() dto: CreateAnnexDto,

@@ -121,6 +121,31 @@ describe("AnnexContentFields", () => {
       annexTypeLabel: "جدول",
       titleAr: "نصاب زكاة الإبل",
       status: "DRAFT",
+      reviewedBy: null,
+      reviewerName: null,
+      reviewedAt: null,
+      workflowRevision: 1,
+      pendingCorrectionId: null,
+      actions: {
+        review: {
+          available: true,
+          allowed: true,
+          message: null,
+          policyChecks: [],
+        },
+        publish: {
+          available: true,
+          allowed: false,
+          message: "اشتراط مراجعة الملحق قبل النشر",
+          policyChecks: [],
+        },
+        return: {
+          available: false,
+          allowed: false,
+          message: null,
+          policyChecks: [],
+        },
+      },
       editFingerprint: "a".repeat(64),
       version: {
         versionId: "version",
@@ -135,7 +160,10 @@ describe("AnnexContentFields", () => {
           id: "pdf",
           originalName: "القانون.pdf",
           mediaType: "application/pdf",
+          pageCount: 1,
         },
+        contentFile: null,
+        attachment: null,
       },
     };
     const { container } = render(
@@ -146,6 +174,8 @@ describe("AnnexContentFields", () => {
           legislationId="law"
           initial={initial}
           canPublish
+          canReplace
+          canRepeal
         />
       </MemoryRouter>,
     );
@@ -157,5 +187,12 @@ describe("AnnexContentFields", () => {
         ?.value,
     ).toBe(initial.editFingerprint);
     expect(screen.getByRole("cell", { name: "شاة" })).toBeInTheDocument();
+    expect(
+      Array.from(
+        (screen.getByRole("combobox", {
+          name: "الحالة الإدارية",
+        }) as HTMLSelectElement).options,
+      ).map((option) => option.textContent),
+    ).toEqual(["مسودة", "مستبدل", "ملغى"]);
   });
 });

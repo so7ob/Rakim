@@ -604,11 +604,24 @@ export const LEGACY_ROLE_PERMISSION_MAP: Record<string, string[]> = {
 };
 
 import { CRUD_PERMISSION_CATALOG } from "./crud-permission-catalog.js";
+import {
+  ANNEX_WORKFLOW_PERMISSION_CATALOG,
+  ANNEX_WORKFLOW_ROLE_PERMISSION_MAP,
+} from "./annex-workflow-permission-catalog.js";
 export const PERMISSION_CATALOG = [
   ...CANONICAL_PERMISSION_CATALOG,
   ...CRUD_PERMISSION_CATALOG,
+  ...ANNEX_WORKFLOW_PERMISSION_CATALOG,
 ];
-export const ROLE_PERMISSION_MAP = CANONICAL_ROLE_PERMISSION_MAP;
+export const ROLE_PERMISSION_MAP = Object.fromEntries(
+  Object.entries(CANONICAL_ROLE_PERMISSION_MAP).map(([roleCode, permissions]) => [
+    roleCode,
+    [
+      ...permissions,
+      ...(ANNEX_WORKFLOW_ROLE_PERMISSION_MAP[roleCode] ?? []),
+    ],
+  ]),
+) as Readonly<Record<string, string[]>>;
 
 export const permissionDefinition = (code: string) =>
   PERMISSION_CATALOG.find((item) => item.code === code);

@@ -24,6 +24,8 @@ import {
 import { ArticleAssignmentDialog } from "../../components/admin/ArticleAssignmentDialog";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { EntityDetails } from "../../components/admin/EntityDetails";
+import { AnnexContentView } from "../../components/AnnexContentView";
+import { PolicyChecks } from "../../components/admin/PolicyChecks";
 import {
   AnnexContentFields,
   type AnnexDetail,
@@ -81,6 +83,12 @@ interface Detail {
     titleAr: string;
     status: string;
     versionCount: number;
+    reviewedBy: string | null;
+    reviewerName: string | null;
+    reviewedAt: string | null;
+    workflowRevision: number;
+    pendingCorrectionId: string | null;
+    actions: AnnexDetail["actions"];
   }>;
   relations: Array<{
     id: string;
@@ -839,16 +847,14 @@ export function AdminContentDetailPage() {
                   legislationId={law.id}
                   editable={
                     auth.hasPermission("annex.update") &&
-                    (annex.status === "DRAFT" ||
-                      auth.hasPermission(
-                        annex.status === "PUBLISHED"
-                          ? "annex.publish"
-                          : annex.status === "REPLACED"
-                            ? "annex.replace"
-                            : "annex.repeal",
-                      ))
+                    (["DRAFT", "REVIEWED", "PUBLISHED"].includes(
+                      annex.status,
+                    ) ||
+                      (annex.status === "REPLACED" &&
+                        auth.hasPermission("annex.replace")) ||
+                      (annex.status === "REPEALED" &&
+                        auth.hasPermission("annex.repeal")))
                   }
-                  canPublish={auth.hasPermission("annex.publish")}
                   canReplace={auth.hasPermission("annex.replace")}
                   canRepeal={auth.hasPermission("annex.repeal")}
                   done={(message) => {
@@ -862,7 +868,6 @@ export function AdminContentDetailPage() {
                 id={law.id}
                 sources={law.sources}
                 options={annexOptions.data!}
-                canPublish={auth.hasPermission("annex.publish")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
@@ -1552,7 +1557,6 @@ function AnnexEditor({
   sources,
   legislationId,
   editable,
-  canPublish,
   canReplace,
   canRepeal,
   done,
@@ -1562,17 +1566,26 @@ function AnnexEditor({
   sources: Detail["sources"];
   legislationId: string;
   editable: boolean;
-  canPublish: boolean;
   canReplace: boolean;
   canRepeal: boolean;
   done: (message: string) => void;
 }) {
+  const [viewing, setViewing] = useState(false);
   const [editing, setEditing] = useState(false);
+  const [transitioning, setTransitioning] = useState<
+    "review" | "publish" | "return" | null
+  >(null);
+  const [transitionReason, setTransitionReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
-  const detail = useApi<AnnexDetail>(
-    editing ? `/admin/annexes/${annex.id}` : null,
-  );
+  const detail = useApi<AnnexDetail>(`/admin/annexes/${annex.id}`);
+  const statusLabel =
+    annex.status === "REVIEWED" ? "مراجع وجاهز للنشر" : undefined;
+  const actionLabels = {
+    review: "اعتماد المراجعة",
+    publish: "نشر",
+    return: "إعادة إلى المسودة",
+  } as const;
   return (
     <article className="admin-list-card">
       <header>
@@ -1580,18 +1593,54 @@ function AnnexEditor({
           <h3>{annex.titleAr}</h3>
           <p>{annex.versionCount} إصدار محفوظ</p>
         </div>
-        <StatusBadge status={annex.status} />
+        <StatusBadge status={annex.status} label={statusLabel} />
       </header>
       <EntityDetails
         items={[
           { label: "النوع", value: annex.annexTypeLabel },
           {
             label: "الحالة",
-            value: <StatusBadge status={annex.status} />,
+            value: <StatusBadge status={annex.status} label={statusLabel} />,
           },
+          ...(annex.reviewerName
+            ? [
+                { label: "راجع المحتوى", value: annex.reviewerName },
+                {
+                  label: "وقت المراجعة",
+                  value: new Date(annex.reviewedAt!).toLocaleString("ar-YE"),
+                },
+              ]
+            : []),
         ]}
       />
       <div className="admin-entity-actions">
+        <button
+          type="button"
+          className="button secondary"
+          onClick={() => setViewing(true)}
+          disabled={detail.loading || Boolean(detail.error)}
+        >
+          عرض
+        </button>
+        {detail.data &&
+          (["review", "publish", "return"] as const).map((action) => {
+            const decision = detail.data!.actions[action];
+            return decision.available ? (
+              <button
+                key={action}
+                type="button"
+                className={action === "publish" ? "button" : "button secondary"}
+                disabled={!decision.allowed}
+                title={decision.message ?? undefined}
+                onClick={() => {
+                  setTransitionReason("");
+                  setTransitioning(action);
+                }}
+              >
+                {actionLabels[action]}
+              </button>
+            ) : null;
+          })}
         <LifecycleActions
           kind="annexes"
           id={annex.id}
@@ -1599,6 +1648,17 @@ function AnnexEditor({
           onDone={() => done("حُدّثت حالة السجل.")}
         />
       </div>
+      {detail.data?.actions.publish.available && (
+        <PolicyChecks checks={detail.data.actions.publish.policyChecks} />
+      )}
+      {annex.pendingCorrectionId && (
+        <p>
+          لهذا الملحق مسودة تصحيح قائمة. {" "}
+          <Link to={`/ar/admin/content/${legislationId}/corrections`}>
+            عرض مسودة التصحيح
+          </Link>
+        </p>
+      )}
       {editable && (
         <div className="admin-entity-actions">
           <button
@@ -1609,6 +1669,87 @@ function AnnexEditor({
             تعديل الملحق
           </button>
         </div>
+      )}
+      {viewing && detail.data && (
+        <AdminDialog
+          title={`عرض ${detail.data.titleAr}`}
+          description="معاينة النسخة المحفوظة داخل الإدارة."
+          size="large"
+          onClose={() => setViewing(false)}
+        >
+          <AnnexAdminPreview detail={detail.data} />
+        </AdminDialog>
+      )}
+      {transitioning && detail.data && (
+        <AdminDialog
+          title={actionLabels[transitioning]}
+          description={`سيُطبّق الإجراء على «${detail.data.titleAr}» بعد إعادة التحقق من الحالة والسياسات.`}
+          size="large"
+          onClose={() => setTransitioning(null)}
+        >
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/annexes/${annex.id}/transition`, {
+                  body: {
+                    action: transitioning,
+                    editFingerprint: detail.data!.editFingerprint,
+                    reason: transitionReason,
+                  },
+                });
+                setTransitioning(null);
+                detail.retry();
+                done(`تم تنفيذ «${actionLabels[transitioning]}» وتسجيله.`);
+              } catch (reason) {
+                setError(
+                  reason instanceof Error
+                    ? reason.message
+                    : "تعذر تنفيذ الإجراء.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            <AnnexAdminPreview detail={detail.data} compact />
+            {detail.data.actions[transitioning].policyChecks.length > 0 && (
+              <PolicyChecks
+                checks={detail.data.actions[transitioning].policyChecks}
+              />
+            )}
+            <label>
+              سبب الإجراء
+              <input
+                value={transitionReason}
+                onChange={(event) => setTransitionReason(event.target.value)}
+                minLength={3}
+                required
+              />
+            </label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setTransitioning(null)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار التنفيذ…" : actionLabels[transitioning]}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
       )}
       {editing && (
         <AdminDialog
@@ -1629,6 +1770,30 @@ function AnnexEditor({
                 event.preventDefault();
                 const f = new FormData(event.currentTarget);
                 const contentFormat = String(f.get("contentFormat"));
+                const contentChanged = Boolean(
+                  detail.data &&
+                    (String(f.get("titleAr")) !== detail.data.titleAr ||
+                      String(f.get("annexType")) !== detail.data.annexType ||
+                      contentFormat !== detail.data.version.contentFormat ||
+                      String(f.get("sourceDocumentId")) !==
+                        detail.data.version.sourceDocumentId ||
+                      String(f.get("validFrom")) !==
+                        detail.data.version.validFrom ||
+                      (contentFormat === "TEXT" &&
+                        String(f.get("textContent")) !==
+                          (detail.data.version.textContent ?? "")) ||
+                      (contentFormat === "STRUCTURED_TABLE" &&
+                        String(f.get("structuredTableJson")) !==
+                          (detail.data.version.structuredTableJson ?? ""))),
+                );
+                if (
+                  detail.data?.status === "REVIEWED" &&
+                  contentChanged &&
+                  !window.confirm(
+                    "سيعيد تعديل المحتوى هذا الملحق إلى المسودة ويلغي اعتماد المراجعة. هل تريد المتابعة؟",
+                  )
+                )
+                  return;
                 setSaving(true);
                 setError("");
                 try {
@@ -1639,7 +1804,6 @@ function AnnexEditor({
                       body: {
                         annexType: f.get("annexType"),
                         titleAr: f.get("titleAr"),
-                        status: f.get("status"),
                         contentFormat,
                         ...(contentFormat === "TEXT"
                           ? { textContent: f.get("textContent") }
@@ -1655,6 +1819,9 @@ function AnnexEditor({
                           : {}),
                         ...(f.get("effectiveFrom")
                           ? { effectiveFrom: f.get("effectiveFrom") }
+                          : {}),
+                        ...(f.get("status")
+                          ? { status: f.get("status") }
                           : {}),
                         editFingerprint: f.get("editFingerprint"),
                         reason: f.get("reason"),
@@ -1686,7 +1853,6 @@ function AnnexEditor({
                 sources={sources}
                 legislationId={legislationId}
                 initial={detail.data}
-                canPublish={canPublish}
                 canReplace={canReplace}
                 canRepeal={canRepeal}
               />
@@ -1715,17 +1881,83 @@ function AnnexEditor({
   );
 }
 
+function AnnexAdminPreview({
+  detail,
+  compact = false,
+}: {
+  detail: AnnexDetail;
+  compact?: boolean;
+}) {
+  const version = detail.version;
+  const contentFile = version.contentFile ?? version.source;
+  return (
+    <div className="annex-admin-preview">
+      <EntityDetails
+        items={[
+          { label: "النوع", value: detail.annexTypeLabel },
+          {
+            label: "الحالة",
+            value: (
+              <StatusBadge
+                status={detail.status}
+                label={
+                  detail.status === "REVIEWED"
+                    ? "مراجع وجاهز للنشر"
+                    : undefined
+                }
+              />
+            ),
+          },
+          { label: "تاريخ النفاذ", value: version.validFrom },
+          { label: "المصدر", value: version.source.originalName },
+        ]}
+      />
+      <AnnexContentView
+        contentFormat={version.contentFormat}
+        textContent={version.textContent}
+        structuredTable={version.structuredTableJson}
+        fileUrl={`/api/v1/admin/annexes/${detail.id}/file?version=${encodeURIComponent(version.versionId)}`}
+        fileName={contentFile.originalName}
+        mediaType={contentFile.mediaType}
+        pageCount={contentFile.pageCount}
+        title={detail.titleAr}
+        compact={compact}
+      />
+      <p>
+        المصدر الساند: {" "}
+        <a
+          href={`/api/v1/admin/annexes/${detail.id}/file?version=${encodeURIComponent(version.versionId)}&role=source`}
+          target="_blank"
+          rel="noreferrer"
+        >
+          {version.source.originalName}
+        </a>
+      </p>
+      {version.attachment && (
+        <p>
+          المرفق المستقل: {" "}
+          <a
+            href={`/api/v1/admin/annexes/${detail.id}/file?version=${encodeURIComponent(version.versionId)}&role=attachment`}
+            target="_blank"
+            rel="noreferrer"
+          >
+            {version.attachment.originalName}
+          </a>
+        </p>
+      )}
+    </div>
+  );
+}
+
 function NewAnnexEditor({
   id,
   sources,
   options,
-  canPublish,
   done,
 }: {
   id: string;
   sources: Detail["sources"];
   options: AnnexOptions;
-  canPublish: boolean;
   done: (x: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
@@ -1761,7 +1993,6 @@ function NewAnnexEditor({
                   body: {
                     annexType: f.get("annexType"),
                     titleAr: f.get("titleAr"),
-                    status: f.get("status"),
                     contentFormat,
                     validFrom: f.get("validFrom"),
                     sourceDocumentId: f.get("sourceDocumentId"),
@@ -1796,7 +2027,6 @@ function NewAnnexEditor({
               options={options}
               sources={sources}
               legislationId={id}
-              canPublish={canPublish}
             />
             <label>
               سبب الإضافة
