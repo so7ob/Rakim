@@ -11,6 +11,7 @@ import {
   NotFoundException,
 } from "@nestjs/common";
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { DataSource, EntityManager } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
 import { hashPassword } from "../auth/password.js";
@@ -24,6 +25,13 @@ import {
   WORKFLOW_POLICIES,
 } from "./workflow-policies.js";
 import { AuthorizationPolicyService } from "./authorization-policy.service.js";
+import {
+  annexOptionsResponse,
+  annexTypeOption,
+  assertAnnexContentFormat,
+  parseStructuredTable,
+  type AnnexContentFormat,
+} from "../annexes/annex-content.js";
 
 type WorkflowStatus =
   | "INBOX"
@@ -32,6 +40,48 @@ type WorkflowStatus =
   | "APPROVED_FOR_PUBLISHING"
   | "PUBLISHED"
   | "ARCHIVED";
+
+type AnnexWriteInput = {
+  annexType: string;
+  titleAr: string;
+  status: string;
+  contentFormat?: string;
+  textContent?: string;
+  structuredTableJson?: string;
+  sourceDocumentId?: string;
+  validFrom?: string;
+  effectiveFrom?: string;
+  editFingerprint?: string;
+};
+
+const annexFingerprint = (record: Record<string, unknown>) =>
+  createHash("sha256").update(JSON.stringify(record)).digest("hex");
+
+const annexVersionContent = (record: any, version: any) => ({
+  annexType: record.annex_type,
+  titleAr: record.title_ar,
+  status: record.status,
+  versionId: version.id,
+  versionNo: Number(version.version_no),
+  validFrom:
+    version.valid_from instanceof Date
+      ? version.valid_from.toISOString().slice(0, 10)
+      : String(version.valid_from).slice(0, 10),
+  validTo: version.valid_to
+    ? version.valid_to instanceof Date
+      ? version.valid_to.toISOString().slice(0, 10)
+      : String(version.valid_to).slice(0, 10)
+    : null,
+  sourceDocumentId: version.source_document_id,
+  contentFormat: version.content_format,
+  textContent: version.text_content ?? null,
+  structuredTableJson:
+    version.structured_table_json == null
+      ? null
+      : typeof version.structured_table_json === "string"
+        ? version.structured_table_json
+        : JSON.stringify(version.structured_table_json),
+});
 
 const transitions: Record<
   string,
@@ -669,7 +719,10 @@ export class AdminService {
       articles,
       gazette: gazette[0] ?? null,
       structures,
-      annexes,
+      annexes: annexes.map((annex: any) => ({
+        ...annex,
+        annexTypeLabel: annexTypeOption(annex.annexType).labelAr,
+      })),
       relations,
       selectedSubjectIds: selectedSubjects.map(
         (subject: { id: string }) => subject.id,
@@ -1433,56 +1486,252 @@ export class AdminService {
     return { id };
   }
 
+  annexOptions() {
+    return annexOptionsResponse();
+  }
+
+  async annex(id: string, actor: AuthUser) {
+    this.requirePermission(actor, "legislation.view");
+    const [row] = await this.db.query(
+      `SELECT ax.*,av.id version_id,av.version_no,av.valid_from,av.valid_to,av.source_document_id,
+      av.content_format,av.text_content,av.structured_table_json,
+      sd.original_name source_name,sd.media_type source_media_type,sd.byte_size source_byte_size,sd.page_count source_page_count
+      FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id
+      JOIN source_documents sd ON sd.id=av.source_document_id
+      WHERE ax.id=? AND ax.deleted_at IS NULL
+      ORDER BY av.version_no DESC LIMIT 1`,
+      [id],
+    );
+    if (!row) throw new NotFoundException("الملحق غير موجود.");
+    const version = {
+      id: row.version_id,
+      version_no: row.version_no,
+      valid_from: row.valid_from,
+      valid_to: row.valid_to,
+      source_document_id: row.source_document_id,
+      content_format: row.content_format,
+      text_content: row.text_content,
+      structured_table_json: row.structured_table_json,
+    };
+    const content = annexVersionContent(row, version);
+    return {
+      id: row.id,
+      legislationId: row.legislation_id,
+      annexType: row.annex_type,
+      annexTypeLabel: annexTypeOption(row.annex_type).labelAr,
+      titleAr: row.title_ar,
+      status: row.status,
+      version: {
+        ...content,
+        source: {
+          id: row.source_document_id,
+          originalName: row.source_name,
+          mediaType: row.source_media_type,
+          byteSize: Number(row.source_byte_size),
+          pageCount:
+            row.source_page_count == null
+              ? null
+              : Number(row.source_page_count),
+        },
+      },
+      editFingerprint: annexFingerprint(content),
+    };
+  }
+
+  async sourceFile(id: string) {
+    const [source] = await this.db.query(
+      `SELECT storage_key storageKey,original_name fileName,media_type mediaType
+      FROM source_documents WHERE id=? AND is_active=TRUE AND deleted_at IS NULL`,
+      [id],
+    );
+    if (!source?.storageKey)
+      throw new NotFoundException("ملف المصدر غير موجود.");
+    return source as {
+      storageKey: string;
+      fileName: string;
+      mediaType: string;
+    };
+  }
+
+  private async annexSource(
+    manager: EntityManager,
+    legislationId: string,
+    sourceDocumentId: string,
+    format: AnnexContentFormat,
+    existingVersionId?: string,
+  ) {
+    const [source] = await manager.query(
+      `SELECT sd.id,sd.extraction_status,sd.media_type FROM source_documents sd
+      WHERE sd.id=? AND sd.deleted_at IS NULL AND sd.is_active=TRUE AND (
+        EXISTS(SELECT 1 FROM legislation_source_documents lsd WHERE lsd.source_document_id=sd.id AND lsd.legislation_id=?)
+        OR (? IS NOT NULL AND EXISTS(
+          SELECT 1 FROM annex_versions existing_av JOIN annexes existing_ax ON existing_ax.id=existing_av.annex_id
+          WHERE existing_av.id=? AND existing_av.source_document_id=sd.id AND existing_ax.legislation_id=?
+        ))
+      )`,
+      [
+        sourceDocumentId,
+        legislationId,
+        existingVersionId ?? null,
+        existingVersionId ?? null,
+        legislationId,
+      ],
+    );
+    if (!source)
+      throw new BadRequestException(
+        "المصدر المحدد غير فعال أو غير مرتبط بهذا التشريع.",
+      );
+    if (
+      format === "FILE" &&
+      !["application/pdf", "image/png", "image/jpeg"].includes(
+        source.media_type,
+      )
+    ) {
+      const [existingFile] = existingVersionId
+        ? await manager.query(
+            "SELECT id FROM annex_files WHERE annex_version_id=? AND media_type IN ('application/pdf','image/png','image/jpeg') LIMIT 1",
+            [existingVersionId],
+          )
+        : [];
+      if (!existingFile)
+        throw new BadRequestException(
+          "محتوى الملف يجب أن يكون PDF أو PNG أو JPEG.",
+        );
+    }
+    return source;
+  }
+
+  private annexContent(
+    input: AnnexWriteInput,
+    current?: ReturnType<typeof annexVersionContent>,
+  ) {
+    const explicitContent =
+      input.contentFormat !== undefined ||
+      input.textContent !== undefined ||
+      input.structuredTableJson !== undefined;
+    const format = (input.contentFormat ??
+      current?.contentFormat ??
+      (input.structuredTableJson?.trim()
+        ? "STRUCTURED_TABLE"
+        : "FILE")) as AnnexContentFormat;
+    if (explicitContent || !current)
+      assertAnnexContentFormat(input.annexType, format);
+    if (format === "TEXT") {
+      const text = input.textContent ?? current?.textContent ?? "";
+      if (!text.trim()) throw new BadRequestException("نص الملحق مطلوب.");
+      return { format, textContent: text, structuredTableJson: null };
+    }
+    if (format === "STRUCTURED_TABLE") {
+      const raw =
+        input.structuredTableJson ?? current?.structuredTableJson ?? "";
+      const structured = parseStructuredTable(raw);
+      return {
+        format,
+        textContent: null,
+        structuredTableJson: JSON.stringify(structured),
+      };
+    }
+    return { format, textContent: null, structuredTableJson: null };
+  }
+
   async updateAnnex(
     id: string,
-    input: { annexType: string; titleAr: string; status: string },
+    input: AnnexWriteInput,
     actor: AuthUser,
     reason: string,
   ) {
     this.requirePermission(actor, "annex.update");
     this.requireAnnexStatusPermission(actor, input.status);
     return this.db.transaction(async (manager) => {
-      const rows = await manager.query(
+      const [record] = await manager.query(
         "SELECT * FROM annexes WHERE id=? AND deleted_at IS NULL FOR UPDATE",
         [id],
       );
-      if (!rows[0]) throw new NotFoundException("الملحق غير موجود.");
-      if (
-        rows[0].status !== "DRAFT" &&
-        (rows[0].title_ar !== input.titleAr.trim() ||
-          rows[0].annex_type !== input.annexType)
-      )
+      if (!record) throw new NotFoundException("الملحق غير موجود.");
+      const [version] = await manager.query(
+        "SELECT * FROM annex_versions WHERE annex_id=? ORDER BY version_no DESC LIMIT 1 FOR UPDATE",
+        [id],
+      );
+      if (!version) throw new ConflictException("لا توجد نسخة محفوظة للملحق.");
+      const current = annexVersionContent(record, version);
+      const touchesContent = [
+        "contentFormat",
+        "textContent",
+        "structuredTableJson",
+        "sourceDocumentId",
+        "validFrom",
+      ].some((key) => Object.hasOwn(input, key));
+      if (touchesContent && input.editFingerprint !== annexFingerprint(current))
+        throw new ConflictException(
+          "عُدّل الملحق بعد فتحه. أعد تحميله ثم طبّق التغيير على النسخة الأحدث.",
+        );
+      const content = this.annexContent(input, current);
+      const sourceDocumentId =
+        input.sourceDocumentId ?? current.sourceDocumentId;
+      const changed =
+        record.title_ar !== input.titleAr.trim() ||
+        record.annex_type !== input.annexType ||
+        current.contentFormat !== content.format ||
+        current.textContent !== content.textContent ||
+        current.structuredTableJson !== content.structuredTableJson ||
+        current.sourceDocumentId !== sourceDocumentId;
+      if (record.status !== "DRAFT" && changed)
         return stageCorrection(
           manager,
           "ANNEX",
           id,
-          { titleAr: input.titleAr, annexType: input.annexType },
-          new Date().toISOString().slice(0, 10),
+          {
+            titleAr: input.titleAr.trim(),
+            annexType: input.annexType,
+            contentFormat: content.format,
+            textContent: content.textContent,
+            structuredTable:
+              content.structuredTableJson == null
+                ? null
+                : JSON.parse(content.structuredTableJson),
+            sourceDocumentId,
+          },
+          input.effectiveFrom ?? new Date().toISOString().slice(0, 10),
           actor,
           reason,
         );
-      if (rows[0].status !== "DRAFT" && input.status === "DRAFT")
+      if (record.status !== "DRAFT" && input.status === "DRAFT")
         throw new BadRequestException(
           "لا يدعم نموذج الصلاحيات الحالي سحب نشر الملحق إلى مسودة.",
         );
-      if (input.status === "PUBLISHED") {
-        const sources = await manager.query(
-          "SELECT sd.extraction_status FROM annex_versions av JOIN source_documents sd ON sd.id=av.source_document_id WHERE av.annex_id=? AND sd.is_active=TRUE AND sd.deleted_at IS NULL",
-          [id],
-        );
-        if (!sources.length)
-          throw new ConflictException("مصدر فعال مطلوب لنشر الملحق.");
+      const source =
+        touchesContent || input.status === "PUBLISHED"
+          ? await this.annexSource(
+              manager,
+              record.legislation_id,
+              sourceDocumentId,
+              content.format,
+              sourceDocumentId === current.sourceDocumentId
+                ? current.versionId
+                : undefined,
+            )
+          : null;
+      if (input.status === "PUBLISHED")
         await enforceOperationPolicy(
           manager,
           "ANNEX_REVIEWED_SOURCE",
           actor,
-          !sources.some(
-            (source: any) => source.extraction_status === "REVIEWED",
-          ),
+          source!.extraction_status !== "REVIEWED",
           id,
           reason,
         );
-      }
+      if (record.status === "DRAFT" && touchesContent)
+        await manager.query(
+          `UPDATE annex_versions SET valid_from=?,source_document_id=?,content_format=?,text_content=?,structured_table_json=? WHERE id=?`,
+          [
+            input.validFrom ?? current.validFrom,
+            sourceDocumentId,
+            content.format,
+            content.textContent,
+            content.structuredTableJson,
+            version.id,
+          ],
+        );
       await manager.query(
         "UPDATE annexes SET annex_type=?,title_ar=?,status=? WHERE id=?",
         [input.annexType, input.titleAr.trim(), input.status, id],
@@ -1493,8 +1742,8 @@ export class AdminService {
         "UPDATE_ANNEX",
         "ANNEX",
         id,
-        rows[0],
-        input,
+        current,
+        { ...input, ...content, sourceDocumentId },
         reason,
       );
       return { id };
@@ -1503,48 +1752,28 @@ export class AdminService {
 
   async createAnnex(
     legislationId: string,
-    input: {
-      annexType: string;
-      titleAr: string;
-      status: string;
-      sourceDocumentId: string;
-      validFrom: string;
-      structuredTableJson?: string;
-    },
+    input: AnnexWriteInput & { sourceDocumentId: string; validFrom: string },
     actor: AuthUser,
     reason: string,
   ) {
     this.requirePermission(actor, "annex.create");
     this.requireAnnexStatusPermission(actor, input.status);
-    let structured: unknown = null;
-    if (input.structuredTableJson?.trim()) {
-      try {
-        structured = JSON.parse(input.structuredTableJson);
-      } catch {
-        throw new BadRequestException("JSON الجدول المنظم غير صالح.");
-      }
-    }
+    const content = this.annexContent(input);
     const id = randomUUID();
     const versionId = randomUUID();
     await this.db.transaction(async (manager) => {
       await assertActiveReference(manager, "legislations", legislationId);
-
-      const source = await manager.query(
-        "SELECT id FROM source_documents WHERE id=? AND deleted_at IS NULL AND is_active=TRUE",
-        [input.sourceDocumentId],
+      const source = await this.annexSource(
+        manager,
+        legislationId,
+        input.sourceDocumentId,
+        content.format,
       );
-      if (!source[0]) throw new BadRequestException("المصدر المحدد غير موجود.");
       await enforceOperationPolicy(
         manager,
         "ANNEX_REVIEWED_SOURCE",
         actor,
-        input.status === "PUBLISHED" &&
-          !(
-            await manager.query(
-              "SELECT id FROM source_documents WHERE id=? AND extraction_status='REVIEWED'",
-              [input.sourceDocumentId],
-            )
-          ).length,
+        input.status === "PUBLISHED" && source.extraction_status !== "REVIEWED",
         id,
         reason,
       );
@@ -1559,13 +1788,15 @@ export class AdminService {
         ],
       );
       await manager.query(
-        `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,structured_table_json) VALUES (?,?,1,?,?,?)`,
+        `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,content_format,text_content,structured_table_json) VALUES (?,?,1,?,?,?,?,?)`,
         [
           versionId,
           id,
           input.validFrom,
           input.sourceDocumentId,
-          structured == null ? null : JSON.stringify(structured),
+          content.format,
+          content.textContent,
+          content.structuredTableJson,
         ],
       );
       await this.auditWith(
@@ -1575,7 +1806,7 @@ export class AdminService {
         "ANNEX",
         id,
         null,
-        input,
+        { ...input, ...content },
         reason,
       );
     });

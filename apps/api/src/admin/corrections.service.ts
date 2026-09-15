@@ -16,6 +16,11 @@ import {
   evaluateWorkflowPolicy,
   WORKFLOW_POLICIES,
 } from "./workflow-policies.js";
+import {
+  annexTypeOption,
+  assertAnnexContentFormat,
+  parseStructuredTable,
+} from "../annexes/annex-content.js";
 
 export const correctionKinds = {
   ARTICLE: {
@@ -93,7 +98,17 @@ async function target(m: EntityManager, kind: CorrectionKind, id: string) {
         }
       : kind === "LEGISLATION"
         ? { preambleText: version.preamble_text ?? "" }
-        : { titleAr: record.title_ar, annexType: record.annex_type };
+        : {
+            titleAr: record.title_ar,
+            annexType: record.annex_type,
+            contentFormat: version.content_format,
+            textContent: version.text_content ?? null,
+            structuredTable:
+              version.structured_table_json == null
+                ? null
+                : parse(version.structured_table_json),
+            sourceDocumentId: version.source_document_id,
+          };
   return {
     record,
     law,
@@ -112,12 +127,42 @@ function validatePayload(
       ? ["text", "currentLabel", "publishedLabel", "sortKey", "structureNodeId"]
       : kind === "LEGISLATION"
         ? ["preambleText"]
-        : ["titleAr", "annexType"];
+        : [
+            "titleAr",
+            "annexType",
+            "contentFormat",
+            "textContent",
+            "structuredTable",
+            "sourceDocumentId",
+          ];
   if (
     !Object.keys(payload).length ||
     Object.keys(payload).some((key) => !allowed.includes(key))
   )
     throw new BadRequestException("حقول التصحيح غير صالحة.");
+  if (kind === "ANNEX") {
+    annexTypeOption(String(payload.annexType));
+    const format = assertAnnexContentFormat(
+      String(payload.annexType),
+      String(payload.contentFormat),
+    );
+    if (
+      typeof payload.titleAr !== "string" ||
+      !payload.titleAr.trim() ||
+      payload.titleAr.length > 1000 ||
+      typeof payload.sourceDocumentId !== "string" ||
+      !payload.sourceDocumentId
+    )
+      throw new BadRequestException("بيانات تصحيح الملحق غير صالحة.");
+    if (
+      format === "TEXT" &&
+      (typeof payload.textContent !== "string" || !payload.textContent.trim())
+    )
+      throw new BadRequestException("نص الملحق مطلوب.");
+    if (format === "STRUCTURED_TABLE")
+      parseStructuredTable(payload.structuredTable);
+    return;
+  }
   for (const [key, value] of Object.entries(payload)) {
     if (key === "structureNodeId" && value === null) continue;
     if (typeof value !== "string" || (key !== "preambleText" && !value.trim()))
@@ -130,20 +175,6 @@ function validatePayload(
     if (key === "titleAr" && value.length > 1000)
       throw new BadRequestException("عنوان الملحق طويل جداً.");
   }
-  if (
-    payload.annexType &&
-    ![
-      "EXECUTIVE_REGULATION",
-      "TABLE",
-      "FORM",
-      "ANNEX",
-      "MAP",
-      "TARIFF",
-      "LIST",
-      "CORRECTION",
-    ].includes(String(payload.annexType))
-  )
-    throw new BadRequestException("نوع الملحق غير صالح.");
 }
 export async function stageCorrection(
   m: EntityManager,
@@ -159,8 +190,10 @@ export async function stageCorrection(
   requireExactPermission(actor, def.permission);
   if (reason.trim().length < 3)
     throw new BadRequestException("سبب التصحيح مطلوب.");
-  validatePayload(kind, payload);
   const base = await target(m, kind, id);
+  const normalizedPayload =
+    kind === "ANNEX" ? { ...base.content, ...payload } : payload;
+  validatePayload(kind, normalizedPayload);
   if (
     !/^\d{4}-\d{2}-\d{2}$/.test(effectiveFrom) ||
     !Number.isFinite(Date.parse(effectiveFrom)) ||
@@ -180,6 +213,46 @@ export async function stageCorrection(
     id,
     reason,
   );
+  if (kind === "ANNEX") {
+    const [source] = await m.query(
+      `SELECT sd.media_type FROM source_documents sd
+      WHERE sd.id=? AND sd.is_active=TRUE AND sd.deleted_at IS NULL AND (
+        EXISTS(SELECT 1 FROM legislation_source_documents lsd WHERE lsd.source_document_id=sd.id AND lsd.legislation_id=?)
+        OR (?=? AND EXISTS(
+          SELECT 1 FROM annex_versions existing_av WHERE existing_av.id=? AND existing_av.source_document_id=sd.id
+        ))
+      )`,
+      [
+        normalizedPayload.sourceDocumentId,
+        base.lawId,
+        normalizedPayload.sourceDocumentId,
+        base.version.source_document_id,
+        base.version.id,
+      ],
+    );
+    if (!source)
+      throw new BadRequestException(
+        "المصدر المحدد غير فعال أو غير مرتبط بهذا التشريع.",
+      );
+    if (
+      normalizedPayload.contentFormat === "FILE" &&
+      !["application/pdf", "image/png", "image/jpeg"].includes(
+        source.media_type,
+      )
+    ) {
+      const [existingFile] =
+        normalizedPayload.sourceDocumentId === base.version.source_document_id
+          ? await m.query(
+              "SELECT id FROM annex_files WHERE annex_version_id=? AND media_type IN ('application/pdf','image/png','image/jpeg') LIMIT 1",
+              [base.version.id],
+            )
+          : [];
+      if (!existingFile)
+        throw new BadRequestException(
+          "محتوى الملف يجب أن يكون PDF أو PNG أو JPEG.",
+        );
+    }
+  }
   if (
     (
       await m.query(
@@ -204,9 +277,11 @@ export async function stageCorrection(
       base.version.id,
       base.hash,
       JSON.stringify(base.content),
-      JSON.stringify(payload),
+      JSON.stringify(normalizedPayload),
       effectiveFrom,
-      base.version.source_document_id,
+      kind === "ANNEX"
+        ? normalizedPayload.sourceDocumentId
+        : base.version.source_document_id,
       actor.id,
       reason.trim(),
     ],
@@ -216,7 +291,12 @@ export async function stageCorrection(
     actor,
     correctionId,
     "CREATE_CORRECTION",
-    { targetKind: kind, targetId: id, policyChecks: [policyCheck], payload },
+    {
+      targetKind: kind,
+      targetId: id,
+      policyChecks: [policyCheck],
+      payload: normalizedPayload,
+    },
     reason,
   );
   return { id, correctionId, status: "DRAFT", policyChecks: [policyCheck] };
@@ -488,8 +568,8 @@ export class CorrectionsService {
         );
       } else {
         await m.query(
-          `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,valid_to,source_document_id,previous_version_id,structured_table_json)
-        VALUES (?,?,?,?,?,?,?,?)`,
+          `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,valid_to,source_document_id,previous_version_id,content_format,text_content,structured_table_json)
+        VALUES (?,?,?,?,?,?,?,?,?,?)`,
           [
             versionId,
             draft.target_id,
@@ -498,9 +578,11 @@ export class CorrectionsService {
             base.version.valid_to,
             draft.source_document_id,
             base.version.id,
-            base.version.structured_table_json == null
-              ? null
-              : JSON.stringify(parse(base.version.structured_table_json)),
+            payload.contentFormat,
+            payload.contentFormat === "TEXT" ? payload.textContent : null,
+            payload.contentFormat === "STRUCTURED_TABLE"
+              ? JSON.stringify(payload.structuredTable)
+              : null,
           ],
         );
         await m.query("UPDATE annexes SET title_ar=?,annex_type=? WHERE id=?", [

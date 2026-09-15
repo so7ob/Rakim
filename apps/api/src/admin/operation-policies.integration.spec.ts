@@ -10,6 +10,7 @@ import { DeletionService } from "./deletion.service.js";
 import { CorrectionsService } from "./corrections.service.js";
 import { AdminService } from "./admin.service.js";
 import { AuthorizationPolicyService } from "./authorization-policy.service.js";
+import { LegislationsService } from "../legislations/legislations.service.js";
 import {
   workflowPolicy,
   type WorkflowPolicyCode,
@@ -595,17 +596,31 @@ describe("operation policies and correction drafts on MariaDB", () => {
     ).toEqual(["ديباجة أصلية", "ديباجة مصححة"]);
     const annexId = randomUUID();
     await db.query(
+      "INSERT INTO legislation_source_documents (legislation_id,source_document_id,source_role) VALUES (?,?,'SUPPORTING')",
+      [f.lawId, f.sourceId],
+    );
+    await db.query(
       "INSERT INTO annexes (id,legislation_id,annex_type,title_ar,status) VALUES (?,?,'ANNEX','عنوان أصلي','PUBLISHED')",
       [annexId, f.lawId],
     );
     await db.query(
-      "INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id) VALUES (?,?,1,'2026-01-01',?)",
+      "INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,content_format,text_content) VALUES (?,?,1,'2026-01-01',?,'TEXT','محتوى أصلي')",
       [randomUUID(), annexId, f.sourceId],
     );
     const annexDraft = await corrections.create(
       "ANNEX",
       annexId,
-      { titleAr: "عنوان مصحح" },
+      {
+        titleAr: "عنوان مصحح",
+        annexType: "TABLE",
+        contentFormat: "STRUCTURED_TABLE",
+        textContent: null,
+        structuredTable: {
+          columns: ["الفئة", "النصاب"],
+          rows: [["الإبل", 5]],
+        },
+        sourceDocumentId: f.sourceId,
+      },
       "2026-02-01",
       actor,
       "تصحيح الملحق",
@@ -614,6 +629,17 @@ describe("operation policies and correction drafts on MariaDB", () => {
       (await db.query("SELECT title_ar FROM annexes WHERE id=?", [annexId]))[0]
         .title_ar,
     ).toBe("عنوان أصلي");
+    expect(
+      (
+        await db.query(
+          "SELECT content_format,text_content FROM annex_versions WHERE annex_id=? ORDER BY version_no DESC LIMIT 1",
+          [annexId],
+        )
+      )[0],
+    ).toMatchObject({
+      content_format: "TEXT",
+      text_content: "محتوى أصلي",
+    });
     await corrections.transition(
       annexDraft.correctionId,
       "approve",
@@ -631,6 +657,33 @@ describe("operation policies and correction drafts on MariaDB", () => {
         (r: any) => r.id === annexDraft.correctionId,
       ).before.titleAr,
     ).toBe("عنوان أصلي");
+    expect(
+      (
+        await db.query(
+          "SELECT content_format,text_content,structured_table_json FROM annex_versions WHERE annex_id=? ORDER BY version_no DESC LIMIT 1",
+          [annexId],
+        )
+      )[0],
+    ).toMatchObject({
+      content_format: "STRUCTURED_TABLE",
+      text_content: null,
+      structured_table_json: {
+        columns: ["الفئة", "النصاب"],
+        rows: [["الإبل", 5]],
+      },
+    });
+    expect(
+      (await new LegislationsService(db).annexes(f.lawId))[0],
+    ).toMatchObject({
+      annexTypeLabel: "جدول",
+      contentFormat: "STRUCTURED_TABLE",
+      fileId: null,
+      structuredTable: {
+        columns: ["الفئة", "النصاب"],
+        rows: [["الإبل", 5]],
+      },
+      sourceId: f.sourceId,
+    });
   });
   it("enforces publication order as a policy while preserving target permissions", async () => {
     const f = await fixture();

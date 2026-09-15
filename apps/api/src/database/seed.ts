@@ -477,6 +477,10 @@ async function seed() {
         VALUES (?,'ملحق-نموذجي.pdf','sources/demo/sample-annex.pdf','application/pdf',?,?,NOW(3),'مولد محليًا للاختبار',1,'REVIEWED',NOW(3))`,
         [pdfSourceId, pdf.length, hash(pdf)],
       );
+      await m.query(
+        "INSERT INTO legislation_source_documents (legislation_id,source_document_id,source_role) VALUES (?,?,'SUPPORTING')",
+        [ids.laws[0], pdfSourceId],
+      );
       const annexKinds = [
         ["EXECUTIVE_REGULATION", "لائحة تنفيذية نموذجية"],
         ["TABLE", "جدول رسوم نموذجي"],
@@ -490,12 +494,13 @@ async function seed() {
           [annexId, ids.laws[0], annexType, title],
         );
         await m.query(
-          `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,structured_table_json)
-          VALUES (?,?,1,'2020-01-01',?,?)`,
+          `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,content_format,structured_table_json)
+          VALUES (?,?,1,'2020-01-01',?,?,?)`,
           [
             annexVersionId,
             annexId,
             pdfSourceId,
+            annexType === "TABLE" ? "STRUCTURED_TABLE" : "FILE",
             annexType === "TABLE"
               ? JSON.stringify({
                   columns: ["البند", "القيمة"],
