@@ -52,6 +52,14 @@ type DeleteGraph = {
   importIds: string[];
   sourceIds: string[];
   retainedImportLinks: Array<{ id: string; legislationId: string }>;
+  retainedAmendmentLinks: Array<{
+    id: string;
+    instrumentLegislationId: string;
+    instrumentTitle: string;
+    amendedLegislationId: string;
+    sourceDocumentId: string;
+    revision: number;
+  }>;
   token: string;
 };
 
@@ -125,6 +133,11 @@ export class DeletionService {
     itemKinds: string[],
     action: "view" | "delete" | "enable",
   ) {
+    if (itemKinds.includes("amendment_instrument_link")) {
+      requireExactPermission(actor, "amendment.view");
+      if (action === "delete")
+        requireExactPermission(actor, "amendment.update");
+    }
     if (action !== "view") {
       for (const [kind, resource] of [
         ["articles", "article"],
@@ -158,11 +171,13 @@ export class DeletionService {
       );
     this.requireRootPermission(actor, kind, "view");
     const graph = await this.buildGraph(this.db.manager, kind, id, [], actor);
-    this.requireItemPermissions(
-      actor,
-      graph.markItems.map((item) => item.kind),
-      "view",
-    );
+    const itemKinds = [
+      ...graph.markItems.map((item) => item.kind),
+      ...(graph.retainedAmendmentLinks.length
+        ? ["amendment_instrument_link"]
+        : []),
+    ];
+    this.requireItemPermissions(actor, itemKinds, "view");
     const impact = {
       ...this.publicImpact(graph),
       blockers: [...graph.blockers],
@@ -170,11 +185,7 @@ export class DeletionService {
     };
     try {
       this.requireRootPermission(actor, kind, "delete");
-      this.requireItemPermissions(
-        actor,
-        graph.markItems.map((item) => item.kind),
-        "delete",
-      );
+      this.requireItemPermissions(actor, itemKinds, "delete");
     } catch (error) {
       if (!(error instanceof ForbiddenException)) throw error;
       impact.allowed = false;
@@ -331,7 +342,7 @@ export class DeletionService {
           annexVersionIds,
         )
       : [];
-    const amendments = lawIds.length
+    const relatedAmendments = lawIds.length
       ? await m.query(
           `SELECT DISTINCT am.* FROM amendments am
            LEFT JOIN amendment_operations ao ON ao.amendment_id=am.id
@@ -339,17 +350,77 @@ export class DeletionService {
            WHERE am.amended_legislation_id IN (${placeholders(lawIds)})
               OR am.instrument_legislation_id IN (${placeholders(lawIds)})
               OR (ao.target_kind='LEGISLATION' AND ao.target_id IN (${placeholders(lawIds)}))
-              OR target_article.legislation_id IN (${placeholders(lawIds)})`,
+              OR target_article.legislation_id IN (${placeholders(lawIds)}) FOR UPDATE`,
           [...lawIds, ...lawIds, ...lawIds, ...lawIds],
         )
       : [];
-    const amendmentIds = amendments.map((row: any) => String(row.id));
-    const amendmentOperations = amendmentIds.length
+    const relatedAmendmentIds = relatedAmendments.map((row: any) =>
+      String(row.id),
+    );
+    const relatedOperations = relatedAmendmentIds.length
       ? await m.query(
-          `SELECT * FROM amendment_operations WHERE amendment_id IN (${placeholders(amendmentIds)})`,
-          amendmentIds,
+          `SELECT ao.*, COALESCE(a.legislation_id,pa.legislation_id) target_legislation_id
+           FROM amendment_operations ao
+           LEFT JOIN articles a ON ao.target_kind='ARTICLE' AND a.id=ao.target_id
+           LEFT JOIN paragraphs p ON ao.target_kind='PARAGRAPH' AND p.id=ao.target_id
+           LEFT JOIN article_versions pav ON pav.id=p.article_version_id
+           LEFT JOIN articles pa ON pa.id=pav.article_id
+           WHERE ao.amendment_id IN (${placeholders(relatedAmendmentIds)}) FOR UPDATE`,
+          relatedAmendmentIds,
         )
       : [];
+    const modifications = relatedAmendmentIds.length
+      ? await m.query(
+          `SELECT ao.amendment_id,a.legislation_id FROM article_modifications am
+           JOIN amendment_operations ao ON ao.id=am.operation_id
+           JOIN articles a ON a.id=am.article_id
+           WHERE ao.amendment_id IN (${placeholders(relatedAmendmentIds)})`,
+          relatedAmendmentIds,
+        )
+      : [];
+    // An instrument is evidence for an amendment, not the owner of its effects.
+    // Keep external documents and their history; only their nullable instrument
+    // reference is scheduled for detachment when this batch is purged.
+    const operationBelongsTo = (op: any, amendment: any) =>
+      op.target_kind === "LEGISLATION"
+        ? op.target_id === amendment.amended_legislation_id
+        : op.target_legislation_id === amendment.amended_legislation_id ||
+          (op.target_kind === "ARTICLE" &&
+            !op.target_legislation_id &&
+            op.operation_type === "ADD" &&
+            amendment.status !== "PUBLISHED");
+    const retainedAmendments = relatedAmendments.filter(
+      (am: any) =>
+        lawIds.includes(String(am.instrument_legislation_id)) &&
+        !lawIds.includes(String(am.amended_legislation_id)) &&
+        relatedOperations
+          .filter((op: any) => op.amendment_id === am.id)
+          .every((op: any) => operationBelongsTo(op, am)) &&
+        modifications
+          .filter((mod: any) => mod.amendment_id === am.id)
+          .every(
+            (mod: any) => mod.legislation_id === am.amended_legislation_id,
+          ),
+    );
+    const retainedIds = new Set(retainedAmendments.map((am: any) => am.id));
+    const amendments = relatedAmendments.filter(
+      (am: any) => !retainedIds.has(am.id),
+    );
+    const amendmentIds = amendments.map((row: any) => String(row.id));
+    const amendmentOperations = relatedOperations.filter(
+      (op: any) => !retainedIds.has(op.amendment_id),
+    );
+    const retainedAmendmentLinks = retainedAmendments.map((am: any) => ({
+      id: String(am.id),
+      instrumentLegislationId: String(am.instrument_legislation_id),
+      instrumentTitle: String(
+        lawRows.find((law) => law.id === am.instrument_legislation_id)!
+          .title_ar,
+      ),
+      amendedLegislationId: String(am.amended_legislation_id),
+      sourceDocumentId: String(am.source_document_id),
+      revision: Number(am.revision),
+    }));
     const relations = lawIds.length
       ? await m.query(
           `SELECT * FROM legal_relations WHERE source_legislation_id IN (${placeholders(lawIds)}) OR target_legislation_id IN (${placeholders(lawIds)})`,
@@ -445,11 +516,16 @@ export class DeletionService {
         (row: any) => !lawIds.includes(String(row.amended_legislation_id)),
       ) ||
       amendmentOperations.some(
-        (row: any) =>
-          (row.target_kind === "ARTICLE" &&
-            !articleIds.includes(String(row.target_id))) ||
-          (row.target_kind === "LEGISLATION" &&
-            !lawIds.includes(String(row.target_id))),
+        (op: any) =>
+          !operationBelongsTo(
+            op,
+            amendments.find((am: any) => am.id === op.amendment_id),
+          ),
+      ) ||
+      modifications.some(
+        (mod: any) =>
+          !retainedIds.has(mod.amendment_id) &&
+          !lawIds.includes(String(mod.legislation_id)),
       )
     )
       blockers.push(
@@ -747,6 +823,20 @@ export class DeletionService {
         items: relationItems,
       },
       {
+        key: "retained-amendment-links",
+        label: "وثائق تعديل ستبقى محفوظة؛ يُفك ارتباط السند عند الإتلاف",
+        required: true,
+        selectedByDefault: true,
+        selectable: false,
+        count: retainedAmendments.length,
+        items: retainedAmendments.map((am: any) => ({
+          kind: "amendment_instrument_link",
+          id: String(am.id),
+          label: String(am.title_ar),
+          status: String(am.status),
+        })),
+      },
+      {
         key: "imports-and-sources",
         label: "عمليات الاستيراد وملفات المصدر",
         required: !optionalSource,
@@ -893,6 +983,7 @@ export class DeletionService {
           })),
           blockers,
           policyChecks,
+          retainedAmendmentLinks,
         }),
       )
       .digest("hex");
@@ -907,6 +998,7 @@ export class DeletionService {
       importIds: includeOptional ? importIds : [],
       sourceIds: includeOptional ? sourceIds : [],
       retainedImportLinks,
+      retainedAmendmentLinks,
       token,
     };
   }
@@ -945,7 +1037,12 @@ export class DeletionService {
         selectedOptionalKeys,
         actor,
       );
-      const itemKinds = graph.markItems.map((item) => item.kind);
+      const itemKinds = [
+        ...graph.markItems.map((item) => item.kind),
+        ...(graph.retainedAmendmentLinks.length
+          ? ["amendment_instrument_link"]
+          : []),
+      ];
       this.requireItemPermissions(actor, itemKinds, "view");
       this.requireItemPermissions(actor, itemKinds, "delete");
       if (graph.token !== impactToken)
@@ -1025,6 +1122,18 @@ export class DeletionService {
            VALUES (?,'source_import_link',?,'retained-import-links','ارتباط الاستيراد بالتشريع',TRUE,?)`,
           [batchId, link.id, JSON.stringify(link)],
         );
+      for (const link of graph.retainedAmendmentLinks)
+        await m.query(
+          `INSERT INTO deletion_batch_items
+           (batch_id,item_kind,item_id,relation_key,label_ar,is_required,snapshot_json)
+           VALUES (?,'amendment_instrument_link',?,'retained-amendment-links',?,TRUE,?)`,
+          [
+            batchId,
+            link.id,
+            `سند وثيقة التعديل: ${link.instrumentTitle}`.slice(0, 1000),
+            JSON.stringify(link),
+          ],
+        );
 
       for (const item of graph.markItems) {
         if (!item.table || !markableTables.has(item.kind)) continue;
@@ -1068,6 +1177,7 @@ export class DeletionService {
             status: cancelling ? "CANCELLING" : "TRASHED",
             restoreUntil,
             selectedOptionalKeys,
+            retainedAmendmentLinks: graph.retainedAmendmentLinks,
             groups: graph.groups.map((group) => ({
               key: group.key,
               count: group.count,
@@ -1248,6 +1358,22 @@ export class DeletionService {
             throw new ConflictException({
               code: "RESTORE_CONFLICT",
               message: "تغير ارتباط عملية الاستيراد بعد الحذف.",
+            });
+        }
+        if (item.item_kind === "amendment_instrument_link") {
+          const [current] = await m.query(
+            "SELECT instrument_legislation_id FROM amendments WHERE id=? FOR UPDATE",
+            [item.item_id],
+          );
+          if (
+            !current ||
+            current.instrument_legislation_id !==
+              snapshot.instrumentLegislationId
+          )
+            throw new ConflictException({
+              code: "RESTORE_CONFLICT",
+              message:
+                "تغير ارتباط سند وثيقة التعديل بعد الحذف؛ راجع الارتباط قبل الاستعادة.",
             });
         }
       }
