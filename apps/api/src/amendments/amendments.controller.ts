@@ -83,8 +83,8 @@ export class AmendmentsController {
   ) {}
   @Get("candidates")
   @Permissions("amendment.create", "amendment.update")
-  candidates() {
-    return this.service.candidates();
+  candidates(@Req() req: AuthenticatedRequest) {
+    return this.service.candidates(req.user!);
   }
   @Get()
   @Permissions("amendment.view")

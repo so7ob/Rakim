@@ -12,7 +12,10 @@ import { mkdir, unlink, writeFile } from "node:fs/promises";
 import { extname, resolve, sep } from "node:path";
 import type { DataSource } from "typeorm";
 import type { AuthUser } from "../auth/auth.types.js";
-import { assertWorkflowPolicy } from "../admin/workflow-policies.js";
+import {
+  assertWorkflowPolicy,
+  enforceOperationPolicy,
+} from "../admin/workflow-policies.js";
 import { DATABASE } from "../database/database.module.js";
 import { normalizeArabic } from "../search/arabic-normalizer.js";
 
@@ -385,8 +388,16 @@ export class ImportsService {
           "SELECT status,deleted_at FROM legislations WHERE id=? FOR UPDATE",
           [bundle.legislation_id],
         );
-        if (!law || law.deleted_at || !["INBOX", "DRAFT"].includes(law.status))
-          throw new ConflictException("مصادر تشريع غير مسودة محفوظة ولا تعدل.");
+        if (!law || law.deleted_at)
+          throw new NotFoundException("التشريع غير موجود.");
+        await enforceOperationPolicy(
+          m,
+          "EDIT_LEGISLATION_SOURCES",
+          actor,
+          !["INBOX", "DRAFT"].includes(law.status),
+          id,
+          reason,
+        );
       }
       const [source] = await m.query(
         "SELECT id,original_name,media_type,is_active,deleted_at,extraction_status FROM source_documents WHERE id=? FOR UPDATE",

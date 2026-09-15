@@ -122,6 +122,52 @@ describe("deletion batch purge worker", () => {
     );
   });
 
+  it("rejects published purge without persisted policy approval and exact version membership", async () => {
+    await workerDatabase.query(
+      "UPDATE article_versions SET status='PUBLISHED' WHERE article_id=?",
+      [articleId],
+    );
+    await expect(
+      processPurge({ deletionBatchId: batchId }, jobId),
+    ).rejects.toThrow("PUBLISHED_PURGE_POLICY_AUTHORIZATION_REQUIRED");
+    await workerDatabase.query(
+      "UPDATE deletion_batches SET policy_checks_json=? WHERE id=?",
+      [
+        JSON.stringify([
+          {
+            code: "DELETE_ARTICLE_HISTORY",
+            applies: true,
+            allowed: true,
+            result: "USER_PERMISSION_OVERRIDE",
+          },
+        ]),
+        batchId,
+      ],
+    );
+    await expect(
+      processPurge({ deletionBatchId: batchId }, jobId),
+    ).rejects.toThrow("PUBLISHED_PURGE_VERSION_OUTSIDE_BATCH");
+    await workerDatabase.query(
+      `INSERT INTO deletion_batch_items (batch_id,item_kind,item_id,relation_key,label_ar,is_required,snapshot_json)
+      SELECT ?,'article_versions',id,'versions','نسخة منشورة',TRUE,JSON_OBJECT() FROM article_versions WHERE article_id=?`,
+      [batchId, articleId],
+    );
+    // The database trigger still refuses deletion until the marked article is in an approved PURGING batch.
+    await workerDatabase.query(
+      "UPDATE deletion_batches SET status='TRASHED' WHERE id=?",
+      [batchId],
+    );
+    await expect(
+      workerDatabase.query("DELETE FROM article_versions WHERE article_id=?", [
+        articleId,
+      ]),
+    ).rejects.toThrow("PUBLISHED_ARTICLE_VERSION_DELETE_FORBIDDEN");
+    await workerDatabase.query(
+      "UPDATE deletion_batches SET status='PURGING' WHERE id=?",
+      [batchId],
+    );
+  });
+
   it("hard-deletes relational rows and completes the durable purge job", async () => {
     await executeJob({
       id: jobId,

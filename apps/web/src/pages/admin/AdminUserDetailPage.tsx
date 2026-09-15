@@ -2,6 +2,7 @@ import { LifecycleActions } from "../../components/admin/LifecycleActions";
 import { useMemo, useState, type FormEvent } from "react";
 import {
   Navigate,
+  Link,
   useLocation,
   useNavigate,
   useParams,
@@ -57,6 +58,7 @@ interface UserRolesAccess {
   assignable: AssignableRole[];
 }
 interface UserPermissionAccess {
+  policyOverrides?: Array<{ code: string; labelAr: string; reason: string }>;
   directOverrides: Array<{
     code: string;
     effect: "ALLOW" | "DENY";
@@ -357,6 +359,22 @@ export function AdminUserDetailPage() {
       )}
       {tab === "permissions" && (
         <section className="admin-card">
+          <h2>استثناءات السياسات</h2>
+          <p>للقراءة فقط؛ تُدار الاستثناءات من تبويب السياسة.</p>
+          <ul>
+            {permissionAccess.data?.policyOverrides?.map((policy) => (
+              <li key={policy.code}>
+                {policy.labelAr} — {policy.reason}{" "}
+                {auth.hasPermission("workflow_policy.view") && (
+                  <Link
+                    to={`/ar/admin/settings/workflow?policy=${policy.code}`}
+                  >
+                    عرض السياسة
+                  </Link>
+                )}
+              </li>
+            ))}
+          </ul>
           <h2>الصلاحيات المباشرة</h2>
           <p>
             استخدم المنح أو الرفض المباشر للحالات الاستثنائية فقط. استثناءات

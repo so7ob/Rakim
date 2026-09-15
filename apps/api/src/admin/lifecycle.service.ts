@@ -1,3 +1,4 @@
+import { enforceOperationPolicy } from "./workflow-policies.js";
 import {
   BadRequestException,
   ConflictException,
@@ -185,42 +186,86 @@ export class LifecycleService {
           "SELECT * FROM amendments WHERE id=? FOR UPDATE",
           [row.amendment_id],
         );
-        if (!parent || parent.deleted_at || parent.status !== "DRAFT")
+        if (!parent || parent.deleted_at)
           throw new ConflictException(
             "تعدل عناصر وثيقة التعديل في المسودة فقط؛ أعد المراجعة بعد استكمالها.",
           );
+        if (parent.status === "PUBLISHED") {
+          await enforceOperationPolicy(
+            m,
+            action === "delete"
+              ? "DELETE_AMENDMENT_HISTORY"
+              : "ACTIVE_AMENDMENT_OPERATIONS",
+            actor,
+            true,
+            id,
+            reason,
+          );
+        } else if (parent.status !== "DRAFT") {
+          await enforceOperationPolicy(
+            m,
+            "EDIT_AMENDMENT_REVIEWED",
+            actor,
+            true,
+            id,
+            reason,
+          );
+          await m.query(
+            "UPDATE amendments SET status='DRAFT',reviewed_by=NULL,reviewed_at=NULL WHERE id=?",
+            [parent.id],
+          );
+        }
         lawId = parent.amended_legislation_id;
       }
-      if (kind === "synonyms") {
+      if (kind === "synonyms" && action !== "delete") {
         const [set] = await m.query(
           "SELECT status FROM search_synonym_sets WHERE id=? FOR UPDATE",
           [row.set_id],
         );
-        if (set?.status !== "DRAFT")
-          throw new ConflictException(
-            "قاموس منشور أو مؤرشف محفوظ تاريخياً؛ عدّل مجموعة المسودة.",
-          );
+        if (!set) throw new NotFoundException("القاموس غير موجود.");
+        await enforceOperationPolicy(
+          m,
+          "ACTIVE_SYNONYM_HISTORY",
+          actor,
+          set.status !== "DRAFT",
+          id,
+          reason,
+        );
       }
       if (action === "delete")
-        await this.assertDeletable(m, kind, id, row, lawId);
+        await this.assertDeletable(m, kind, id, row, actor, reason, lawId);
       if (action === "enable") {
         if (lawId && kind !== "legislations") {
           const [law] = await m.query(
             "SELECT deleted_at,is_active FROM legislations WHERE id=? FOR UPDATE",
             [lawId],
           );
-          if (!law || law.deleted_at || !law.is_active)
-            throw new ConflictException(
-              "أعد تفعيل التشريع الأصلي قبل تفعيل السجل التابع.",
-            );
+          if (!law || law.deleted_at)
+            throw new ConflictException("التشريع الأصلي محذوف أو غير موجود.");
+          await enforceOperationPolicy(
+            m,
+            "ACTIVE_PARENT",
+            actor,
+            !law.is_active,
+            id,
+            reason,
+          );
         }
         if ((kind === "subjects" || kind === "structure") && row.parent_id) {
           const [parent] = await m.query(
             `SELECT is_active,deleted_at FROM ${t.table} WHERE id=? FOR UPDATE`,
             [row.parent_id],
           );
-          if (!parent || parent.deleted_at || !parent.is_active)
-            throw new ConflictException("أعد تفعيل العنصر الأب أولاً.");
+          if (!parent || parent.deleted_at)
+            throw new ConflictException("العنصر الأب محذوف أو غير موجود.");
+          await enforceOperationPolicy(
+            m,
+            "ACTIVE_PARENT",
+            actor,
+            !parent.is_active,
+            id,
+            reason,
+          );
         }
       }
       // A disabled hierarchy node cannot conceal or orphan active children.
@@ -301,6 +346,8 @@ export class LifecycleService {
     kind: string,
     id: string,
     row: Record<string, any>,
+    actor: AuthUser,
+    reason: string,
     lawId?: string,
   ) {
     if (kind === "legislations" || ["articles", "structure"].includes(kind)) {
@@ -308,10 +355,15 @@ export class LifecycleService {
         "SELECT status FROM legislations WHERE id=? FOR UPDATE",
         [lawId],
       );
-      if (!law || !["INBOX", "DRAFT"].includes(law.status))
-        throw new ConflictException(
-          "الحذف متاح للمسودة والوارد فقط؛ أعد السجل من المراجعة أو استخدم التعطيل الإداري دون إلغاء قانوني.",
-        );
+      if (!law) throw new NotFoundException("التشريع الأصلي غير موجود.");
+      await enforceOperationPolicy(
+        m,
+        "DELETE_LEGISLATION_HISTORY",
+        actor,
+        !["INBOX", "DRAFT"].includes(law.status),
+        id,
+        reason,
+      );
     }
     if (kind === "legislations") {
       for (const [table, field] of [
@@ -329,19 +381,37 @@ export class LifecycleService {
           id,
           "التشريع مرتبط بسجلات أخرى؛ عالج الارتباطات المسموح بها قبل الحذف أو استخدم التعطيل.",
         );
-      await this.blockIf(
+      await enforceOperationPolicy(
         m,
-        "SELECT id FROM legislation_versions WHERE legislation_id=? AND (published_at IS NOT NULL OR workflow_status NOT IN ('INBOX','DRAFT')) LIMIT 1",
+        "DELETE_LEGISLATION_VERSIONS",
+        actor,
+        Boolean(
+          (
+            await m.query(
+              "SELECT id FROM legislation_versions WHERE legislation_id=? AND (published_at IS NOT NULL OR workflow_status NOT IN ('INBOX','DRAFT')) LIMIT 1",
+              [id],
+            )
+          ).length,
+        ),
         id,
-        "للتشريع سجل اعتماد محفوظ يمنع الحذف.",
+        reason,
       );
     }
     if (kind === "articles") {
-      await this.blockIf(
+      await enforceOperationPolicy(
         m,
-        "SELECT id FROM article_versions WHERE article_id=? AND (status<>'DRAFT' OR previous_version_id IS NOT NULL) LIMIT 1",
+        "DELETE_ARTICLE_HISTORY",
+        actor,
+        Boolean(
+          (
+            await m.query(
+              "SELECT id FROM article_versions WHERE article_id=? AND (status<>'DRAFT' OR previous_version_id IS NOT NULL) LIMIT 1",
+              [id],
+            )
+          ).length,
+        ),
         id,
-        "للمادة تاريخ تشريعي محفوظ يمنع الحذف.",
+        reason,
       );
       await this.blockIf(
         m,
@@ -364,24 +434,34 @@ export class LifecycleService {
         "انقل المواد المرتبطة أولاً.",
       );
     }
-    if (kind === "annexes" && row.status !== "DRAFT")
-      throw new ConflictException(
-        "لا يحذف ملحق منشور أو تاريخي؛ استخدم التعطيل الإداري.",
+    for (const [target, code, applies] of [
+      ["annexes", "DELETE_ANNEX_HISTORY", row.status !== "DRAFT"],
+      ["amendments", "DELETE_AMENDMENT_HISTORY", row.status !== "DRAFT"],
+      [
+        "relations",
+        "DELETE_REVIEWED_RELATION",
+        row.review_status === "REVIEWED",
+      ],
+      ["synonym-sets", "DELETE_SYNONYM_HISTORY", row.status !== "DRAFT"],
+      ["pages", "DELETE_PUBLISHED_PAGE", row.status !== "DRAFT"],
+    ] as const)
+      if (kind === target)
+        await enforceOperationPolicy(m, code, actor, applies, id, reason);
+    if (kind === "synonyms") {
+      const [set] = await m.query(
+        "SELECT status FROM search_synonym_sets WHERE id=?",
+        [row.set_id],
       );
-    if (kind === "amendments" && row.status !== "DRAFT")
-      throw new ConflictException(
-        "لا تحذف وثيقة مراجعة أو منشورة؛ يبقى التاريخ التشريعي محفوظاً.",
+      if (!set) throw new NotFoundException("القاموس غير موجود.");
+      await enforceOperationPolicy(
+        m,
+        "DELETE_SYNONYM_HISTORY",
+        actor,
+        set.status !== "DRAFT",
+        id,
+        reason,
       );
-    if (kind === "relations" && row.review_status === "REVIEWED")
-      throw new ConflictException(
-        "العلاقة المعتمدة محفوظة؛ استخدم التعطيل الإداري.",
-      );
-    if (kind === "synonym-sets" && row.status !== "DRAFT")
-      throw new ConflictException("لا تحذف نسخة قاموس منشورة أو مؤرشفة.");
-    if (kind === "pages" && row.status !== "DRAFT")
-      throw new ConflictException(
-        "الصفحة المنشورة أو المؤرشفة محفوظة؛ استخدم التعطيل.",
-      );
+    }
     const refs: Record<string, [string, string][]> = {
       gazettes: [["legislations", "gazette_issue_id"]],
       "synonym-sets": [["search_synonyms", "set_id"]],

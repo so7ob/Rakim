@@ -1,3 +1,5 @@
+import { PERMISSION_CATALOG } from "../common/permission-catalog.js";
+import { stageCorrection } from "./corrections.service.js";
 import { assertEditRevision } from "../common/edit-revision.js";
 import { assertActiveReference, assertParent } from "./record-validation.js";
 import {
@@ -16,6 +18,7 @@ import { normalizeArabic } from "../search/arabic-normalizer.js";
 import { DATABASE } from "../database/database.module.js";
 import {
   assertWorkflowPolicy,
+  enforceOperationPolicy,
   parsePolicyBoolean,
   workflowPolicy,
   WORKFLOW_POLICIES,
@@ -104,10 +107,15 @@ export class AdminService {
         "SELECT status FROM legislations WHERE id=? AND deleted_at IS NULL FOR UPDATE",
         [id],
       );
-      if (!law || !["INBOX", "DRAFT"].includes(law.status))
-        throw new ConflictException(
-          "تدار مصادر التشريع في المسودة؛ المصادر المنشورة محفوظة.",
-        );
+      if (!law) throw new NotFoundException("التشريع غير موجود.");
+      await enforceOperationPolicy(
+        m,
+        "EDIT_LEGISLATION_SOURCES",
+        actor,
+        !["INBOX", "DRAFT"].includes(law.status),
+        id,
+        input.reason,
+      );
       await assertActiveReference(
         m,
         "source_documents",
@@ -167,8 +175,15 @@ export class AdminService {
         "SELECT status FROM legislations WHERE id=? AND deleted_at IS NULL FOR UPDATE",
         [id],
       );
-      if (!law || !["INBOX", "DRAFT"].includes(law.status))
-        throw new ConflictException("لا تفك مصادر تشريع غير مسودة.");
+      if (!law) throw new NotFoundException("التشريع غير موجود.");
+      await enforceOperationPolicy(
+        m,
+        "EDIT_LEGISLATION_SOURCES",
+        actor,
+        !["INBOX", "DRAFT"].includes(law.status),
+        id,
+        reason,
+      );
       const used = await m.query(
         "SELECT id FROM legislation_versions WHERE legislation_id=? AND source_document_id=? UNION ALL SELECT av.id FROM article_versions av JOIN articles a ON a.id=av.article_id WHERE a.legislation_id=? AND av.source_document_id=? LIMIT 1",
         [id, sourceId, id, sourceId],
@@ -688,10 +703,32 @@ export class AdminService {
         "SELECT status FROM legislations WHERE id=? AND deleted_at IS NULL FOR UPDATE",
         [legislationId],
       );
-      if (!law || !["INBOX", "DRAFT"].includes(law.status))
+      if (!law) throw new NotFoundException("التشريع غير موجود.");
+      if (
+        !["INBOX", "DRAFT", "IN_REVIEW", "APPROVED_FOR_PUBLISHING"].includes(
+          law.status,
+        )
+      )
         throw new ConflictException(
-          "تضاف المادة في مسودة فقط؛ أعد التشريع من المراجعة أو أنشئ وثيقة تعديل للمنشور.",
+          "إضافة مادة إلى المنشور تنفذ بوثيقة تعديل تحفظ التاريخ.",
         );
+      await enforceOperationPolicy(
+        m,
+        "CREATE_ARTICLE_REVIEWED",
+        actor,
+        !["INBOX", "DRAFT"].includes(law.status),
+        legislationId,
+        input.reason,
+      );
+      if (law.status === "APPROVED_FOR_PUBLISHING") {
+        await m.query("UPDATE legislations SET status='IN_REVIEW' WHERE id=?", [
+          legislationId,
+        ]);
+        await m.query(
+          "UPDATE legislation_versions SET workflow_status='IN_REVIEW' WHERE legislation_id=? ORDER BY version_no DESC LIMIT 1",
+          [legislationId],
+        );
+      }
       const [source] = await m.query(
         "SELECT id FROM source_documents WHERE id=? AND deleted_at IS NULL AND is_active=TRUE FOR UPDATE",
         [input.sourceDocumentId],
@@ -799,8 +836,14 @@ export class AdminService {
         !["DRAFT", "IN_REVIEW"].includes(item.lawStatus) ||
         item.versionStatus !== "DRAFT"
       )
-        throw new ConflictException(
-          "لا يعدّل نص منشور أو تاريخي في مكانه؛ أنشئ إصدار تعديل جديدًا.",
+        return stageCorrection(
+          manager,
+          "ARTICLE",
+          id,
+          { text: text.trim() },
+          new Date().toISOString().slice(0, 10),
+          actor,
+          reason,
         );
       await manager.query(
         "UPDATE article_versions SET text_original=?,text_structured=?,text_normalized=? WHERE id=?",
@@ -855,8 +898,20 @@ export class AdminService {
         !["INBOX", "DRAFT", "IN_REVIEW"].includes(item.lawStatus) ||
         item.versionStatus !== "DRAFT"
       )
-        throw new ConflictException(
-          "بيانات نسخة مادة منشورة لا تعدل في مكانها.",
+        return stageCorrection(
+          manager,
+          "ARTICLE",
+          id,
+          {
+            text: input.text.trim(),
+            currentLabel: input.currentLabel,
+            publishedLabel: input.publishedLabel,
+            sortKey: input.sortKey,
+            structureNodeId: input.structureNodeId || null,
+          },
+          input.validFrom,
+          actor,
+          reason,
         );
       await manager.query("SELECT id FROM legislations WHERE id=? FOR UPDATE", [
         item.legislation_id,
@@ -1397,23 +1452,37 @@ export class AdminService {
         (rows[0].title_ar !== input.titleAr.trim() ||
           rows[0].annex_type !== input.annexType)
       )
-        throw new ConflictException(
-          "بيانات الملحق المنشور محفوظة؛ أضف ملحقاً بديلاً واربط مصدره.",
+        return stageCorrection(
+          manager,
+          "ANNEX",
+          id,
+          { titleAr: input.titleAr, annexType: input.annexType },
+          new Date().toISOString().slice(0, 10),
+          actor,
+          reason,
         );
       if (rows[0].status !== "DRAFT" && input.status === "DRAFT")
         throw new BadRequestException(
           "لا يدعم نموذج الصلاحيات الحالي سحب نشر الملحق إلى مسودة.",
         );
-      if (
-        input.status === "PUBLISHED" &&
-        !(
-          await manager.query(
-            "SELECT av.id FROM annex_versions av JOIN source_documents sd ON sd.id=av.source_document_id WHERE av.annex_id=? AND sd.is_active=TRUE AND sd.deleted_at IS NULL AND sd.extraction_status='REVIEWED' LIMIT 1",
-            [id],
-          )
-        ).length
-      )
-        throw new ConflictException("لا ينشر ملحق دون مصدر مدقق وفعال.");
+      if (input.status === "PUBLISHED") {
+        const sources = await manager.query(
+          "SELECT sd.extraction_status FROM annex_versions av JOIN source_documents sd ON sd.id=av.source_document_id WHERE av.annex_id=? AND sd.is_active=TRUE AND sd.deleted_at IS NULL",
+          [id],
+        );
+        if (!sources.length)
+          throw new ConflictException("مصدر فعال مطلوب لنشر الملحق.");
+        await enforceOperationPolicy(
+          manager,
+          "ANNEX_REVIEWED_SOURCE",
+          actor,
+          !sources.some(
+            (source: any) => source.extraction_status === "REVIEWED",
+          ),
+          id,
+          reason,
+        );
+      }
       await manager.query(
         "UPDATE annexes SET annex_type=?,title_ar=?,status=? WHERE id=?",
         [input.annexType, input.titleAr.trim(), input.status, id],
@@ -1465,16 +1534,20 @@ export class AdminService {
         [input.sourceDocumentId],
       );
       if (!source[0]) throw new BadRequestException("المصدر المحدد غير موجود.");
-      if (
+      await enforceOperationPolicy(
+        manager,
+        "ANNEX_REVIEWED_SOURCE",
+        actor,
         input.status === "PUBLISHED" &&
-        !(
-          await manager.query(
-            "SELECT id FROM source_documents WHERE id=? AND extraction_status='REVIEWED'",
-            [input.sourceDocumentId],
-          )
-        ).length
-      )
-        throw new ConflictException("لا ينشر ملحق دون مصدر مدقق.");
+          !(
+            await manager.query(
+              "SELECT id FROM source_documents WHERE id=? AND extraction_status='REVIEWED'",
+              [input.sourceDocumentId],
+            )
+          ).length,
+        id,
+        reason,
+      );
       await manager.query(
         `INSERT INTO annexes (id,legislation_id,annex_type,title_ar,status) VALUES (?,?,?,?,?)`,
         [
@@ -1673,8 +1746,16 @@ export class AdminService {
         "لا يملك دورك صلاحية تصحيح بيانات وصفية منشورة.",
       );
     if (!isDraft && input.preambleText !== undefined)
-      throw new ConflictException(
-        "لا تعدّل ديباجة منشورة في مكانها؛ أنشئ إصدارًا تشريعيًا جديدًا.",
+      return this.db.transaction((manager) =>
+        stageCorrection(
+          manager,
+          "LEGISLATION",
+          id,
+          { preambleText: input.preambleText },
+          new Date().toISOString().slice(0, 10),
+          actor,
+          reason,
+        ),
       );
     const fields: Record<string, string> = {
       displayCode: "display_code",
@@ -1844,12 +1925,41 @@ export class AdminService {
         [id],
       );
       const law = rows[0];
-      if (law && !law.is_active)
-        throw new ConflictException(
-          "أعد تفعيل التشريع إدارياً قبل متابعة الاعتماد.",
-        );
+
       if (!law) throw new NotFoundException("التشريع غير موجود.");
-      const rule = transitions[`${String(law.status)}:${target}`];
+      await enforceOperationPolicy(
+        manager,
+        "ACTIVE_LEGISLATION_WORKFLOW",
+        actor,
+        !law.is_active,
+        id,
+        reason,
+      );
+      let rule = transitions[`${String(law.status)}:${target}`];
+      if (
+        !rule &&
+        ["INBOX", "DRAFT", "IN_REVIEW", "APPROVED_FOR_PUBLISHING"].includes(
+          law.status,
+        ) &&
+        ["IN_REVIEW", "APPROVED_FOR_PUBLISHING", "PUBLISHED"].includes(
+          target,
+        ) &&
+        law.status !== target
+      ) {
+        const destination = Object.entries(transitions).find(([key]) =>
+          key.endsWith(`:${target}`),
+        )![1];
+        this.requirePermission(actor, destination.permission);
+        await enforceOperationPolicy(
+          manager,
+          "LEGISLATION_WORKFLOW_ORDER",
+          actor,
+          true,
+          id,
+          reason,
+        );
+        rule = destination;
+      }
       if (!rule)
         throw new ConflictException(
           `لا يمكن الانتقال من ${law.status} إلى ${target}.`,
@@ -1867,7 +1977,7 @@ export class AdminService {
         target === "APPROVED_FOR_PUBLISHING" ||
         target === "PUBLISHED"
       )
-        await this.assertPublishable(manager, id, target);
+        await this.assertPublishable(manager, id, target, actor, reason);
       const publishedArticleCount =
         target === "PUBLISHED"
           ? await this.publishCurrentDraftArticles(manager, id)
@@ -2000,8 +2110,19 @@ export class AdminService {
       ]),
     );
     return {
+      categories: [
+        { code: "DELETION", labelAr: "الحذف" },
+        { code: "EDITING", labelAr: "التحرير" },
+        { code: "PUBLICATION", labelAr: "المراجعة والنشر" },
+        { code: "ACTIVATION", labelAr: "التفعيل" },
+      ],
       policies: WORKFLOW_POLICIES.map((policy) => ({
         ...policy,
+        requiredPermissionLabels: policy.requiredPermissions.map(
+          (code) =>
+            PERMISSION_CATALOG.find((permission) => permission.code === code)
+              ?.labelAr ?? code,
+        ),
         enabled: parsePolicyBoolean(values.get(policy.settingKey), true),
         userIds: canManageOverrides
           ? grants
@@ -2387,8 +2508,65 @@ export class AdminService {
         [id],
       );
       if (!before) throw new NotFoundException("المرادف غير موجود.");
-      if (before.status !== "DRAFT")
-        throw new ConflictException("تعدل نسخة القاموس في المسودة فقط.");
+      if (before.status !== "DRAFT") {
+        await enforceOperationPolicy(
+          m,
+          "EDIT_SYNONYM_HISTORY",
+          actor,
+          true,
+          id,
+          "إنشاء مسودة تصحيح القاموس",
+        );
+        await m.query(
+          "SELECT id FROM search_synonym_sets ORDER BY version_no FOR UPDATE",
+        );
+        if (
+          (
+            await m.query(
+              "SELECT id FROM search_synonym_sets WHERE status='DRAFT' AND deleted_at IS NULL",
+            )
+          ).length
+        )
+          throw new ConflictException(
+            "توجد مسودة قاموس؛ استكملها قبل إنشاء نسخة تصحيح.",
+          );
+        const setId = randomUUID(),
+          correctedId = randomUUID();
+        await m.query(
+          "INSERT INTO search_synonym_sets (id,version_no,status) SELECT ?,COALESCE(MAX(version_no),0)+1,'DRAFT' FROM search_synonym_sets",
+          [setId],
+        );
+        const terms = await m.query(
+          "SELECT * FROM search_synonyms WHERE set_id=? AND deleted_at IS NULL",
+          [before.set_id],
+        );
+        for (const entry of terms)
+          await m.query(
+            "INSERT INTO search_synonyms (id,set_id,term_ar,synonym_ar,is_active) VALUES (?,?,?,?,?)",
+            [
+              entry.id === id ? correctedId : randomUUID(),
+              setId,
+              entry.id === id ? term.trim() : entry.term_ar,
+              entry.id === id ? synonym.trim() : entry.synonym_ar,
+              entry.is_active,
+            ],
+          );
+        await this.auditWith(
+          m,
+          actor.id,
+          "CREATE_SYNONYM_CORRECTION",
+          "SEARCH_SYNONYM",
+          id,
+          {
+            setId: before.set_id,
+            term: before.term_ar,
+            synonym: before.synonym_ar,
+          },
+          { setId, correctedId, term, synonym },
+          "إنشاء مسودة تصحيح القاموس",
+        );
+        return { id: correctedId, setId, status: "DRAFT" };
+      }
       await m.query(
         "UPDATE search_synonyms SET term_ar=?,synonym_ar=? WHERE id=?",
         [term.trim(), synonym.trim(), id],
@@ -2452,8 +2630,14 @@ export class AdminService {
         [id],
       );
       if (!rows[0]) throw new NotFoundException("المرادف غير موجود.");
-      if (rows[0].status !== "DRAFT")
-        throw new ConflictException("لا تعدّل نسخة قاموس منشورة.");
+      await enforceOperationPolicy(
+        manager,
+        "DELETE_SYNONYM_HISTORY",
+        actor,
+        rows[0].status !== "DRAFT",
+        id,
+        "حذف مرادف من القاموس",
+      );
       await manager.query(
         "UPDATE search_synonyms SET deleted_at=NOW(3),is_active=FALSE WHERE id=?",
         [id],
@@ -2610,6 +2794,8 @@ export class AdminService {
     manager: EntityManager,
     id: string,
     target: string,
+    actor: AuthUser,
+    reason: string,
   ) {
     const rows = await manager.query(
       `SELECT l.title_ar,l.type_id,l.authority_id,l.year,l.effective_from,
@@ -2631,15 +2817,17 @@ export class AdminService {
       throw new ConflictException(
         "البيانات الأساسية والمصدر مطلوبة قبل المتابعة.",
       );
-    if (
+    if (target === "PUBLISHED" && !item.effective_from)
+      throw new ConflictException("تاريخ النفاذ مطلوب قبل النشر.");
+    await enforceOperationPolicy(
+      manager,
+      "LEGISLATION_REVIEWED_SOURCE",
+      actor,
       target === "PUBLISHED" &&
-      (!item.effective_from ||
-        item.extractionStatus !== "REVIEWED" ||
-        !item.reviewedAt)
-    )
-      throw new ConflictException(
-        "لا ينشر التشريع قبل تحديد النفاذ ومراجعة المصدر والنص المستخرج أو OCR.",
-      );
+        (item.extractionStatus !== "REVIEWED" || !item.reviewedAt),
+      id,
+      reason,
+    );
   }
 
   private async publishCurrentDraftArticles(

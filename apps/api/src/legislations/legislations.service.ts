@@ -328,7 +328,13 @@ export class LegislationsService {
     av.id versionId,av.version_no versionNo,DATE_FORMAT(av.valid_from,'%Y-%m-%d') validFrom,DATE_FORMAT(av.valid_to,'%Y-%m-%d') validTo,
     COALESCE(af.id,sd.id) fileId,COALESCE(af.original_name,sd.original_name) fileName,COALESCE(af.media_type,sd.media_type) mediaType,COALESCE(af.byte_size,sd.byte_size) byteSize,COALESCE(af.page_count,sd.page_count) pageCount,af.ocr_status ocrStatus,
     av.structured_table_json structuredTable
-    FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id JOIN source_documents sd ON sd.id=av.source_document_id AND sd.is_active=TRUE AND sd.deleted_at IS NULL LEFT JOIN annex_files af ON af.annex_version_id=av.id
+    FROM annexes ax JOIN annex_versions av ON av.annex_id=ax.id JOIN source_documents sd ON sd.id=av.source_document_id AND sd.is_active=TRUE AND sd.deleted_at IS NULL LEFT JOIN annex_files af ON af.annex_version_id=CASE WHEN EXISTS (
+      SELECT 1 FROM content_corrections c WHERE c.target_kind='ANNEX' AND c.published_version_id=av.id AND c.status='PUBLISHED'
+    ) THEN (SELECT file_version.id FROM annex_versions file_version
+      WHERE file_version.annex_id=av.annex_id AND file_version.version_no<=av.version_no
+      AND file_version.source_document_id=av.source_document_id
+      AND EXISTS(SELECT 1 FROM annex_files existing_file WHERE existing_file.annex_version_id=file_version.id)
+      ORDER BY file_version.version_no DESC LIMIT 1) ELSE av.id END
     WHERE ax.legislation_id=? AND ax.is_active=TRUE AND ax.deleted_at IS NULL AND ax.status IN ('PUBLISHED','REPLACED','REPEALED')
     AND av.valid_from<=CURRENT_DATE() ORDER BY av.valid_from DESC`,
       [id],

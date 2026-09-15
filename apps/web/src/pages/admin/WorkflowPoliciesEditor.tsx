@@ -1,4 +1,6 @@
-import { useState, type FormEvent } from "react";
+import { useSearchParams } from "react-router-dom";
+import { AdminTabs } from "../../components/admin/AdminTabs";
+import { useEffect, useState, type FormEvent } from "react";
 import { apiRequest } from "../../api";
 import { ErrorPanel, LoadingCards } from "../../components/StatePanel";
 import { useApi } from "../../hooks/use-api";
@@ -13,6 +15,9 @@ interface WorkflowPolicy {
   labelAr: string;
   descriptionAr: string;
   requiredRole: string;
+  requiredPermissions: string[];
+  requiredPermissionLabels: string[];
+  category: string;
   enabled: boolean;
   userIds: string[];
 }
@@ -26,6 +31,7 @@ interface PolicyUser {
 
 interface WorkflowPolicyState {
   policies: WorkflowPolicy[];
+  categories: Array<{ code: string; labelAr: string }>;
   users: PolicyUser[];
 }
 
@@ -39,6 +45,7 @@ const roleLabels: Record<string, string> = {
 
 export function WorkflowPoliciesEditor() {
   const auth = useAuth();
+  const [params, setParams] = useSearchParams();
   const canUpdate = auth.hasPermission("workflow_policy.update");
   const canManageOverrides = auth.hasPermission(
     "workflow_policy.overrides.manage",
@@ -50,6 +57,10 @@ export function WorkflowPoliciesEditor() {
   const [overridesDirty, setOverridesDirty] = useState(false);
   const [saving, setSaving] = useState(false);
   const [pendingCode, setPendingCode] = useState("");
+  useEffect(() => {
+    setPolicyDirty(false);
+    setOverridesDirty(false);
+  }, [params.toString()]);
 
   if (state.loading) return <LoadingCards />;
   if (state.error || !state.data)
@@ -60,12 +71,27 @@ export function WorkflowPoliciesEditor() {
       />
     );
 
-  const activeCode = selectedCode || state.data.policies[0]?.code || "";
+  const linkedPolicy = state.data.policies.find(
+    (p) => p.code === params.get("policy"),
+  );
+  const category =
+    linkedPolicy?.category ?? params.get("category") ?? "PUBLICATION";
+  const categoryPolicies = state.data.policies.filter(
+    (p) => p.category === category,
+  );
+  const activeCode =
+    linkedPolicy?.code ||
+    (categoryPolicies.some((p) => p.code === selectedCode)
+      ? selectedCode
+      : categoryPolicies[0]?.code) ||
+    state.data.policies[0]?.code ||
+    "";
   const policy = state.data.policies.find((item) => item.code === activeCode);
   if (!policy) return null;
 
   const selectPolicy = (code: string) => {
     setSelectedCode(code);
+    setParams({ policy: code });
     setPolicyDirty(false);
     setOverridesDirty(false);
     setMessage("");
@@ -126,21 +152,30 @@ export function WorkflowPoliciesEditor() {
     <section className="admin-card workflow-policies-card">
       <header className="workflow-policies-heading">
         <div>
-          <span className="eyebrow dark">فصل واجبات قابل للإدارة</span>
+          <span className="eyebrow dark">ضوابط العمليات والاستثناءات</span>
           <h2>سياسات وضوابط سير العمل</h2>
         </div>
         <p>
           عطّل السياسة عالميًا أو اختر مستخدمين محددين لتجاوزها. الاستثناء لا
-          يمنح الدور المطلوب لتنفيذ العملية.
+          يمنح صلاحيات تنفيذ العملية.
         </p>
       </header>
 
+      <AdminTabs
+        label="تصنيفات السياسات"
+        secondary
+        activeTo={`/ar/admin/settings/workflow?category=${category}`}
+        items={state.data.categories.map((item) => ({
+          label: item.labelAr,
+          to: `/ar/admin/settings/workflow?category=${item.code}`,
+        }))}
+      />
       <div
         className="workflow-policy-tabs"
         role="tablist"
         aria-label="سياسات سير العمل"
       >
-        {state.data.policies.map((item, index) => (
+        {categoryPolicies.map((item, index) => (
           <button
             key={item.code}
             type="button"
@@ -220,8 +255,8 @@ export function WorkflowPoliciesEditor() {
             <fieldset className="policy-user-selector">
               <legend>المستخدمون الممنوحون استثناء تجاوز هذه السياسة</legend>
               <p>
-                الدور المرتبط بالعملية:{" "}
-                {roleLabels[policy.requiredRole] ?? policy.requiredRole}
+                صلاحيات العملية (الاستثناء لا يمنحها):{" "}
+                {policy.requiredPermissionLabels.join("، ")}
               </p>
               <div className="policy-user-options">
                 {state.data.users.map((user) => (

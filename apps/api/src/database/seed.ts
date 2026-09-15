@@ -110,6 +110,7 @@ async function seed() {
       await m.query("SET FOREIGN_KEY_CHECKS=0");
       const tables = [
         "service_heartbeats",
+        "content_corrections",
         "deletion_batch_items",
         "deletion_batches",
         "user_permission_overrides",

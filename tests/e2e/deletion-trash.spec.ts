@@ -112,13 +112,13 @@ test("previews, trashes and restores an import graph and handles a repeated hash
     await db.query(
       `INSERT INTO legislations
        (id,type_id,authority_id,year,title_ar,status,legal_status,verification_level)
-       VALUES (?,?,?,?,?,'IN_REVIEW','UNKNOWN','D')`,
+       VALUES (?,?,?,?,?,'DRAFT','UNKNOWN','D')`,
       [lawId, base.typeId, base.authorityId, 2026, `تشريع سلة ${unique}`],
     );
     await db.query(
       `INSERT INTO legislation_versions
        (id,legislation_id,version_no,workflow_status,content_kind,source_document_id,valid_from)
-       VALUES (?,?,1,'IN_REVIEW','EXTRACTED',?,'2026-01-01')`,
+       VALUES (?,?,1,'DRAFT','EXTRACTED',?,'2026-01-01')`,
       [randomUUID(), lawId, sourceId],
     );
     const nodeId = randomUUID();

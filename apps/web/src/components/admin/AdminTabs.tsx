@@ -11,10 +11,12 @@ export function AdminTabs({
   items,
   label,
   secondary = false,
+  activeTo,
 }: {
   items: AdminTabItem[];
   label: string;
   secondary?: boolean;
+  activeTo?: string;
 }) {
   return (
     <nav
@@ -22,7 +24,16 @@ export function AdminTabs({
       aria-label={label}
     >
       {items.map((item) => (
-        <NavLink key={item.to} to={item.to} end={item.end}>
+        <NavLink
+          key={item.to}
+          to={item.to}
+          end={item.end}
+          className={
+            activeTo === undefined
+              ? undefined
+              : () => (activeTo === item.to ? "active" : "")
+          }
+        >
           {item.label}
           {item.count !== undefined && <span>{item.count}</span>}
         </NavLink>

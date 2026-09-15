@@ -68,7 +68,7 @@ async function bootstrap() {
   );
   app.useGlobalFilters(app.get(ApiExceptionFilter));
   const swagger = new DocumentBuilder()
-    .setTitle("واجهة منصة التشريعات اليمنية")
+    .setTitle("واجهة منصة رقيم")
     .setDescription("REST/JSON API محلية. البيانات التجريبية غير رسمية.")
     .setVersion("1.0")
     .build();
@@ -76,7 +76,7 @@ async function bootstrap() {
     "api/docs",
     app,
     SwaggerModule.createDocument(app, swagger),
-    { customSiteTitle: "توثيق API — منصة التشريعات اليمنية" },
+    { customSiteTitle: "توثيق API — منصة رقيم" },
   );
   const port = Number(process.env.PORT ?? 4000);
   await app.listen(port, "0.0.0.0");

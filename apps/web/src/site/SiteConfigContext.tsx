@@ -22,7 +22,7 @@ export interface SiteConfig {
 }
 const defaults: SiteConfig = {
   settings: {
-    "branding.site_name": "منصة التشريعات اليمنية",
+    "branding.site_name": "منصة رقيم",
     "branding.country_name": "الجمهورية اليمنية",
     "branding.subtitle": "مرجع قانوني غير رسمي",
     "branding.logo_url": "",

@@ -1,4 +1,9 @@
 import {
+  evaluateWorkflowPolicy,
+  type PolicyCheck,
+  type WorkflowPolicyCode,
+} from "./workflow-policies.js";
+import {
   BadRequestException,
   ConflictException,
   ForbiddenException,
@@ -40,6 +45,7 @@ type DeleteGraph = {
   root: { kind: "legislations" | "imports"; id: string; label: string };
   groups: ImpactGroup[];
   blockers: string[];
+  policyChecks: PolicyCheck[];
   optionalKeys: string[];
   markItems: MarkItem[];
   lawIds: string[];
@@ -119,6 +125,18 @@ export class DeletionService {
     itemKinds: string[],
     action: "view" | "delete" | "enable",
   ) {
+    if (action !== "view") {
+      for (const [kind, resource] of [
+        ["articles", "article"],
+        ["structure_nodes", "structure"],
+        ["annexes", "annex"],
+        ["amendments", "amendment"],
+        ["amendment_operations", "amendment"],
+        ["legal_relations", "relation"],
+      ] as const)
+        if (itemKinds.includes(kind))
+          requireExactPermission(actor, `${resource}.${action}`);
+    }
     if (itemKinds.includes("legislations"))
       requireExactPermission(actor, `legislation.${action}`);
     if (
@@ -139,13 +157,30 @@ export class DeletionService {
         "معاينة الحذف العلائقي متاحة للتشريعات والاستيرادات.",
       );
     this.requireRootPermission(actor, kind, "view");
-    const graph = await this.buildGraph(this.db.manager, kind, id, []);
+    const graph = await this.buildGraph(this.db.manager, kind, id, [], actor);
     this.requireItemPermissions(
       actor,
       graph.markItems.map((item) => item.kind),
       "view",
     );
-    const impact = this.publicImpact(graph);
+    const impact = {
+      ...this.publicImpact(graph),
+      blockers: [...graph.blockers],
+      permissionBlockers: [] as string[],
+    };
+    try {
+      this.requireRootPermission(actor, kind, "delete");
+      this.requireItemPermissions(
+        actor,
+        graph.markItems.map((item) => item.kind),
+        "delete",
+      );
+    } catch (error) {
+      if (!(error instanceof ForbiddenException)) throw error;
+      impact.allowed = false;
+      impact.permissionBlockers.push(error.message);
+      impact.blockers.push(error.message);
+    }
     if (kind === "legislations" && !actor.permissions.includes("source.view"))
       return {
         ...impact,
@@ -182,6 +217,7 @@ export class DeletionService {
       root: graph.root,
       allowed: graph.blockers.length === 0,
       blockers: graph.blockers,
+      policyChecks: graph.policyChecks,
       groups: graph.groups,
       impactToken: graph.token,
       restoreDays: 30,
@@ -193,6 +229,7 @@ export class DeletionService {
     kind: "legislations" | "imports",
     id: string,
     selectedOptionalKeys: string[],
+    actor: AuthUser,
   ): Promise<DeleteGraph> {
     const unknown = selectedOptionalKeys.filter(
       (key) => key !== "imports-and-sources",
@@ -340,25 +377,84 @@ export class DeletionService {
     const sourceIds = sourceRows.map((row: any) => String(row.id));
 
     const blockers: string[] = [];
-    const publishedLaw = lawRows.find((row) =>
-      ["PUBLISHED", "AMENDED", "REPEALED", "SUSPENDED"].includes(row.status),
-    );
-    if (publishedLaw)
-      blockers.push(
-        `التشريع «${publishedLaw.title_ar}» منشور أو ذو أثر قانوني محفوظ.`,
+    const policyChecks: PolicyCheck[] = [];
+    const check = async (
+      code: WorkflowPolicyCode,
+      applies: boolean,
+      message: string,
+    ) => {
+      const decision = await evaluateWorkflowPolicy(
+        m,
+        code,
+        actor,
+        applies,
+        message,
       );
-    if (
+      policyChecks.push(decision);
+      if (!decision.allowed) blockers.push(message);
+    };
+    await check(
+      "DELETE_LEGISLATION_HISTORY",
+      lawRows.some((row) => !["INBOX", "DRAFT"].includes(row.status)),
+      "التشريع خارج المسودة أو ذو أثر قانوني محفوظ.",
+    );
+    await check(
+      "DELETE_LEGISLATION_VERSIONS",
       legislationVersions.some(
-        (row: any) => row.published_at || row.workflow_status === "PUBLISHED",
+        (row: any) =>
+          row.published_at || !["INBOX", "DRAFT"].includes(row.workflow_status),
+      ),
+      "توجد نسخة تشريع منشورة أو مؤرخة لا يجوز حذفها.",
+    );
+    await check(
+      "DELETE_ARTICLE_HISTORY",
+      articleVersions.some(
+        (row: any) => row.status !== "DRAFT" || row.previous_version_id,
+      ),
+      "توجد نسخة مادة منشورة أو تاريخية لا يجوز حذفها.",
+    );
+    await check(
+      "DELETE_ANNEX_HISTORY",
+      annexes.some((row: any) => row.status !== "DRAFT"),
+      "يوجد ملحق منشور أو تاريخي مرتبط بالتشريع.",
+    );
+    await check(
+      "DELETE_AMENDMENT_HISTORY",
+      amendments.some((row: any) => row.status !== "DRAFT"),
+      "توجد وثيقة تعديل مراجعة أو منشورة مرتبطة بالتشريع.",
+    );
+    await check(
+      "DELETE_REVIEWED_RELATION",
+      relations.some((row: any) => row.review_status === "REVIEWED"),
+      "توجد علاقة قانونية معتمدة مرتبطة بالتشريع.",
+    );
+    if (
+      relations.some(
+        (row: any) =>
+          !row.deleted_at &&
+          (!lawIds.includes(String(row.source_legislation_id)) ||
+            !lawIds.includes(String(row.target_legislation_id))),
       )
     )
-      blockers.push("توجد نسخة تشريع منشورة أو مؤرخة لا يجوز حذفها.");
-    if (articleVersions.some((row: any) => row.status !== "DRAFT"))
-      blockers.push("توجد نسخة مادة منشورة أو تاريخية لا يجوز حذفها.");
-    if (annexes.some((row: any) => row.status !== "DRAFT"))
-      blockers.push("يوجد ملحق منشور أو تاريخي مرتبط بالتشريع.");
-    if (amendments.some((row: any) => row.status === "PUBLISHED"))
-      blockers.push("توجد وثيقة تعديل منشورة مرتبطة بالتشريع.");
+      blockers.push(
+        "توجد علاقة قانونية بسجل خارج مجموعة الحذف؛ عالج الارتباط أولاً.",
+      );
+    // Do not delete an amendment that also changes legislation outside this batch.
+    if (
+      amendments.some(
+        (row: any) => !lawIds.includes(String(row.amended_legislation_id)),
+      ) ||
+      amendmentOperations.some(
+        (row: any) =>
+          (row.target_kind === "ARTICLE" &&
+            !articleIds.includes(String(row.target_id))) ||
+          (row.target_kind === "LEGISLATION" &&
+            !lawIds.includes(String(row.target_id))),
+      )
+    )
+      blockers.push(
+        "وثيقة التعديل تؤثر على سجل خارج مجموعة الحذف؛ عالج الارتباط أولاً.",
+      );
 
     const sourceBlockers: string[] = [];
     if (sourceIds.length) {
@@ -491,6 +587,14 @@ export class DeletionService {
         sourceBlockers.push(
           "أحد ملفات المصدر مثبت في نسخة أو ملحق أو تعديل خارج مجموعة الحذف.",
         );
+    }
+    if (sourceIds.length) {
+      const outsideCorrections = await m.query(
+        `SELECT id FROM content_corrections WHERE source_document_id IN (${placeholders(sourceIds)}) ${lawIds.length ? `AND legislation_id NOT IN (${placeholders(lawIds)})` : ""} LIMIT 1`,
+        [...sourceIds, ...lawIds],
+      );
+      if (outsideCorrections.length)
+        sourceBlockers.push("المصدر مستخدم في تصحيح خارج مجموعة الحذف.");
     }
     if (includeOptional) blockers.push(...sourceBlockers);
 
@@ -788,6 +892,7 @@ export class DeletionService {
             blockers: group.blockers,
           })),
           blockers,
+          policyChecks,
         }),
       )
       .digest("hex");
@@ -795,6 +900,7 @@ export class DeletionService {
       root: { kind, id, label: rootLabel },
       groups,
       blockers,
+      policyChecks,
       optionalKeys: ["imports-and-sources"],
       markItems,
       lawIds,
@@ -832,7 +938,13 @@ export class DeletionService {
       requireExactPermission(actor, "source.delete");
 
     return this.db.transaction(async (m) => {
-      const graph = await this.buildGraph(m, kind, id, selectedOptionalKeys);
+      const graph = await this.buildGraph(
+        m,
+        kind,
+        id,
+        selectedOptionalKeys,
+        actor,
+      );
       const itemKinds = graph.markItems.map((item) => item.kind);
       this.requireItemPermissions(actor, itemKinds, "view");
       this.requireItemPermissions(actor, itemKinds, "delete");
@@ -847,6 +959,7 @@ export class DeletionService {
           code: "DELETE_BLOCKED_BY_PUBLISHED_HISTORY",
           message: "لا يمكن حذف المجموعة لوجود محتوى منشور أو علاقة محفوظة.",
           blockers: graph.blockers,
+          policyChecks: graph.policyChecks,
         });
       if (kind === "imports" && graph.lawIds.length)
         requireExactPermission(actor, "legislation.delete");
@@ -866,8 +979,8 @@ export class DeletionService {
       );
       await m.query(
         `INSERT INTO deletion_batches
-         (id,root_kind,root_id,root_label,status,actor_id,reason,impact_token,selected_optional_json,summary_json,restore_until)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?)`,
+         (id,root_kind,root_id,root_label,status,actor_id,reason,impact_token,selected_optional_json,summary_json,restore_until,policy_checks_json)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?)`,
         [
           batchId,
           kind,
@@ -888,6 +1001,7 @@ export class DeletionService {
             blockers: [],
           }),
           restoreUntil,
+          JSON.stringify(graph.policyChecks),
         ],
       );
       for (const item of graph.markItems)
@@ -950,6 +1064,7 @@ export class DeletionService {
           batchId,
           JSON.stringify({
             root: graph.root,
+            policyChecks: graph.policyChecks,
             status: cancelling ? "CANCELLING" : "TRASHED",
             restoreUntil,
             selectedOptionalKeys,
