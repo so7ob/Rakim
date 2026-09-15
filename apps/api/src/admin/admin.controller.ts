@@ -266,7 +266,7 @@ class AnnexTransitionDto {
   @IsString() @Length(64, 64) editFingerprint!: string;
   @IsString() @Length(3, 1000) reason!: string;
 }
-class UpdateRelationDto {
+class RelationInputDto {
   @IsIn([
     "AMENDS",
     "REPEALS",
@@ -281,7 +281,16 @@ class UpdateRelationDto {
   @IsOptional() @IsString() scopeText?: string;
   @IsOptional() @IsString() effectiveFrom?: string;
   @IsOptional() @IsString() sourceDocumentId?: string;
-  @IsIn(["UNREVIEWED", "REVIEWED", "REJECTED"]) reviewStatus!: string;
+  @IsString() @Length(3, 1000) reason!: string;
+}
+class UpdateRelationDto extends RelationInputDto {
+  @IsString() @Length(64, 64) editFingerprint!: string;
+}
+class CreateRelationDto extends RelationInputDto {}
+class RelationTransitionDto {
+  @IsIn(["review", "publish", "reject", "return"])
+  action!: "review" | "publish" | "reject" | "return";
+  @IsString() @Length(64, 64) editFingerprint!: string;
   @IsString() @Length(3, 1000) reason!: string;
 }
 class ReferenceItemDto {
@@ -618,7 +627,7 @@ export class AdminController {
     return this.service.createAnnex(id, input, request.user!, reason);
   }
   @Patch("relations/:id")
-  @Permissions("relation.update", "relation.review")
+  @Permissions("relation.update")
   updateRelation(
     @Param("id") id: string,
     @Body() dto: UpdateRelationDto,
@@ -628,14 +637,34 @@ export class AdminController {
     return this.service.updateRelation(id, input, request.user!, reason);
   }
   @Post("legislations/:id/relations")
-  @Permissions("relation.create", "relation.review")
+  @Permissions("relation.create")
   createRelation(
     @Param("id") id: string,
-    @Body() dto: UpdateRelationDto,
+    @Body() dto: CreateRelationDto,
     @Req() request: AuthenticatedRequest,
   ) {
     const { reason, ...input } = dto;
     return this.service.createRelation(id, input, request.user!, reason);
+  }
+  @Post("relations/:id/transition")
+  @Permissions(
+    "relation.review",
+    "relation.publish",
+    "relation.reject",
+    "relation.return",
+  )
+  transitionRelation(
+    @Param("id") id: string,
+    @Body() dto: RelationTransitionDto,
+    @Req() request: AuthenticatedRequest,
+  ) {
+    return this.service.transitionRelation(
+      id,
+      dto.action,
+      dto.editFingerprint,
+      request.user!,
+      dto.reason,
+    );
   }
   @Get("audit")
   @Permissions("audit.view")

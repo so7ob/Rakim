@@ -5,6 +5,7 @@ import { useApi } from "../hooks/use-api";
 interface Relation {
   id: string;
   relationType: string;
+  relationTypeLabel: string;
   scopeText: string;
   effectiveFrom: string;
   reviewStatus: string;
@@ -15,15 +16,6 @@ interface Relation {
   relatedYear: number;
   evidenceSource: string;
 }
-const labels: Record<string, string> = {
-  AMENDS: "يعدّل",
-  REPEALS: "يلغي",
-  IMPLEMENTS: "ينفّذ",
-  BASED_ON: "يستند إلى",
-  REFERS_TO: "يحيل إلى",
-  CORRECTS: "يصحح",
-  TOPICALLY_RELATED: "مرتبط موضوعيًا",
-};
 export function RelatedLegislationsPage() {
   const { id } = useParams();
   const { data, error, loading, retry } = useApi<Relation[]>(
@@ -70,15 +62,10 @@ export function RelatedLegislationsPage() {
                   <div className="relation-label" role="cell">
                     <span>
                       {relation.direction === "OUTGOING"
-                        ? (labels[relation.relationType] ??
-                          relation.relationType)
-                        : `علاقة واردة: ${labels[relation.relationType] ?? relation.relationType}`}
+                        ? relation.relationTypeLabel
+                        : `علاقة واردة: ${relation.relationTypeLabel}`}
                     </span>
-                    <small>
-                      {relation.reviewStatus === "REVIEWED"
-                        ? "مراجعة مكتملة"
-                        : "غير مراجع"}
-                    </small>
+                    <small>منشورة</small>
                   </div>
                   <h2 role="cell">
                     <Link to={`/ar/legislations/${relation.relatedId}`}>

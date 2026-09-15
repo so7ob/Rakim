@@ -842,18 +842,20 @@ describe("complete administrative lifecycle on MariaDB", () => {
       {
         relationType: "TOPICALLY_RELATED",
         targetLegislationId: target,
-        reviewStatus: "UNREVIEWED",
       },
       actor,
       "إنشاء علاقة",
     );
+    const relationDetail = (
+      await admin.legislation(id, false, actor)
+    ).relations.find((item: any) => item.id === relation.id);
     await admin.updateRelation(
       relation.id,
       {
         relationType: "TOPICALLY_RELATED",
         targetLegislationId: target,
-        reviewStatus: "UNREVIEWED",
         scopeText: "نطاق معدل",
+        editFingerprint: relationDetail.editFingerprint,
       },
       actor,
       "تحرير علاقة",
@@ -1019,8 +1021,7 @@ describe("complete administrative lifecycle on MariaDB", () => {
         annexType: "TABLE",
         titleAr: "جدول دورة النشر المعدل",
         contentFormat: "STRUCTURED_TABLE",
-        structuredTableJson:
-          '{"columns":["الحقل"],"rows":[["قيمة معدلة"]]}',
+        structuredTableJson: '{"columns":["الحقل"],"rows":[["قيمة معدلة"]]}',
         sourceDocumentId: sourceId,
         validFrom: "2026-01-02",
         editFingerprint: reviewed.editFingerprint,
@@ -1166,6 +1167,218 @@ describe("complete administrative lifecycle on MariaDB", () => {
     expect((await publicLaws.list({ q: input.q })).meta.total).toBe(0);
     await lifecycle.change("articles", a.id, "enable", actor, "استعادة الظهور");
     expect((await search.search(input)).meta.total).toBe(1);
+  });
+  it("reviews, publishes, rejects and returns legal relations through guarded transitions", async () => {
+    const sourceLawId = await law(marker + " relation source");
+    await published(sourceLawId);
+    const [targetLaw] = await db.query(
+      `SELECT id FROM legislations
+       WHERE id<>? AND is_active=TRUE AND deleted_at IS NULL
+         AND status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
+       LIMIT 1`,
+      [sourceLawId],
+    );
+    const targetLawId = targetLaw.id as string;
+    const created = await admin.createRelation(
+      sourceLawId,
+      {
+        relationType: "REFERS_TO",
+        targetLegislationId: targetLawId,
+        sourceDocumentId: sourceId,
+        scopeText: "المادة 5",
+      },
+      actor,
+      "إنشاء مسودة علاقة",
+    );
+    const draft = (
+      await admin.legislation(sourceLawId, false, actor)
+    ).relations.find((item: any) => item.id === created.id);
+    expect(draft).toMatchObject({
+      relationTypeLabel: "يحيل إلى",
+      reviewStatus: "UNREVIEWED",
+      actions: {
+        review: { available: true, allowed: true },
+        publish: { available: false },
+      },
+    });
+    expect(await publicLaws.relations(sourceLawId)).toHaveLength(0);
+    await expect(
+      admin.transitionRelation(
+        created.id,
+        "publish",
+        draft.editFingerprint,
+        publisher,
+        "منع تجاوز المراجعة",
+      ),
+    ).rejects.toThrow(/حالة العلاقة/);
+    const reviewerOnly = {
+      ...reviewer,
+      permissions: ["relation.review", "relation.reject", "relation.return"],
+    };
+    await admin.transitionRelation(
+      created.id,
+      "review",
+      draft.editFingerprint,
+      reviewerOnly,
+      "اعتماد مراجعة العلاقة",
+    );
+    const reviewed = (
+      await admin.legislation(sourceLawId, false, actor)
+    ).relations.find((item: any) => item.id === created.id);
+    expect(reviewed).toMatchObject({
+      reviewStatus: "REVIEWED",
+      reviewedBy: reviewer.id,
+      actions: { publish: { available: true, allowed: true } },
+    });
+    expect(await publicLaws.relations(sourceLawId)).toHaveLength(0);
+    await expect(
+      admin.updateRelation(
+        created.id,
+        {
+          relationType: "REFERS_TO",
+          targetLegislationId: targetLawId,
+          sourceDocumentId: sourceId,
+          editFingerprint: reviewed.editFingerprint,
+        },
+        actor,
+        "منع تعديل العلاقة المراجعة",
+      ),
+    ).rejects.toThrow(/إعادة العلاقة إلى المسودة/);
+    await expect(
+      admin.transitionRelation(
+        created.id,
+        "publish",
+        reviewed.editFingerprint,
+        reviewerOnly,
+        "اختبار صلاحية النشر",
+      ),
+    ).rejects.toThrow(/الصلاحية/);
+    const publisherOnly = {
+      ...publisher,
+      permissions: ["relation.publish", "relation.return"],
+    };
+    await admin.transitionRelation(
+      created.id,
+      "publish",
+      reviewed.editFingerprint,
+      publisherOnly,
+      "نشر العلاقة المراجعة",
+    );
+    const publicRelations = await publicLaws.relations(targetLawId);
+    expect(publicRelations).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: created.id,
+          direction: "INCOMING",
+          relationTypeLabel: "يحيل إلى",
+        }),
+      ]),
+    );
+    const publishedRelation = (
+      await admin.legislation(sourceLawId, false, actor)
+    ).relations.find((item: any) => item.id === created.id);
+    const searchTerm = `علاقة${marker.replaceAll("-", "")}`;
+    await db.query(
+      `INSERT INTO search_documents
+       (id,entity_type,entity_id,legislation_id,title_ar,text_literal,text_normalized,verification_level,metadata_json)
+       VALUES (?,'RELATION',?,?,?,?,?,'D',JSON_OBJECT('kind','relation'))`,
+      [
+        randomUUID(),
+        created.id,
+        sourceLawId,
+        searchTerm,
+        searchTerm,
+        searchTerm,
+      ],
+    );
+    const relationSearch = new MariaDbSearchProvider(db);
+    const searchInput = {
+      q: searchTerm,
+      page: 1,
+      pageSize: 10,
+      historical: false,
+      mode: "all" as const,
+    };
+    expect((await relationSearch.search(searchInput)).meta.total).toBe(1);
+    await expect(
+      admin.transitionRelation(
+        created.id,
+        "return",
+        publishedRelation.editFingerprint,
+        reviewerOnly,
+        "منع سحب المنشور دون صلاحية النشر",
+      ),
+    ).rejects.toThrow(/الصلاحية/);
+    await admin.transitionRelation(
+      created.id,
+      "return",
+      publishedRelation.editFingerprint,
+      publisherOnly,
+      "إعادة المنشور إلى المسودة",
+    );
+    expect(await publicLaws.relations(sourceLawId)).toHaveLength(0);
+    expect((await relationSearch.search(searchInput)).meta.total).toBe(0);
+    const returned = (
+      await admin.legislation(sourceLawId, false, actor)
+    ).relations.find((item: any) => item.id === created.id);
+    await expect(
+      admin.updateRelation(
+        created.id,
+        {
+          relationType: "REFERS_TO",
+          targetLegislationId: targetLawId,
+          sourceDocumentId: sourceId,
+          editFingerprint: draft.editFingerprint,
+        },
+        actor,
+        "منع تعديل بصمة قديمة",
+      ),
+    ).rejects.toThrow(/تغيرت العلاقة/);
+    await admin.updateRelation(
+      created.id,
+      {
+        relationType: "REFERS_TO",
+        targetLegislationId: targetLawId,
+        sourceDocumentId: sourceId,
+        scopeText: "المادة 6",
+        editFingerprint: returned.editFingerprint,
+      },
+      actor,
+      "تعديل المسودة المعادة",
+    );
+    const updated = (
+      await admin.legislation(sourceLawId, false, actor)
+    ).relations.find((item: any) => item.id === created.id);
+    await admin.transitionRelation(
+      created.id,
+      "reject",
+      updated.editFingerprint,
+      reviewerOnly,
+      "رفض العلاقة",
+    );
+    const rejected = (
+      await admin.legislation(sourceLawId, false, actor)
+    ).relations.find((item: any) => item.id === created.id);
+    expect(rejected.reviewStatus).toBe("REJECTED");
+    await admin.transitionRelation(
+      created.id,
+      "return",
+      rejected.editFingerprint,
+      reviewerOnly,
+      "إعادة المرفوض إلى المسودة",
+    );
+    const audit = await db.query(
+      "SELECT action,reason FROM audit_logs WHERE entity_type='LEGAL_RELATION' AND entity_id=? ORDER BY occurred_at",
+      [created.id],
+    );
+    expect(audit.map((item: any) => item.action)).toEqual(
+      expect.arrayContaining([
+        "REVIEW_LEGAL_RELATION",
+        "PUBLISH_LEGAL_RELATION",
+        "RETURN_LEGAL_RELATION_TO_DRAFT",
+        "REJECT_LEGAL_RELATION",
+      ]),
+    );
   });
   it("edits personal records with ownership enforced even for direct service calls", async () => {
     const search = await personal.saveSearch(actor.id, "بحث " + marker, {

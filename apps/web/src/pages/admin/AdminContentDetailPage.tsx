@@ -62,6 +62,7 @@ interface Detail {
     authorities: Array<{ id: string; name: string }>;
     subjects: Array<{ id: string; name: string }>;
     legislationOptions: Array<{ id: string; name: string }>;
+    relationTypes: Array<{ code: string; labelAr: string }>;
   };
   sources: Array<{
     id: string;
@@ -99,6 +100,19 @@ interface Detail {
     effectiveFrom: string | null;
     sourceDocumentId: string | null;
     reviewStatus: string;
+    relationTypeLabel: string;
+    reviewedBy: string | null;
+    reviewerName: string | null;
+    reviewedAt: string | null;
+    publishedBy: string | null;
+    publisherName: string | null;
+    publishedAt: string | null;
+    workflowRevision: number;
+    editFingerprint: string;
+    actions: Record<
+      "review" | "publish" | "reject" | "return",
+      { available: boolean; allowed: boolean; message: string | null }
+    >;
   }>;
   articles: Array<{
     id: string;
@@ -890,13 +904,12 @@ export function AdminContentDetailPage() {
                 key={relation.id}
                 relation={relation}
                 options={law.references.legislationOptions}
+                relationTypes={law.references.relationTypes}
                 sources={law.sources}
                 editable={
                   auth.hasPermission("relation.update") &&
-                  (relation.reviewStatus === "UNREVIEWED" ||
-                    auth.hasPermission("relation.review"))
+                  relation.reviewStatus === "UNREVIEWED"
                 }
-                canReview={auth.hasPermission("relation.review")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
@@ -907,8 +920,8 @@ export function AdminContentDetailPage() {
               <NewRelationEditor
                 id={law.id}
                 options={law.references.legislationOptions}
+                relationTypes={law.references.relationTypes}
                 sources={law.sources}
-                canReview={auth.hasPermission("relation.review")}
                 done={(message) => {
                   setMsg(message);
                   item.retry();
@@ -1653,7 +1666,7 @@ function AnnexEditor({
       )}
       {annex.pendingCorrectionId && (
         <p>
-          لهذا الملحق مسودة تصحيح قائمة. {" "}
+          لهذا الملحق مسودة تصحيح قائمة.{" "}
           <Link to={`/ar/admin/content/${legislationId}/corrections`}>
             عرض مسودة التصحيح
           </Link>
@@ -1772,19 +1785,19 @@ function AnnexEditor({
                 const contentFormat = String(f.get("contentFormat"));
                 const contentChanged = Boolean(
                   detail.data &&
-                    (String(f.get("titleAr")) !== detail.data.titleAr ||
-                      String(f.get("annexType")) !== detail.data.annexType ||
-                      contentFormat !== detail.data.version.contentFormat ||
-                      String(f.get("sourceDocumentId")) !==
-                        detail.data.version.sourceDocumentId ||
-                      String(f.get("validFrom")) !==
-                        detail.data.version.validFrom ||
-                      (contentFormat === "TEXT" &&
-                        String(f.get("textContent")) !==
-                          (detail.data.version.textContent ?? "")) ||
-                      (contentFormat === "STRUCTURED_TABLE" &&
-                        String(f.get("structuredTableJson")) !==
-                          (detail.data.version.structuredTableJson ?? ""))),
+                  (String(f.get("titleAr")) !== detail.data.titleAr ||
+                    String(f.get("annexType")) !== detail.data.annexType ||
+                    contentFormat !== detail.data.version.contentFormat ||
+                    String(f.get("sourceDocumentId")) !==
+                      detail.data.version.sourceDocumentId ||
+                    String(f.get("validFrom")) !==
+                      detail.data.version.validFrom ||
+                    (contentFormat === "TEXT" &&
+                      String(f.get("textContent")) !==
+                        (detail.data.version.textContent ?? "")) ||
+                    (contentFormat === "STRUCTURED_TABLE" &&
+                      String(f.get("structuredTableJson")) !==
+                        (detail.data.version.structuredTableJson ?? ""))),
                 );
                 if (
                   detail.data?.status === "REVIEWED" &&
@@ -1820,9 +1833,7 @@ function AnnexEditor({
                         ...(f.get("effectiveFrom")
                           ? { effectiveFrom: f.get("effectiveFrom") }
                           : {}),
-                        ...(f.get("status")
-                          ? { status: f.get("status") }
-                          : {}),
+                        ...(f.get("status") ? { status: f.get("status") } : {}),
                         editFingerprint: f.get("editFingerprint"),
                         reason: f.get("reason"),
                       },
@@ -1901,9 +1912,7 @@ function AnnexAdminPreview({
               <StatusBadge
                 status={detail.status}
                 label={
-                  detail.status === "REVIEWED"
-                    ? "مراجع وجاهز للنشر"
-                    : undefined
+                  detail.status === "REVIEWED" ? "مراجع وجاهز للنشر" : undefined
                 }
               />
             ),
@@ -1924,7 +1933,7 @@ function AnnexAdminPreview({
         compact={compact}
       />
       <p>
-        المصدر الساند: {" "}
+        المصدر الساند:{" "}
         <a
           href={`/api/v1/admin/annexes/${detail.id}/file?version=${encodeURIComponent(version.versionId)}&role=source`}
           target="_blank"
@@ -1935,7 +1944,7 @@ function AnnexAdminPreview({
       </p>
       {version.attachment && (
         <p>
-          المرفق المستقل: {" "}
+          المرفق المستقل:{" "}
           <a
             href={`/api/v1/admin/annexes/${detail.id}/file?version=${encodeURIComponent(version.versionId)}&role=attachment`}
             target="_blank"
@@ -2055,29 +2064,48 @@ function NewAnnexEditor({
 function RelationEditor({
   relation,
   options,
+  relationTypes,
   sources,
   editable,
-  canReview,
   done,
 }: {
   relation: Detail["relations"][number];
   options: Detail["references"]["legislationOptions"];
+  relationTypes: Detail["references"]["relationTypes"];
   sources: Detail["sources"];
   editable: boolean;
-  canReview: boolean;
   done: (message: string) => void;
 }) {
   const [editing, setEditing] = useState(false);
+  const [transitioning, setTransitioning] = useState<
+    "review" | "publish" | "reject" | "return" | null
+  >(null);
+  const [transitionReason, setTransitionReason] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const actionLabels = {
+    review: "اعتماد المراجعة",
+    publish: "نشر",
+    reject: "رفض",
+    return: "إعادة إلى المسودة",
+  } as const;
+  const statusLabel = {
+    UNREVIEWED: "مسودة",
+    REVIEWED: "مراجعة مكتملة وجاهزة للنشر",
+    REJECTED: "مرفوضة",
+    PUBLISHED: "منشورة",
+  }[relation.reviewStatus];
+  const blockedAction = Object.values(relation.actions).find(
+    (action) => action.available && !action.allowed && action.message,
+  );
   return (
     <article className="admin-list-card">
       <header>
         <div>
           <h3>{relation.targetTitle}</h3>
-          <p>{relation.relationType}</p>
+          <p>{relation.relationTypeLabel}</p>
         </div>
-        <StatusBadge status={relation.reviewStatus} />
+        <StatusBadge status={relation.reviewStatus} label={statusLabel} />
       </header>
       <EntityDetails
         items={[
@@ -2090,9 +2118,48 @@ function RelationEditor({
                 ?.originalName || "—",
             wide: true,
           },
+          ...(relation.reviewerName
+            ? [
+                { label: "راجع العلاقة", value: relation.reviewerName },
+                {
+                  label: "وقت المراجعة",
+                  value: new Date(relation.reviewedAt!).toLocaleString("ar-YE"),
+                },
+              ]
+            : []),
+          ...(relation.publisherName
+            ? [
+                { label: "نشر العلاقة", value: relation.publisherName },
+                {
+                  label: "وقت النشر",
+                  value: new Date(relation.publishedAt!).toLocaleString(
+                    "ar-YE",
+                  ),
+                },
+              ]
+            : []),
         ]}
       />
       <div className="admin-entity-actions">
+        {(["review", "publish", "reject", "return"] as const).map((action) => {
+          const decision = relation.actions[action];
+          return decision.available ? (
+            <button
+              key={action}
+              type="button"
+              className={action === "publish" ? "button" : "button secondary"}
+              disabled={!decision.allowed}
+              title={decision.message ?? undefined}
+              onClick={() => {
+                setError("");
+                setTransitionReason("");
+                setTransitioning(action);
+              }}
+            >
+              {actionLabels[action]}
+            </button>
+          ) : null;
+        })}
         <LifecycleActions
           kind="relations"
           id={relation.id}
@@ -2100,6 +2167,9 @@ function RelationEditor({
           onDone={() => done("حُدّثت حالة السجل.")}
         />
       </div>
+      {blockedAction?.message && (
+        <p className="field-hint">{blockedAction.message}</p>
+      )}
       {editable && (
         <div className="admin-entity-actions">
           <button
@@ -2132,7 +2202,7 @@ function RelationEditor({
                     scopeText: f.get("scopeText"),
                     effectiveFrom: f.get("effectiveFrom"),
                     sourceDocumentId: f.get("sourceDocumentId") || undefined,
-                    reviewStatus: f.get("reviewStatus"),
+                    editFingerprint: relation.editFingerprint,
                     reason: f.get("reason"),
                   },
                 });
@@ -2172,16 +2242,10 @@ function RelationEditor({
                   name="relationType"
                   defaultValue={relation.relationType}
                 >
-                  {[
-                    "AMENDS",
-                    "REPEALS",
-                    "IMPLEMENTS",
-                    "BASED_ON",
-                    "REFERS_TO",
-                    "CORRECTS",
-                    "TOPICALLY_RELATED",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
+                  {relationTypes.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.labelAr}
+                    </option>
                   ))}
                 </select>
               </label>
@@ -2192,17 +2256,6 @@ function RelationEditor({
                   type="date"
                   defaultValue={relation.effectiveFrom ?? ""}
                 />
-              </label>
-              <label>
-                حالة المراجعة
-                <select
-                  name="reviewStatus"
-                  defaultValue={relation.reviewStatus}
-                >
-                  <option>UNREVIEWED</option>
-                  {canReview && <option>REVIEWED</option>}
-                  {canReview && <option>REJECTED</option>}
-                </select>
               </label>
               <label>
                 مصدر الإثبات
@@ -2243,6 +2296,82 @@ function RelationEditor({
           </form>
         </AdminDialog>
       )}
+      {transitioning && (
+        <AdminDialog
+          title={actionLabels[transitioning]}
+          description={
+            transitioning === "return" && relation.reviewStatus === "PUBLISHED"
+              ? "ستُسحب العلاقة من العرض العام والبحث حتى مراجعتها ونشرها مجددًا."
+              : `سيُطبّق الإجراء على العلاقة مع «${relation.targetTitle}».`
+          }
+          onClose={() => setTransitioning(null)}
+        >
+          <form
+            className="edit-form"
+            onSubmit={async (event) => {
+              event.preventDefault();
+              setSaving(true);
+              setError("");
+              try {
+                await apiRequest(`/admin/relations/${relation.id}/transition`, {
+                  body: {
+                    action: transitioning,
+                    editFingerprint: relation.editFingerprint,
+                    reason: transitionReason,
+                  },
+                });
+                const completedAction = actionLabels[transitioning];
+                setTransitioning(null);
+                done(`تم تنفيذ «${completedAction}» وتسجيله.`);
+              } catch (reason) {
+                setError(
+                  reason instanceof Error
+                    ? reason.message
+                    : "تعذر تنفيذ الإجراء.",
+                );
+              } finally {
+                setSaving(false);
+              }
+            }}
+          >
+            <EntityDetails
+              items={[
+                { label: "التشريع المقابل", value: relation.targetTitle },
+                { label: "نوع العلاقة", value: relation.relationTypeLabel },
+                { label: "النطاق أو المادة", value: relation.scopeText || "—" },
+                { label: "تاريخ الأثر", value: relation.effectiveFrom || "—" },
+              ]}
+            />
+            <label>
+              سبب الإجراء
+              <input
+                value={transitionReason}
+                onChange={(event) => setTransitionReason(event.target.value)}
+                minLength={3}
+                required
+              />
+            </label>
+            {error && (
+              <p className="form-error" role="alert">
+                {error}
+              </p>
+            )}
+            <div className="admin-entity-actions">
+              <button
+                type="button"
+                className="button secondary"
+                onClick={() => setTransitioning(null)}
+                disabled={saving}
+              >
+                إلغاء
+              </button>
+              <button className="button" disabled={saving}>
+                {saving ? "جار التنفيذ…" : actionLabels[transitioning]}
+              </button>
+            </div>
+          </form>
+        </AdminDialog>
+      )}
     </article>
   );
 }
@@ -2250,14 +2379,14 @@ function RelationEditor({
 function NewRelationEditor({
   id,
   options,
+  relationTypes,
   sources,
-  canReview,
   done,
 }: {
   id: string;
   options: Detail["references"]["legislationOptions"];
+  relationTypes: Detail["references"]["relationTypes"];
   sources: Detail["sources"];
-  canReview: boolean;
   done: (x: string) => void;
 }) {
   const [creating, setCreating] = useState(false);
@@ -2293,7 +2422,6 @@ function NewRelationEditor({
                     scopeText: f.get("scopeText"),
                     effectiveFrom: f.get("effectiveFrom"),
                     sourceDocumentId: f.get("sourceDocumentId") || undefined,
-                    reviewStatus: f.get("reviewStatus"),
                     reason: f.get("reason"),
                   },
                 });
@@ -2327,30 +2455,16 @@ function NewRelationEditor({
               <label>
                 نوع العلاقة
                 <select name="relationType">
-                  {[
-                    "AMENDS",
-                    "REPEALS",
-                    "IMPLEMENTS",
-                    "BASED_ON",
-                    "REFERS_TO",
-                    "CORRECTS",
-                    "TOPICALLY_RELATED",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
+                  {relationTypes.map((item) => (
+                    <option key={item.code} value={item.code}>
+                      {item.labelAr}
+                    </option>
                   ))}
                 </select>
               </label>
               <label>
                 تاريخ الأثر
                 <input name="effectiveFrom" type="date" />
-              </label>
-              <label>
-                المراجعة
-                <select name="reviewStatus">
-                  <option>UNREVIEWED</option>
-                  {canReview && <option>REVIEWED</option>}
-                  {canReview && <option>REJECTED</option>}
-                </select>
               </label>
               <label>
                 مصدر الإثبات

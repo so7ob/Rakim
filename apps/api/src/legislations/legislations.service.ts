@@ -10,6 +10,7 @@ import { normalizeArabic } from "../search/arabic-normalizer.js";
 import type { CreateLegislationDto } from "./create-legislation.dto.js";
 import type { AuthUser } from "../auth/auth.types.js";
 import { annexTypeOption } from "../annexes/annex-content.js";
+import { relationTypeLabel } from "../common/legal-relation.js";
 
 type QueryValue = string | number | null;
 
@@ -211,7 +212,7 @@ export class LegislationsService {
                JOIN legislations public_source ON public_source.id=lr.source_legislation_id
                JOIN legislations public_target ON public_target.id=lr.target_legislation_id
                WHERE (lr.source_legislation_id=l.id OR lr.target_legislation_id=l.id)
-                 AND lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='REVIEWED'
+                 AND lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='PUBLISHED'
                  AND public_source.is_active=TRUE AND public_source.deleted_at IS NULL AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
                  AND public_target.is_active=TRUE AND public_target.deleted_at IS NULL AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')) relationCount
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id
@@ -355,7 +356,7 @@ export class LegislationsService {
 
   async relations(id: string) {
     await this.detail(id);
-    return this.db.query(
+    const rows = await this.db.query(
       `SELECT lr.id,lr.relation_type relationType,lr.scope_text scopeText,
     DATE_FORMAT(lr.effective_from,'%Y-%m-%d') effectiveFrom,lr.review_status reviewStatus,
     CASE WHEN lr.source_legislation_id=? THEN 'OUTGOING' ELSE 'INCOMING' END direction,
@@ -367,12 +368,16 @@ export class LegislationsService {
     FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id
     LEFT JOIN source_documents sd ON sd.id=lr.source_document_id
     WHERE (lr.source_legislation_id=? OR lr.target_legislation_id=?)
-      AND lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='REVIEWED'
+      AND lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='PUBLISHED'
       AND source.is_active=TRUE AND source.deleted_at IS NULL AND source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
       AND target.is_active=TRUE AND target.deleted_at IS NULL AND target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
     ORDER BY lr.effective_from DESC`,
       [id, id, id, id, id, id, id],
     );
+    return rows.map((row: any) => ({
+      ...row,
+      relationTypeLabel: relationTypeLabel(row.relationType),
+    }));
   }
 
   async create(dto: CreateLegislationDto, actor: AuthUser) {

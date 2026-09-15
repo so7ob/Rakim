@@ -19,6 +19,11 @@ const fields = [
   ["annexes", "workflow_revision"],
   ["annexes", "reviewed_by"],
   ["annexes", "reviewed_at"],
+  ["legal_relations", "workflow_revision"],
+  ["legal_relations", "reviewed_by"],
+  ["legal_relations", "reviewed_at"],
+  ["legal_relations", "published_by"],
+  ["legal_relations", "published_at"],
   ...[
     "legislation_types",
     "subjects",

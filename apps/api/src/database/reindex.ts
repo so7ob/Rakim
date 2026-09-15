@@ -145,7 +145,7 @@ export async function rebuildSearchIndex(): Promise<number> {
         (await manager.query(`SELECT lr.id,lr.source_legislation_id legislation_id,lr.relation_type,lr.scope_text,
         CONCAT(source.title_ar,' ',target.title_ar) title_ar,source.verification_level
         FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id
-        WHERE lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='REVIEWED'
+        WHERE lr.is_active=TRUE AND lr.deleted_at IS NULL AND lr.review_status='PUBLISHED'
           AND source.is_active=TRUE AND source.deleted_at IS NULL AND source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
           AND target.is_active=TRUE AND target.deleted_at IS NULL AND target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')`)) as Array<
           Record<string, string>

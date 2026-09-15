@@ -95,7 +95,7 @@ describe("public visibility security boundaries", () => {
       `INSERT INTO legal_relations
        (id,source_legislation_id,target_legislation_id,relation_type,review_status)
        VALUES (?,?,?,'REFERS_TO','UNREVIEWED'),
-              (?,?,?,'BASED_ON','REVIEWED')`,
+              (?,?,?,'BASED_ON','PUBLISHED')`,
       [
         unreviewedRelationId,
         publicLawId,

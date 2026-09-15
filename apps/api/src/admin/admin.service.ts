@@ -33,6 +33,12 @@ import {
   parseStructuredTable,
   type AnnexContentFormat,
 } from "../annexes/annex-content.js";
+import {
+  LEGAL_RELATION_TYPES,
+  relationFingerprint,
+  relationSnapshot,
+  relationTypeLabel,
+} from "../common/legal-relation.js";
 
 type WorkflowStatus =
   | "INBOX"
@@ -609,11 +615,7 @@ export class AdminService {
     };
   }
 
-  async legislation(
-    id: string,
-    includeArticleText = false,
-    actor?: AuthUser,
-  ) {
+  async legislation(id: string, includeArticleText = false, actor?: AuthUser) {
     const rows = await this.db.query(
       `SELECT l.*,lt.name_ar typeName,au.name_ar authorityName
       FROM legislations l JOIN legislation_types lt ON lt.id=l.type_id JOIN authorities au ON au.id=l.authority_id WHERE l.id=? AND l.deleted_at IS NULL`,
@@ -719,8 +721,14 @@ export class AdminService {
       this.db.query(
         `SELECT lr.id,lr.relation_type relationType,lr.scope_text scopeText,DATE_FORMAT(lr.effective_from,'%Y-%m-%d') effectiveFrom,
         lr.review_status reviewStatus,lr.source_document_id sourceDocumentId,
-        lr.target_legislation_id targetLegislationId,target.title_ar targetTitle
-        FROM legal_relations lr JOIN legislations target ON target.id=lr.target_legislation_id WHERE lr.deleted_at IS NULL AND lr.source_legislation_id=? ORDER BY lr.effective_from DESC`,
+        lr.target_legislation_id targetLegislationId,target.title_ar targetTitle,
+        lr.reviewed_by reviewedBy,lr.reviewed_at reviewedAt,reviewer.display_name reviewerName,
+        lr.published_by publishedBy,lr.published_at publishedAt,publisher.display_name publisherName,
+        lr.workflow_revision workflowRevision
+        FROM legal_relations lr JOIN legislations target ON target.id=lr.target_legislation_id
+        LEFT JOIN users reviewer ON reviewer.id=lr.reviewed_by
+        LEFT JOIN users publisher ON publisher.id=lr.published_by
+        WHERE lr.deleted_at IS NULL AND lr.source_legislation_id=? ORDER BY lr.effective_from DESC`,
         [id],
       ),
       this.db.query(
@@ -746,11 +754,30 @@ export class AdminService {
             : undefined,
         })),
       ),
-      relations,
+      relations: relations.map((relation: any) => ({
+        ...relation,
+        relationTypeLabel: relationTypeLabel(relation.relationType),
+        editFingerprint: relationFingerprint({
+          relation_type: relation.relationType,
+          target_legislation_id: relation.targetLegislationId,
+          scope_text: relation.scopeText,
+          effective_from: relation.effectiveFrom,
+          source_document_id: relation.sourceDocumentId,
+          review_status: relation.reviewStatus,
+          workflow_revision: relation.workflowRevision,
+        }),
+        actions: actor ? this.relationActions(relation, actor) : undefined,
+      })),
       selectedSubjectIds: selectedSubjects.map(
         (subject: { id: string }) => subject.id,
       ),
-      references: { types, authorities, subjects, legislationOptions },
+      references: {
+        types,
+        authorities,
+        subjects,
+        legislationOptions,
+        relationTypes: LEGAL_RELATION_TYPES,
+      },
     };
   }
 
@@ -1639,7 +1666,7 @@ export class AdminService {
           policyChecks.every((check) => check.allowed),
         message: !canPublish
           ? "تتطلب العملية صلاحية نشر الملحق."
-          : policyChecks.find((check) => !check.allowed)?.message ?? null,
+          : (policyChecks.find((check) => !check.allowed)?.message ?? null),
         policyChecks,
       },
       return: {
@@ -2000,14 +2027,14 @@ export class AdminService {
         );
       if (touchesContent)
         await this.annexSource(
-              manager,
-              record.legislation_id,
-              sourceDocumentId,
-              content.format,
-              sourceDocumentId === current.sourceDocumentId
-                ? current.versionId
-                : undefined,
-            );
+          manager,
+          record.legislation_id,
+          sourceDocumentId,
+          content.format,
+          sourceDocumentId === current.sourceDocumentId
+            ? current.versionId
+            : undefined,
+        );
       if (["DRAFT", "REVIEWED"].includes(record.status) && touchesContent)
         await manager.query(
           `UPDATE annex_versions SET valid_from=?,source_document_id=?,content_format=?,text_content=?,structured_table_json=? WHERE id=?`,
@@ -2123,13 +2150,7 @@ export class AdminService {
       );
       await manager.query(
         `INSERT INTO annexes (id,legislation_id,annex_type,title_ar,status) VALUES (?,?,?,?,?)`,
-        [
-          id,
-          legislationId,
-          input.annexType,
-          input.titleAr.trim(),
-          "DRAFT",
-        ],
+        [id, legislationId, input.annexType, input.titleAr.trim(), "DRAFT"],
       );
       await manager.query(
         `INSERT INTO annex_versions (id,annex_id,version_no,valid_from,source_document_id,content_format,text_content,structured_table_json) VALUES (?,?,1,?,?,?,?,?)`,
@@ -2165,7 +2186,7 @@ export class AdminService {
       scopeText?: string;
       effectiveFrom?: string;
       sourceDocumentId?: string;
-      reviewStatus: string;
+      editFingerprint: string;
     },
     actor: AuthUser,
     reason: string,
@@ -2178,6 +2199,14 @@ export class AdminService {
       );
       if (!rows[0])
         throw new NotFoundException("العلاقة القانونية غير موجودة.");
+      if (rows[0].review_status !== "UNREVIEWED")
+        throw new ConflictException(
+          "يجب إعادة العلاقة إلى المسودة قبل تعديل بياناتها.",
+        );
+      if (relationFingerprint(rows[0]) !== input.editFingerprint)
+        throw new ConflictException(
+          "تغيرت العلاقة بعد فتحها. أعد تحميلها قبل الحفظ.",
+        );
       if (rows[0].source_legislation_id === input.targetLegislationId)
         throw new BadRequestException("لا يمكن ربط التشريع بنفسه.");
       const targets = await manager.query(
@@ -2194,25 +2223,14 @@ export class AdminService {
         if (!sources.length)
           throw new BadRequestException("مصدر الإثبات غير موجود.");
       }
-      if (input.reviewStatus !== "UNREVIEWED")
-        this.requirePermission(actor, "relation.review");
-      if (
-        input.reviewStatus === "REVIEWED" &&
-        input.relationType !== "TOPICALLY_RELATED" &&
-        !input.sourceDocumentId
-      )
-        throw new BadRequestException(
-          "العلاقة القانونية المراجعة تحتاج مصدر إثبات.",
-        );
       await manager.query(
-        `UPDATE legal_relations SET relation_type=?,target_legislation_id=?,scope_text=?,effective_from=?,source_document_id=?,review_status=? WHERE id=?`,
+        `UPDATE legal_relations SET relation_type=?,target_legislation_id=?,scope_text=?,effective_from=?,source_document_id=?,workflow_revision=workflow_revision+1 WHERE id=?`,
         [
           input.relationType,
           input.targetLegislationId,
           input.scopeText?.trim() || null,
           input.effectiveFrom || null,
           input.sourceDocumentId || null,
-          input.reviewStatus,
           id,
         ],
       );
@@ -2238,7 +2256,6 @@ export class AdminService {
       scopeText?: string;
       effectiveFrom?: string;
       sourceDocumentId?: string;
-      reviewStatus: string;
     },
     actor: AuthUser,
     reason: string,
@@ -2246,16 +2263,6 @@ export class AdminService {
     this.requirePermission(actor, "relation.create");
     if (legislationId === input.targetLegislationId)
       throw new BadRequestException("لا يمكن ربط التشريع بنفسه.");
-    if (input.reviewStatus !== "UNREVIEWED")
-      this.requirePermission(actor, "relation.review");
-    if (
-      input.reviewStatus === "REVIEWED" &&
-      input.relationType !== "TOPICALLY_RELATED" &&
-      !input.sourceDocumentId
-    )
-      throw new BadRequestException(
-        "العلاقة القانونية المراجعة تحتاج مصدر إثبات.",
-      );
     const id = randomUUID();
     await this.db.transaction(async (manager) => {
       await assertActiveReference(manager, "legislations", legislationId);
@@ -2275,7 +2282,7 @@ export class AdminService {
           throw new BadRequestException("مصدر الإثبات غير موجود.");
       }
       await manager.query(
-        `INSERT INTO legal_relations (id,source_legislation_id,target_legislation_id,relation_type,scope_text,effective_from,source_document_id,review_status) VALUES (?,?,?,?,?,?,?,?)`,
+        `INSERT INTO legal_relations (id,source_legislation_id,target_legislation_id,relation_type,scope_text,effective_from,source_document_id,review_status) VALUES (?,?,?,?,?,?,?,'UNREVIEWED')`,
         [
           id,
           legislationId,
@@ -2284,7 +2291,6 @@ export class AdminService {
           input.scopeText?.trim() || null,
           input.effectiveFrom || null,
           input.sourceDocumentId || null,
-          input.reviewStatus,
         ],
       );
       await this.auditWith(
@@ -2299,6 +2305,171 @@ export class AdminService {
       );
     });
     return { id };
+  }
+
+  private relationActions(row: any, actor: AuthUser) {
+    const status = row.reviewStatus ?? row.review_status;
+    const has = (code: string) => actor.permissions.includes(code);
+    return {
+      review: {
+        available: status === "UNREVIEWED",
+        allowed: status === "UNREVIEWED" && has("relation.review"),
+        message: has("relation.review")
+          ? null
+          : "تتطلب العملية صلاحية مراجعة العلاقة.",
+      },
+      publish: {
+        available: status === "REVIEWED",
+        allowed: status === "REVIEWED" && has("relation.publish"),
+        message: has("relation.publish")
+          ? null
+          : "تتطلب العملية صلاحية نشر العلاقة.",
+      },
+      reject: {
+        available: ["UNREVIEWED", "REVIEWED"].includes(status),
+        allowed:
+          ["UNREVIEWED", "REVIEWED"].includes(status) && has("relation.reject"),
+        message: has("relation.reject")
+          ? null
+          : "تتطلب العملية صلاحية رفض العلاقة.",
+      },
+      return: {
+        available: ["REVIEWED", "REJECTED", "PUBLISHED"].includes(status),
+        allowed:
+          ["REVIEWED", "REJECTED", "PUBLISHED"].includes(status) &&
+          has("relation.return") &&
+          (status !== "PUBLISHED" || has("relation.publish")),
+        message: !has("relation.return")
+          ? "تتطلب العملية صلاحية إعادة العلاقة إلى المسودة."
+          : status === "PUBLISHED" && !has("relation.publish")
+            ? "سحب علاقة منشورة يتطلب أيضًا صلاحية نشر العلاقة."
+            : null,
+      },
+    };
+  }
+
+  async transitionRelation(
+    id: string,
+    action: "review" | "publish" | "reject" | "return",
+    editFingerprint: string,
+    actor: AuthUser,
+    reason: string,
+  ) {
+    if (!reason?.trim()) throw new BadRequestException("سبب الإجراء إلزامي.");
+    return this.db.transaction(async (manager) => {
+      const [row] = await manager.query(
+        `SELECT lr.*,source.is_active source_active,source.deleted_at source_deleted_at,
+         target.is_active target_active,target.deleted_at target_deleted_at,
+         evidence.is_active evidence_active,evidence.deleted_at evidence_deleted_at
+         FROM legal_relations lr
+         JOIN legislations source ON source.id=lr.source_legislation_id
+         JOIN legislations target ON target.id=lr.target_legislation_id
+         LEFT JOIN source_documents evidence ON evidence.id=lr.source_document_id
+         WHERE lr.id=? AND lr.deleted_at IS NULL FOR UPDATE`,
+        [id],
+      );
+      if (!row) throw new NotFoundException("العلاقة القانونية غير موجودة.");
+      if (relationFingerprint(row) !== editFingerprint)
+        throw new ConflictException(
+          "تغيرت العلاقة بعد فتحها. أعد تحميلها قبل تنفيذ الإجراء.",
+        );
+      const requiredPermission = {
+        review: "relation.review",
+        publish: "relation.publish",
+        reject: "relation.reject",
+        return: "relation.return",
+      }[action];
+      this.requirePermission(actor, requiredPermission);
+      if (action === "return" && row.review_status === "PUBLISHED")
+        this.requirePermission(actor, "relation.publish");
+      const allowedStatuses = {
+        review: ["UNREVIEWED"],
+        publish: ["REVIEWED"],
+        reject: ["UNREVIEWED", "REVIEWED"],
+        return: ["REVIEWED", "REJECTED", "PUBLISHED"],
+      }[action];
+      if (!allowedStatuses.includes(row.review_status))
+        throw new ConflictException("حالة العلاقة لا تسمح بهذا الإجراء.");
+      if (["review", "publish"].includes(action)) {
+        if (!row.is_active)
+          throw new BadRequestException(
+            "العلاقة معطلة إداريًا؛ فعّلها قبل المراجعة أو النشر.",
+          );
+        if (
+          !row.source_active ||
+          row.source_deleted_at ||
+          !row.target_active ||
+          row.target_deleted_at
+        )
+          throw new BadRequestException("أحد طرفي العلاقة غير متاح.");
+        if (
+          row.relation_type !== "TOPICALLY_RELATED" &&
+          (!row.source_document_id ||
+            !row.evidence_active ||
+            row.evidence_deleted_at)
+        )
+          throw new BadRequestException(
+            "العلاقة القانونية المراجعة تحتاج مصدر إثبات فعالًا.",
+          );
+      }
+      const nextStatus = {
+        review: "REVIEWED",
+        publish: "PUBLISHED",
+        reject: "REJECTED",
+        return: "UNREVIEWED",
+      }[action];
+      const before = relationSnapshot(row);
+      await manager.query(
+        `UPDATE legal_relations SET review_status=?,
+         reviewed_by=CASE WHEN ?='REVIEWED' THEN ? WHEN ?='UNREVIEWED' THEN NULL ELSE reviewed_by END,
+         reviewed_at=CASE WHEN ?='REVIEWED' THEN NOW(3) WHEN ?='UNREVIEWED' THEN NULL ELSE reviewed_at END,
+         published_by=CASE WHEN ?='PUBLISHED' THEN ? WHEN ?='UNREVIEWED' THEN NULL ELSE published_by END,
+         published_at=CASE WHEN ?='PUBLISHED' THEN NOW(3) WHEN ?='UNREVIEWED' THEN NULL ELSE published_at END,
+         workflow_revision=workflow_revision+1 WHERE id=?`,
+        [
+          nextStatus,
+          nextStatus,
+          actor.id,
+          nextStatus,
+          nextStatus,
+          nextStatus,
+          nextStatus,
+          actor.id,
+          nextStatus,
+          nextStatus,
+          nextStatus,
+          id,
+        ],
+      );
+      await this.auditWith(
+        manager,
+        actor.id,
+        {
+          review: "REVIEW_LEGAL_RELATION",
+          publish: "PUBLISH_LEGAL_RELATION",
+          reject: "REJECT_LEGAL_RELATION",
+          return: "RETURN_LEGAL_RELATION_TO_DRAFT",
+        }[action],
+        "LEGAL_RELATION",
+        id,
+        before,
+        { reviewStatus: nextStatus },
+        reason,
+      );
+      if (
+        action === "publish" ||
+        (action === "return" && row.review_status === "PUBLISHED")
+      )
+        for (const legislationId of new Set([
+          row.source_legislation_id,
+          row.target_legislation_id,
+        ]))
+          await manager.query(
+            `INSERT INTO job_queue (id,job_type,payload_json,priority) VALUES (?,'REINDEX_ENTITY',?,20)`,
+            [randomUUID(), JSON.stringify({ legislationId })],
+          );
+      return { id, reviewStatus: nextStatus };
+    });
   }
 
   async update(
