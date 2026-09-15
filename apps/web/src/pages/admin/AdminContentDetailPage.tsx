@@ -24,6 +24,11 @@ import {
 import { ArticleAssignmentDialog } from "../../components/admin/ArticleAssignmentDialog";
 import { AdminDialog } from "../../components/admin/AdminDialog";
 import { EntityDetails } from "../../components/admin/EntityDetails";
+import {
+  AnnexContentFields,
+  type AnnexDetail,
+  type AnnexOptions,
+} from "../../components/admin/AnnexContentFields";
 interface Detail {
   id: string;
   display_code: string | null;
@@ -72,6 +77,7 @@ interface Detail {
   annexes: Array<{
     id: string;
     annexType: string;
+    annexTypeLabel: string;
     titleAr: string;
     status: string;
     versionCount: number;
@@ -126,6 +132,11 @@ export function AdminContentDetailPage() {
   const [creatingArticle, setCreatingArticle] = useState(false);
   const sourceOptions = useApi<Array<{ id: string; originalName: string }>>(
     auth.hasPermission("source.view") ? "/admin/source-options" : null,
+  );
+  const annexOptions = useApi<AnnexOptions>(
+    id && auth.hasPermission("legislation.view")
+      ? "/admin/annexes/options"
+      : null,
   );
   const [msg, setMsg] = useState("");
   const [metadataOpen, setMetadataOpen] = useState(() =>
@@ -281,6 +292,8 @@ export function AdminContentDetailPage() {
           lawId={law.id}
           articles={law.articles}
           annexes={law.annexes}
+          annexOptions={annexOptions.data}
+          sources={law.sources}
           onChange={item.retry}
         />
       )}
@@ -802,41 +815,53 @@ export function AdminContentDetailPage() {
         <section className="admin-card">
           <h2>اللوائح والجداول والملاحق</h2>
           <p>
-            تعديل النوع والعنوان والحالة؛ تبقى إصدارات الملفات التاريخية محفوظة.
+            اختر النوع وطريقة المحتوى المناسبة؛ تبقى النسخ التاريخية محفوظة.
           </p>
+          {annexOptions.loading && <LoadingCards />}
+          {annexOptions.error && (
+            <ErrorPanel
+              message={annexOptions.error.message}
+              retry={annexOptions.retry}
+            />
+          )}
           <div className="draft-articles">
             {law.annexes.length === 0 &&
               !auth.hasPermission("annex.update") && (
                 <p>لا توجد ملاحق أو جداول مسجلة.</p>
               )}
-            {law.annexes.map((annex) => (
-              <AnnexEditor
-                key={annex.id}
-                annex={annex}
-                editable={
-                  auth.hasPermission("annex.update") &&
-                  (annex.status === "DRAFT" ||
-                    auth.hasPermission(
-                      annex.status === "PUBLISHED"
-                        ? "annex.publish"
-                        : annex.status === "REPLACED"
-                          ? "annex.replace"
-                          : "annex.repeal",
-                    ))
-                }
-                canPublish={auth.hasPermission("annex.publish")}
-                canReplace={auth.hasPermission("annex.replace")}
-                canRepeal={auth.hasPermission("annex.repeal")}
-                done={(message) => {
-                  setMsg(message);
-                  item.retry();
-                }}
-              />
-            ))}
-            {auth.hasPermission("annex.create") && (
+            {annexOptions.data &&
+              law.annexes.map((annex) => (
+                <AnnexEditor
+                  key={annex.id}
+                  annex={annex}
+                  options={annexOptions.data!}
+                  sources={law.sources}
+                  legislationId={law.id}
+                  editable={
+                    auth.hasPermission("annex.update") &&
+                    (annex.status === "DRAFT" ||
+                      auth.hasPermission(
+                        annex.status === "PUBLISHED"
+                          ? "annex.publish"
+                          : annex.status === "REPLACED"
+                            ? "annex.replace"
+                            : "annex.repeal",
+                      ))
+                  }
+                  canPublish={auth.hasPermission("annex.publish")}
+                  canReplace={auth.hasPermission("annex.replace")}
+                  canRepeal={auth.hasPermission("annex.repeal")}
+                  done={(message) => {
+                    setMsg(message);
+                    item.retry();
+                  }}
+                />
+              ))}
+            {annexOptions.data && auth.hasPermission("annex.create") && (
               <NewAnnexEditor
                 id={law.id}
                 sources={law.sources}
+                options={annexOptions.data!}
                 canPublish={auth.hasPermission("annex.publish")}
                 done={(message) => {
                   setMsg(message);
@@ -1523,6 +1548,9 @@ function NewStructureEditor({
 
 function AnnexEditor({
   annex,
+  options,
+  sources,
+  legislationId,
   editable,
   canPublish,
   canReplace,
@@ -1530,6 +1558,9 @@ function AnnexEditor({
   done,
 }: {
   annex: Detail["annexes"][number];
+  options: AnnexOptions;
+  sources: Detail["sources"];
+  legislationId: string;
   editable: boolean;
   canPublish: boolean;
   canReplace: boolean;
@@ -1539,6 +1570,9 @@ function AnnexEditor({
   const [editing, setEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const detail = useApi<AnnexDetail>(
+    editing ? `/admin/annexes/${annex.id}` : null,
+  );
   return (
     <article className="admin-list-card">
       <header>
@@ -1550,8 +1584,11 @@ function AnnexEditor({
       </header>
       <EntityDetails
         items={[
-          { label: "النوع", value: annex.annexType },
-          { label: "الحالة", value: annex.status },
+          { label: "النوع", value: annex.annexTypeLabel },
+          {
+            label: "الحالة",
+            value: <StatusBadge status={annex.status} />,
+          },
         ]}
       />
       <div className="admin-entity-actions">
@@ -1578,102 +1615,100 @@ function AnnexEditor({
           title={`تعديل ${annex.titleAr}`}
           onClose={() => setEditing(false)}
         >
-          <form
-            className="edit-form"
-            onSubmit={async (event) => {
-              event.preventDefault();
-              const f = new FormData(event.currentTarget);
-              setSaving(true);
-              setError("");
-              try {
-                const result = await apiRequest<{ correctionId?: string }>(
-                  `/admin/annexes/${annex.id}`,
-                  {
-                    method: "PATCH",
-                    body: {
-                      annexType: f.get("annexType"),
-                      titleAr: f.get("titleAr"),
-                      status: f.get("status"),
-                      reason: f.get("reason"),
+          {detail.loading ? (
+            <LoadingCards />
+          ) : detail.error || !detail.data ? (
+            <ErrorPanel
+              message={detail.error?.message ?? "تعذر تحميل الملحق."}
+              retry={detail.retry}
+            />
+          ) : (
+            <form
+              className="edit-form"
+              onSubmit={async (event) => {
+                event.preventDefault();
+                const f = new FormData(event.currentTarget);
+                const contentFormat = String(f.get("contentFormat"));
+                setSaving(true);
+                setError("");
+                try {
+                  const result = await apiRequest<{ correctionId?: string }>(
+                    `/admin/annexes/${annex.id}`,
+                    {
+                      method: "PATCH",
+                      body: {
+                        annexType: f.get("annexType"),
+                        titleAr: f.get("titleAr"),
+                        status: f.get("status"),
+                        contentFormat,
+                        ...(contentFormat === "TEXT"
+                          ? { textContent: f.get("textContent") }
+                          : {}),
+                        ...(contentFormat === "STRUCTURED_TABLE"
+                          ? {
+                              structuredTableJson: f.get("structuredTableJson"),
+                            }
+                          : {}),
+                        sourceDocumentId: f.get("sourceDocumentId"),
+                        ...(f.get("validFrom")
+                          ? { validFrom: f.get("validFrom") }
+                          : {}),
+                        ...(f.get("effectiveFrom")
+                          ? { effectiveFrom: f.get("effectiveFrom") }
+                          : {}),
+                        editFingerprint: f.get("editFingerprint"),
+                        reason: f.get("reason"),
+                      },
                     },
-                  },
-                );
-                setEditing(false);
-                done(
-                  result.correctionId
-                    ? "حُفظت مسودة تصحيح الملحق؛ تابعها من تبويب مسودات التصحيح."
-                    : "حُفظت بيانات الملحق.",
-                );
-              } catch (error) {
-                setError(
-                  error instanceof Error ? error.message : "تعذر الحفظ.",
-                );
-              } finally {
-                setSaving(false);
-              }
-            }}
-          >
-            {error && (
-              <p className="form-error" role="alert">
-                {error}
-              </p>
-            )}
-            <div className="form-columns">
+                  );
+                  setEditing(false);
+                  done(
+                    result.correctionId
+                      ? "حُفظت مسودة تصحيح الملحق؛ تابعها من تبويب مسودات التصحيح."
+                      : "حُفظ محتوى الملحق وبياناته.",
+                  );
+                } catch (error) {
+                  setError(
+                    error instanceof Error ? error.message : "تعذر الحفظ.",
+                  );
+                } finally {
+                  setSaving(false);
+                }
+              }}
+            >
+              {error && (
+                <p className="form-error" role="alert">
+                  {error}
+                </p>
+              )}
+              <AnnexContentFields
+                options={options}
+                sources={sources}
+                legislationId={legislationId}
+                initial={detail.data}
+                canPublish={canPublish}
+                canReplace={canReplace}
+                canRepeal={canRepeal}
+              />
               <label>
-                العنوان
-                <input name="titleAr" defaultValue={annex.titleAr} required />
+                سبب التعديل
+                <input name="reason" required />
               </label>
-              <label>
-                النوع
-                <select name="annexType" defaultValue={annex.annexType}>
-                  {[
-                    "EXECUTIVE_REGULATION",
-                    "TABLE",
-                    "FORM",
-                    "ANNEX",
-                    "MAP",
-                    "TARIFF",
-                    "LIST",
-                    "CORRECTION",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                الحالة
-                <select name="status" defaultValue={annex.status}>
-                  {annex.status === "DRAFT" && <option>DRAFT</option>}
-                  {(annex.status === "PUBLISHED" || canPublish) && (
-                    <option>PUBLISHED</option>
-                  )}
-                  {(annex.status === "REPLACED" || canReplace) && (
-                    <option>REPLACED</option>
-                  )}
-                  {(annex.status === "REPEALED" || canRepeal) && (
-                    <option>REPEALED</option>
-                  )}
-                </select>
-              </label>
-            </div>
-            <label>
-              سبب التعديل
-              <input name="reason" required />
-            </label>
-            <div className="admin-entity-actions">
-              <button
-                type="button"
-                className="button secondary"
-                onClick={() => setEditing(false)}
-                disabled={saving}
-              >
-                إلغاء
-              </button>
-              <button className="button" disabled={saving}>
-                {saving ? "جار الحفظ…" : "حفظ الملحق"}
-              </button>
-            </div>
-          </form>
+              <div className="admin-entity-actions">
+                <button
+                  type="button"
+                  className="button secondary"
+                  onClick={() => setEditing(false)}
+                  disabled={saving}
+                >
+                  إلغاء
+                </button>
+                <button className="button" disabled={saving}>
+                  {saving ? "جار الحفظ…" : "حفظ الملحق"}
+                </button>
+              </div>
+            </form>
+          )}
         </AdminDialog>
       )}
     </article>
@@ -1683,11 +1718,13 @@ function AnnexEditor({
 function NewAnnexEditor({
   id,
   sources,
+  options,
   canPublish,
   done,
 }: {
   id: string;
   sources: Detail["sources"];
+  options: AnnexOptions;
   canPublish: boolean;
   done: (x: string) => void;
 }) {
@@ -1716,6 +1753,7 @@ function NewAnnexEditor({
               event.preventDefault();
               const formElement = event.currentTarget;
               const f = new FormData(formElement);
+              const contentFormat = String(f.get("contentFormat"));
               setSaving(true);
               setError("");
               try {
@@ -1724,9 +1762,17 @@ function NewAnnexEditor({
                     annexType: f.get("annexType"),
                     titleAr: f.get("titleAr"),
                     status: f.get("status"),
+                    contentFormat,
                     validFrom: f.get("validFrom"),
                     sourceDocumentId: f.get("sourceDocumentId"),
-                    structuredTableJson: f.get("structuredTableJson"),
+                    ...(contentFormat === "TEXT"
+                      ? { textContent: f.get("textContent") }
+                      : {}),
+                    ...(contentFormat === "STRUCTURED_TABLE"
+                      ? {
+                          structuredTableJson: f.get("structuredTableJson"),
+                        }
+                      : {}),
                     reason: f.get("reason"),
                   },
                 });
@@ -1746,57 +1792,12 @@ function NewAnnexEditor({
                 {error}
               </p>
             )}
-            <div className="form-columns">
-              <label>
-                العنوان
-                <input name="titleAr" required />
-              </label>
-              <label>
-                النوع
-                <select name="annexType">
-                  {[
-                    "EXECUTIVE_REGULATION",
-                    "TABLE",
-                    "FORM",
-                    "ANNEX",
-                    "MAP",
-                    "TARIFF",
-                    "LIST",
-                    "CORRECTION",
-                  ].map((x) => (
-                    <option key={x}>{x}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                الحالة
-                <select name="status">
-                  <option>DRAFT</option>
-                  {canPublish && <option>PUBLISHED</option>}
-                </select>
-              </label>
-              <label>
-                النفاذ
-                <input name="validFrom" type="date" required />
-              </label>
-              <label>
-                المصدر
-                <select name="sourceDocumentId">
-                  {sources.map((x) => (
-                    <option key={x.id} value={x.id}>
-                      {x.originalName}
-                    </option>
-                  ))}
-                </select>
-              </label>
-            </div>
-            <label>
-              جدول منظم JSON اختياري
-              <textarea
-                name="structuredTableJson"
-                placeholder='{"columns":["الحقل"],"rows":[["القيمة"]]}'
-              />
-            </label>
+            <AnnexContentFields
+              options={options}
+              sources={sources}
+              legislationId={id}
+              canPublish={canPublish}
+            />
             <label>
               سبب الإضافة
               <input name="reason" required />

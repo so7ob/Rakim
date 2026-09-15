@@ -4,14 +4,20 @@ import {
   Delete,
   Get,
   Inject,
+  NotFoundException,
   Param,
   Patch,
   Post,
   Query,
   Req,
+  Res,
+  StreamableFile,
   UseGuards,
 } from "@nestjs/common";
 import { ApiOperation, ApiTags } from "@nestjs/swagger";
+import type { Response } from "express";
+import { createReadStream } from "node:fs";
+import { resolve, sep } from "node:path";
 import {
   ArrayUnique,
   ArrayMaxSize,
@@ -234,12 +240,23 @@ class UpdateAnnexDto {
   annexType!: string;
   @IsString() @Length(1, 1000) titleAr!: string;
   @IsIn(["DRAFT", "PUBLISHED", "REPLACED", "REPEALED"]) status!: string;
+  @IsOptional()
+  @IsIn(["TEXT", "STRUCTURED_TABLE", "FILE"])
+  contentFormat?: string;
+  @IsOptional() @IsString() @Length(0, 1000000) textContent?: string;
+  @IsOptional()
+  @IsString()
+  @Length(0, 1000000)
+  structuredTableJson?: string;
+  @IsOptional() @IsString() sourceDocumentId?: string;
+  @IsOptional() @IsDateString() validFrom?: string;
+  @IsOptional() @IsDateString() effectiveFrom?: string;
+  @IsOptional() @IsString() @Length(64, 64) editFingerprint?: string;
   @IsString() @Length(3, 1000) reason!: string;
 }
 class CreateAnnexDto extends UpdateAnnexDto {
-  @IsString() sourceDocumentId!: string;
-  @IsString() validFrom!: string;
-  @IsOptional() @IsString() structuredTableJson?: string;
+  @IsString() declare sourceDocumentId: string;
+  @IsDateString() declare validFrom: string;
 }
 class UpdateRelationDto {
   @IsIn([
@@ -447,6 +464,26 @@ export class AdminController {
     const { reason, ...input } = dto;
     return this.service.updateSource(id, input, request.user!, reason);
   }
+  @Get("sources/:id/file")
+  @Permissions("legislation.view")
+  async sourceFile(
+    @Param("id") id: string,
+    @Res({ passthrough: true }) response: Response,
+  ) {
+    const source = await this.service.sourceFile(id);
+    const root = resolve(
+      process.env.DATA_ROOT ?? resolve(process.cwd(), "../../data"),
+    );
+    const target = resolve(root, source.storageKey);
+    if (!target.startsWith(`${root}${sep}`))
+      throw new NotFoundException("مسار الملف غير صالح.");
+    response.setHeader("Content-Type", source.mediaType);
+    response.setHeader(
+      "Content-Disposition",
+      `inline; filename*=UTF-8''${encodeURIComponent(source.fileName)}`,
+    );
+    return new StreamableFile(createReadStream(target));
+  }
   @Patch("structure/:id")
   @Permissions("structure.update")
   updateStructure(
@@ -509,6 +546,16 @@ export class AdminController {
   ) {
     const { reason, ...input } = dto;
     return this.service.updateAnnex(id, input, request.user!, reason);
+  }
+  @Get("annexes/options")
+  @Permissions("legislation.view")
+  annexOptions() {
+    return this.service.annexOptions();
+  }
+  @Get("annexes/:id")
+  @Permissions("legislation.view")
+  annex(@Param("id") id: string, @Req() request: AuthenticatedRequest) {
+    return this.service.annex(id, request.user!);
   }
   @Post("legislations/:id/annexes")
   @Permissions("annex.create", "annex.publish", "annex.replace", "annex.repeal")

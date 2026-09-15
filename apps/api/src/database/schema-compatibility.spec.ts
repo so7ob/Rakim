@@ -14,6 +14,8 @@ const fields = [
   ["deletion_batch_items", "batch_id"],
   ["deletion_batches", "policy_checks_json"],
   ["content_corrections", "base_hash"],
+  ["annex_versions", "content_format"],
+  ["annex_versions", "text_content"],
   ...[
     "legislation_types",
     "subjects",

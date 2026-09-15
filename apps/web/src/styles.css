@@ -1386,6 +1386,78 @@ button:disabled {
   margin-top: 18px;
   padding-top: 18px;
 }
+.annex-text-content {
+  white-space: pre-wrap;
+  line-height: 2;
+  color: var(--color-text);
+}
+.annex-image-preview {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  margin: 0;
+}
+.annex-image-preview img {
+  display: block;
+  max-width: 100%;
+  max-height: 75vh;
+  border-radius: 12px;
+  object-fit: contain;
+}
+.annex-reference-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px 22px;
+  margin-top: 18px;
+  padding-top: 14px;
+  border-top: 1px solid #e7eaed;
+}
+.annex-reference-links a {
+  color: var(--color-navy);
+  font-weight: 700;
+}
+.annex-content-methods {
+  border: 1px solid #d9dee3;
+  border-radius: 12px;
+  padding: 14px;
+}
+.annex-content-methods legend {
+  padding-inline: 8px;
+  color: var(--color-navy);
+  font-weight: 700;
+}
+.annex-content-methods .choice-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 24px;
+}
+.annex-content-methods .choice-row label {
+  display: flex;
+  grid-template-columns: none;
+  align-items: center;
+  gap: 8px;
+}
+.annex-content-methods input[type="radio"] {
+  width: auto;
+  min-height: auto;
+}
+.edit-form .annex-json-editor {
+  min-height: 240px;
+  font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+  text-align: left;
+}
+.annex-live-preview,
+.correction-annex-preview {
+  display: grid;
+  gap: 12px;
+  padding: 16px;
+  border: 1px solid #e2e6ea;
+  border-radius: 12px;
+  background: #fafbfc;
+}
+.annex-table-preview {
+  overflow-x: auto;
+}
 .pdf-viewer {
   background: #d9dde1;
   border-radius: 16px;

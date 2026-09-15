@@ -746,6 +746,10 @@ describe("complete administrative lifecycle on MariaDB", () => {
   it("persists structure, annex and relation operations with dependency checks", async () => {
     const id = await law(marker + " linked"),
       target = await law(marker + " relation target");
+    await db.query(
+      "INSERT INTO legislation_source_documents (legislation_id,source_document_id,source_role) VALUES (?,?,'SUPPORTING')",
+      [id, sourceId],
+    );
     const node = await admin.createStructure(
       id,
       { nodeType: "CHAPTER", titleAr: "فصل اختبار", sortKey: "000001" },
@@ -777,17 +781,62 @@ describe("complete administrative lifecycle on MariaDB", () => {
         status: "DRAFT",
         sourceDocumentId: sourceId,
         validFrom: "2026-01-01",
-        structuredTableJson: '[{"label":"اختبار"}]',
+        structuredTableJson: '{"columns":["الحقل"],"rows":[["اختبار"]]}',
       },
       actor,
       "إنشاء ملحق",
     );
+    expect(admin.annexOptions().types).toHaveLength(8);
+    const originalAnnex = await admin.annex(annex.id, actor);
+    expect(originalAnnex).toMatchObject({
+      annexTypeLabel: "جدول",
+      version: {
+        contentFormat: "STRUCTURED_TABLE",
+        structuredTableJson: '{"columns":["الحقل"],"rows":[["اختبار"]]}',
+      },
+    });
     await admin.updateAnnex(
       annex.id,
-      { annexType: "ANNEX", titleAr: "ملحق معدل", status: "DRAFT" },
+      {
+        annexType: "TABLE",
+        titleAr: "جدول معدل",
+        status: "DRAFT",
+        contentFormat: "STRUCTURED_TABLE",
+        structuredTableJson:
+          '{"columns":["الحقل","القيمة"],"rows":[["النصاب",5]]}',
+        sourceDocumentId: sourceId,
+        validFrom: "2026-01-02",
+        editFingerprint: originalAnnex.editFingerprint,
+      },
       actor,
       "تحرير ملحق",
     );
+    await expect(
+      admin.updateAnnex(
+        annex.id,
+        {
+          annexType: "TABLE",
+          titleAr: "تعديل قديم",
+          status: "DRAFT",
+          contentFormat: "STRUCTURED_TABLE",
+          structuredTableJson: '{"columns":["الحقل"],"rows":[["قديم"]]}',
+          editFingerprint: originalAnnex.editFingerprint,
+        },
+        actor,
+        "منع تعارض التحرير",
+      ),
+    ).rejects.toThrow(/عُدّل الملحق/);
+    await admin.updateAnnex(
+      annex.id,
+      { annexType: "TABLE", titleAr: "جدول نهائي", status: "DRAFT" },
+      actor,
+      "طلب قديم لا يمسح المحتوى",
+    );
+    expect((await admin.annex(annex.id, actor)).version).toMatchObject({
+      contentFormat: "STRUCTURED_TABLE",
+      structuredTableJson:
+        '{"columns":["الحقل","القيمة"],"rows":[["النصاب",5]]}',
+    });
     const relation = await admin.createRelation(
       id,
       {
