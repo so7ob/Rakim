@@ -1753,12 +1753,14 @@ button:disabled {
 }
 .status-approved_for_publishing,
 .status-ready_for_review,
+.status-unreviewed,
 .status-warning {
   background: #fff3d9;
   color: #7b571b;
 }
 .status-failed,
 .status-error,
+.status-rejected,
 .status-ocr_required {
   background: #fbe9ed;
   color: var(--color-error);

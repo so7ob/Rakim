@@ -203,7 +203,7 @@ export class MariaDbSearchProvider implements SearchProvider {
         SELECT 1 FROM legal_relations public_lr
         JOIN legislations public_source ON public_source.id=public_lr.source_legislation_id
         JOIN legislations public_target ON public_target.id=public_lr.target_legislation_id
-        WHERE public_lr.id=sd.entity_id AND public_lr.is_active=TRUE AND public_lr.deleted_at IS NULL AND public_lr.review_status='REVIEWED'
+        WHERE public_lr.id=sd.entity_id AND public_lr.is_active=TRUE AND public_lr.deleted_at IS NULL AND public_lr.review_status='PUBLISHED'
           AND public_source.is_active=TRUE AND public_source.deleted_at IS NULL AND public_source.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
           AND public_target.is_active=TRUE AND public_target.deleted_at IS NULL AND public_target.status IN ('PUBLISHED','AMENDED','REPEALED','SUSPENDED')
       ))`,

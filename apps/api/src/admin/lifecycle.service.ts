@@ -440,7 +440,7 @@ export class LifecycleService {
       [
         "relations",
         "DELETE_REVIEWED_RELATION",
-        row.review_status === "REVIEWED",
+        ["REVIEWED", "PUBLISHED"].includes(row.review_status),
       ],
       ["synonym-sets", "DELETE_SYNONYM_HISTORY", row.status !== "DRAFT"],
       ["pages", "DELETE_PUBLISHED_PAGE", row.status !== "DRAFT"],

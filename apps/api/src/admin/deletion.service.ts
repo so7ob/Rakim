@@ -496,7 +496,9 @@ export class DeletionService {
     );
     await check(
       "DELETE_REVIEWED_RELATION",
-      relations.some((row: any) => row.review_status === "REVIEWED"),
+      relations.some((row: any) =>
+        ["REVIEWED", "PUBLISHED"].includes(row.review_status),
+      ),
       "توجد علاقة قانونية معتمدة مرتبطة بالتشريع.",
     );
     if (

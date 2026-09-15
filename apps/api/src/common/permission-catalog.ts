@@ -608,19 +608,27 @@ import {
   ANNEX_WORKFLOW_PERMISSION_CATALOG,
   ANNEX_WORKFLOW_ROLE_PERMISSION_MAP,
 } from "./annex-workflow-permission-catalog.js";
+import {
+  RELATION_WORKFLOW_PERMISSION_CATALOG,
+  RELATION_WORKFLOW_ROLE_PERMISSION_MAP,
+} from "./relation-workflow-permission-catalog.js";
 export const PERMISSION_CATALOG = [
   ...CANONICAL_PERMISSION_CATALOG,
   ...CRUD_PERMISSION_CATALOG,
   ...ANNEX_WORKFLOW_PERMISSION_CATALOG,
+  ...RELATION_WORKFLOW_PERMISSION_CATALOG,
 ];
 export const ROLE_PERMISSION_MAP = Object.fromEntries(
-  Object.entries(CANONICAL_ROLE_PERMISSION_MAP).map(([roleCode, permissions]) => [
-    roleCode,
-    [
-      ...permissions,
-      ...(ANNEX_WORKFLOW_ROLE_PERMISSION_MAP[roleCode] ?? []),
+  Object.entries(CANONICAL_ROLE_PERMISSION_MAP).map(
+    ([roleCode, permissions]) => [
+      roleCode,
+      [
+        ...permissions,
+        ...(ANNEX_WORKFLOW_ROLE_PERMISSION_MAP[roleCode] ?? []),
+        ...(RELATION_WORKFLOW_ROLE_PERMISSION_MAP[roleCode] ?? []),
+      ],
     ],
-  ]),
+  ),
 ) as Readonly<Record<string, string[]>>;
 
 export const permissionDefinition = (code: string) =>

@@ -478,7 +478,7 @@ async function reindexLegislation(legislationId: string, jobId: string) {
         );
       }
       const relations = await m.query(
-        `SELECT lr.id,lr.relation_type,lr.scope_text,CONCAT(source.title_ar,' ',target.title_ar) title_ar FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id WHERE lr.source_legislation_id=? AND lr.review_status='REVIEWED'`,
+        `SELECT lr.id,lr.relation_type,lr.scope_text,CONCAT(source.title_ar,' ',target.title_ar) title_ar FROM legal_relations lr JOIN legislations source ON source.id=lr.source_legislation_id JOIN legislations target ON target.id=lr.target_legislation_id WHERE lr.source_legislation_id=? AND lr.review_status='PUBLISHED'`,
         [legislationId],
       );
       for (const item of relations) {

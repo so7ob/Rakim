@@ -537,7 +537,7 @@ async function seed() {
         await m.query(
           `INSERT INTO legal_relations
           (id, source_legislation_id, target_legislation_id, relation_type, scope_text, effective_from, source_document_id, review_status)
-          VALUES (?, ?, ?, ?, 'علاقة اصطناعية لاختبار الاتجاه والنطاق', '2020-01-01', ?, 'REVIEWED')`,
+          VALUES (?, ?, ?, ?, 'علاقة اصطناعية لاختبار الاتجاه والنطاق', '2020-01-01', ?, 'PUBLISHED')`,
           [
             randomUUID(),
             ids.laws[source],
